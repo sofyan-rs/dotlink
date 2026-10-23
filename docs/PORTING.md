@@ -1,8 +1,8 @@
 # Porting the desktop app to Windows and macOS
 
-Linux is complete and is the reference. Windows builds and runs (Steps 1–5 are written; the
-phone tests are still to do). The macOS module was written on Linux and **has never been
-compiled there**. This page is the plan:
+Linux is complete and is the reference. **Windows 11 is done**: every step below, tested with
+a phone; what's left there is code signing and running CI. The macOS module was written on
+Linux and **has never been compiled there**. This page is the plan:
 what already works in principle, what each OS still needs, in which order, and how to test
 it. [ARCHITECTURE.md](ARCHITECTURE.md) explains the pieces; this page assumes it.
 
@@ -363,21 +363,22 @@ the dependency.
 
 ## Checklist
 
-Copy into an issue per OS and tick as you go.
-
-- [ ] CI builds and tests on this OS
-- [ ] `cargo build -p dotlink` and `--no-default-features` without warnings
-- [ ] Control socket private to the user (Windows ACL)
-- [ ] Pair, files both ways, clipboard both ways, Shell (incl. tab titles)
-- [ ] Graceful quit (tray, Settings, `dotlink quit`, OS shutdown)
-- [ ] Tray / menu bar with every `TrayAction`
-- [ ] App icon in the window, taskbar / Dock, notifications
-- [ ] Notifications under Dotlink's name, Open / Show in folder on received files
-- [ ] Start at login (`--background`)
-- [ ] Setup checks and fixes for this OS
-- [ ] Remote: move, click, drag, scroll, keys, combos, text
-- [ ] Cast: download scrcpy, USB and Wi-Fi
-- [ ] Installer, signed (and notarized on macOS)
-- [ ] Webcam
-- [ ] Microphone
-- [ ] README platform table and ARCHITECTURE updated, `features()` flags on
+| | Windows | macOS |
+|---|---|---|
+| CI builds and tests on this OS | workflow written, not run yet | |
+| `cargo build -p dotlink` and `--no-default-features` without warnings | ✅ | |
+| Control socket private to the user (Windows ACL) | ✅ | |
+| Pair, files both ways, clipboard both ways, Shell (incl. tab titles) | ✅ | |
+| Graceful quit (tray, Settings, `dotlink quit`, OS shutdown) | ✅ | |
+| Tray / menu bar with every `TrayAction` | ✅ | |
+| App icon in the window, taskbar / Dock, notifications | ✅ | |
+| Notifications under Dotlink's name, Open / Show in folder on received files | ✅ (buttons not clicked in a test) | |
+| Start at login (`--background`) | ✅ | |
+| Setup checks and fixes for this OS | ✅ | |
+| Remote: move, click, drag, scroll, keys, combos, text | ✅ | |
+| Cast: download scrcpy, USB and Wi-Fi | ✅ | |
+| Link over a USB cable | ✅ | |
+| Installer, signed (and notarized on macOS) | ✅ installer, not signed | |
+| Webcam | ✅ (Windows 11) | |
+| Microphone | ✅ (VB-CABLE) | |
+| README platform table and ARCHITECTURE updated, `features()` flags on | ✅ | |

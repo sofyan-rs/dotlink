@@ -225,9 +225,18 @@ switches to the plain microphone.
 - Code signing (Authenticode) for the installer and the exe; CI.
 - Offer more formats than NV12 if a camera app refuses it.
 
-**Linux**
-- Test the USB link, and retest everything after the shared changes (several casts, USB link,
-  the phone's tab rail and keyboard fix).
+**Linux**: retest after the Windows work changed shared code. On Fedora 44 (GNOME, KDE,
+Hyprland), with the phone's current debug or release build:
+- [ ] Build: `cargo build -p dotlink`, `--no-default-features`, `cargo test`; `install.sh`.
+- [ ] Pair, files both ways, clipboard both ways, Shell (new font fallbacks: ⏺ ⎿ ⏵, Nerd icons
+  one cell wide, powerline separators), Remote (typing fast no longer doubles letters).
+- [ ] USB link: plug in with USB debugging, the phone shows "USB cable"; Wi-Fi off still works;
+  unplug falls back to Wi-Fi, replug moves back; pairing over the cable.
+- [ ] Cast: one phone, Stop while connecting, several phones (`--to`), USB and Wi-Fi.
+- [ ] Webcam and mic (the phone's mic now falls back to the plain microphone when voice
+  processing is silent).
+- [ ] The phone's tab rail in landscape.
+- [ ] Setup, tray, start at login, Quit.
 
 **macOS**
 - Build it first (Step 1 in [PORTING.md](PORTING.md)), then everything marked ❌ above.

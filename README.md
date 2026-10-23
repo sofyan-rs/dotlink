@@ -2,8 +2,8 @@
 
 Link your Android phone with your PC, over Wi-Fi or a USB cable. No account, no cloud.
 
-On the PC it's one app: a window, a tray icon and a background service. Linux is complete,
-Windows works (installer still to come), macOS is planned.
+On the PC it's one app: a window, a tray icon and a background service. Linux and Windows 11
+are supported; macOS is planned.
 
 ## What it does
 
@@ -66,13 +66,14 @@ niri       spawn-at-startup "dotlink" "--background"
 
 ### Windows
 
-No installer yet; build it (Rust, MSVC):
+Run `dotlink_<version>_x64-setup.exe`: a per-user install (no administrator rights) with a
+Start menu entry. Build it yourself (Rust with MSVC, `cargo install cargo-packager`):
 
 ```sh
-cd desktop && cargo build --release
+cd desktop/app && cargo packager --release -f nsis   # desktop/target/packages/
 ```
 
-Run `desktop/target/release/dotlink.exe`, keeping `dotlink_camera.dll` next to it.
+The installer isn't code-signed yet: SmartScreen and the firewall show "Unknown publisher".
 
 - **Webcam:** Setup → *Fix* installs **Dotlink Camera** (asks for administrator rights
   once).
@@ -173,7 +174,7 @@ Forget a phone in **Devices** (or `dotlink unpair`) to cut it off right away.
 | Files, clipboard, shell, remote, Cast | ✅ | ✅ | planned |
 | Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | planned |
 | Tray, start at login, Setup | ✅ | ✅ | planned |
-| Installer | ✅ .deb, .rpm, AppImage | not yet | planned |
+| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (not signed yet) | planned |
 
 How each feature is built per OS and what has been tested:
 [docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEATURES.md). Plan for the rest:
@@ -195,14 +196,19 @@ cargo run -p dotlink -- daemon                # headless
 cargo build -p dotlink --no-default-features  # without the window
 ```
 
-Linux packages (into `desktop/target/`):
+Packages (into `desktop/target/`):
 
 ```sh
 cargo install cargo-packager cargo-generate-rpm
-NO_STRIP=1 cargo packager --release -f deb,appimage
-cargo generate-rpm -p app
+cd desktop/app
+NO_STRIP=1 cargo packager --release -f deb,appimage   # Linux
+cargo packager --release -f nsis                      # Windows
+cd .. && cargo generate-rpm -p app                    # Linux .rpm, after a release build
 ```
 
-Build releases on the oldest distro you want to support (they need its glibc or newer).
+Build Linux releases on the oldest distro you want to support (they need its glibc or newer).
+The Android release APK is signed with the key in `android/keystore.properties` (not in git),
+or the debug key without it. `.github/workflows/release.yml` builds all of them; it only runs by
+hand or for a `v*` tag.
 
 More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/CONTRIBUTION.md](docs/CONTRIBUTION.md).

@@ -1,8 +1,8 @@
 # Architecture
 
-Dotlink is two programs that talk over the local network: an Android app and a desktop app.
-No account and no cloud: the phone pins the PC's certificate when it pairs, and everything after
-that is TLS straight to the PC.
+Dotlink is two programs that talk over the local network, or over a USB cable: an Android app
+and a desktop app. No account and no cloud: the phone pins the PC's certificate when it pairs,
+and everything after that is TLS straight to the PC.
 
 ```
  Android phone                                  PC
@@ -36,20 +36,25 @@ desktop/                 Rust workspace
       mod.rs             the contract every platform module fills
       linux/             complete: uinput, v4l2loopback, PipeWire, wl-clipboard/X11,
                          notify-send, XDG/Hyprland autostart, Setup checks + fixes
-      windows/           SendInput, Run-key autostart, firewall Setup check, toasts;
-                         webcam and mic still stubs
+      windows/           complete (Windows 11): SendInput, Run-key autostart, toasts,
+                         virtual camera, VB-CABLE mic, Setup checks + UAC fixes
       macos/             stubs with TODO lists
       polling_clipboard.rs  arboard-based clipboard shared by X11, Windows, macOS
   app/                   the `dotlink` binary
     src/main.rs          CLI; `dotlink` with no command opens the app
     src/gui/             window (GPUI + gpui-component), tray, theme
-    assets/              icons, desktop file, tray pixmaps
+    assets/              icons, desktop file, tray pixmaps, dotlink.ico
+    build.rs             Windows: embeds the icon in the .exe
+  camera/                dotlink-camera: Windows 11 "Dotlink Camera", a media source DLL
+                         the camera frame server loads (shared.rs: the frame file)
 android/                 Kotlin + Jetpack Compose app
   link/                  Link (connection), LinkService (foreground service), streamers,
                          Prefs (paired PCs, settings)
   ui/                    screens (pair/ also picks a PC; home/PcSheet switches PCs);
                          ui/dotline is the Dotline design system
-scripts/install.sh       build + install for the current user
+scripts/install.sh       build + install for the current user (Linux)
+scripts/make-windows-icon.py  draws desktop/app/assets/dotlink.ico
+.github/workflows/release.yml installers for every OS (by hand or on a v* tag)
 ```
 
 ## Desktop: one process, three faces
@@ -74,7 +79,10 @@ daemon. Socket I/O runs on the tokio runtime; GPUI awaits plain futures/channels
 ### Threads and runtimes
 
 - **tokio** (multi-threaded): the server, the control socket, clipboard watching, the tray
-  (ksni over D-Bus), scrcpy/adb processes.
+  on Linux (ksni over D-Bus), scrcpy/adb processes, the USB link watcher.
+- On Windows the tray (`tray-icon`) lives on the main thread, pumped by GPUI's message loop;
+  the webcam has its own thread (decoding, the virtual camera's COM objects), the mic a thread
+  that owns the WASAPI stream.
 - **GPUI** owns the main thread. `gui/model.rs` holds app-wide state in an `Entity<Model>`
   that outlives the window; the window (`gui/window.rs`) is a view of it.
 - A dedicated thread owns the X11/arboard clipboard (X11 serves pasted data from the owner);
@@ -93,7 +101,7 @@ token's SHA-256.
 | `GET /ws/input` | Remote: pointer, scroll, keys, text |
 | `GET /ws/term`, `GET /terms`, `DELETE /terms/{id}` | Shell sessions |
 | `GET /ws/camera` | MJPEG frames → Dotlink Camera |
-| `GET /ws/mic` | 16-bit PCM → Dotlink Mic |
+| `GET /ws/mic` | 16-bit PCM → the PC's microphone (Dotlink Mic / VB-CABLE) |
 | `POST /upload?name=` | phone → PC file, `X-Sha256` checked |
 | `GET /download/{id}` | PC → phone file, offered over the control socket |
 
@@ -112,6 +120,16 @@ Control messages (`{"t": …}`):
 | phone → PC | `clip` | phone clipboard text |
 | phone → PC | `info` | phone name, model, Wireless debugging on, Developer options on (for Cast) |
 | phone → PC | `media` | `state: needs_tap`: starting camera/mic waits for a tap |
+
+### Wi-Fi or USB
+
+The phone tries `127.0.0.1:47390` first. With USB debugging allowed, the PC runs
+`adb reverse tcp:47390 tcp:47390` for every phone plugged in (`usb.rs`, checked every 3 s), so
+that address reaches the PC through the cable; otherwise the phone uses the PC's network
+addresses, found again over mDNS. On Wi-Fi it checks the cable every 5 s and moves over; when
+the cable goes, it reconnects over Wi-Fi. The PC counts connections from loopback as USB
+(`PhoneInfo::usb`) and keeps the phone's Wi-Fi address for Cast. The pinned certificate makes
+the cable no more trusted than the network.
 
 ### Pairing and trust
 
@@ -138,12 +156,19 @@ request line in, one or more reply lines out.
   Sway, KDE…), else the X11 clipboard through XWayland (GNOME), read when XFixes reports a new owner (with a
   5 s safety poll; 500 ms polling where XFixes isn't available). Echo loops are cut by
   remembering the last text either way. Password-manager entries are never sent.
-- **Remote.** uinput virtual mouse + keyboard (Linux).
-- **Shell.** One PTY per tab per phone, scrollback replayed on reconnect.
-- **Webcam / mic.** ffmpeg writes MJPEG into v4l2loopback ("Dotlink Camera"); `pw-cat` is a
-  PipeWire source ("Dotlink Mic"). One phone streams each at a time (`Streaming::claim`).
-  Android 14+ only lets the app start them while it's on screen, so a request from the PC in
-  the background becomes a notification with Start.
+  Windows polls the clipboard through arboard every 500 ms.
+- **Remote.** uinput virtual mouse + keyboard (Linux); SendInput, with Unicode text in any
+  layout (Windows).
+- **Shell.** One PTY per tab per phone (ConPTY and pwsh on Windows), scrollback replayed on
+  reconnect. The phone draws it with xterm.js (WebGL): Geist Mono, then "Dotlink Symbols Mono"
+  (a JuliaMono subset of the symbol blocks) and Symbols Nerd Font Mono scaled to one cell.
+- **Webcam / mic.** Linux: ffmpeg writes MJPEG into v4l2loopback ("Dotlink Camera"); `pw-cat` is
+  a PipeWire source ("Dotlink Mic"). Windows 11: a virtual camera (`MFCreateVirtualCamera`)
+  whose media source is `dotlink_camera.dll`, fed NV12 through `%ProgramData%\Dotlink\camera.bin`;
+  the mic plays into VB-CABLE through WASAPI. One phone streams each at a time
+  (`Streaming::claim`). Android 14+ only lets the app start them while it's on screen, so a
+  request from the PC in the background becomes a notification with Start. Phones whose
+  voice-processing input is silent outside a call (vivo / iQOO) fall back to the plain mic.
 - **Latency.** Nothing queues behind a slow link. The phone sends a camera frame only when the
   socket is idle, mic audio in 10 ms chunks, with TCP_NODELAY and a Wi-Fi lock while linked.
   The PC hands ffmpeg only the newest frame (a `watch` channel, `mpjpeg` input), shrinks the
@@ -159,23 +184,28 @@ request line in, one or more reply lines out.
   PC, the official release (with adb) is downloaded into the data folder, checked against a
   pinned SHA-256.
 - **Setup.** `platform::setup::checks` lists what each feature needs; `fix_many` fixes the
-  chosen ones in one pkexec run (packages in one install command, udev rule, camera service,
-  firewalld port).
-- **Autostart.** XDG autostart entry; on Hyprland also `~/.config/hypr/dotlink.lua` plus one
-  marked `pcall(require, "dotlink")` line, removed again when turned off.
+  chosen ones. Linux: one pkexec run (packages in one install command, udev rule, camera
+  service, firewalld port). Windows: one UAC prompt each for the firewall rule and installing
+  the camera DLL; scrcpy/adb download without admin rights.
+- **Autostart.** Linux: XDG autostart entry; on Hyprland also `~/.config/hypr/dotlink.lua` plus
+  one marked `pcall(require, "dotlink")` line, removed again when turned off. Windows: the
+  `Dotlink` value under `HKCU\…\CurrentVersion\Run`.
 
 ## Platforms
 
 `core/src/platform/mod.rs` lists the items every platform module provides. Linux is the
-reference. `windows/` has everything but the webcam and mic. `macos/mod.rs` is a stub that
-compiles the rest of the app and says what to build (CGEvent, login items, virtual camera and
-mic drivers, tray).
+reference. `windows/` is complete for Windows 11. `macos/mod.rs` is a stub that compiles the
+rest of the app and says what to build (CGEvent, login items, virtual camera and mic drivers,
+tray).
 Search for `TODO(windows)` and `TODO(macos)`; [PORTING.md](PORTING.md) is the plan, step by step, and [PLATFORM_FEATURES.md](PLATFORM_FEATURES.md) what each OS does today.
 
 Window decorations: GPUI asks for server-side decorations; where the compositor leaves them to
 the app (GNOME), the window draws gpui-component's `TitleBar` and a resizable border.
 
 ## Files on disk
+
+Linux paths; on Windows the config folder is `%APPDATA%\dotlink\` and the control socket the
+named pipe above.
 
 | Path | Content |
 |---|---|
