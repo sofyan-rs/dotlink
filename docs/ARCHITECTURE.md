@@ -42,8 +42,10 @@ desktop/                 Rust workspace
     src/gui/             window (GPUI + gpui-component), tray, theme
     assets/              icons, desktop file, tray pixmaps
 android/                 Kotlin + Jetpack Compose app
-  link/                  Link (connection), LinkService (foreground service), streamers
-  ui/                    screens; ui/dotline is the Dotline design system
+  link/                  Link (connection), LinkService (foreground service), streamers,
+                         Prefs (paired PCs, settings)
+  ui/                    screens (pair/ also picks a PC; home/PcSheet switches PCs);
+                         ui/dotline is the Dotline design system
 scripts/install.sh       build + install for the current user
 ```
 
@@ -72,7 +74,8 @@ daemon. Socket I/O runs on the tokio runtime; GPUI awaits plain futures/channels
   (ksni over D-Bus), scrcpy/adb processes.
 - **GPUI** owns the main thread. `gui/model.rs` holds app-wide state in an `Entity<Model>`
   that outlives the window; the window (`gui/window.rs`) is a view of it.
-- A dedicated thread owns the X11/arboard clipboard (X11 serves pasted data from the owner).
+- A dedicated thread owns the X11/arboard clipboard (X11 serves pasted data from the owner);
+  on Linux a second one waits for XFixes clipboard-owner events and wakes it.
 
 ## Phone ↔ PC protocol
 
@@ -98,13 +101,13 @@ Control messages (`{"t": …}`):
 
 | Direction | `t` | Meaning |
 |---|---|---|
-| PC → phone | `hello` | name, Shell on/off (on connect) |
+| PC → phone | `hello` | name, Shell on/off, OS (on connect; the Remote labels Super / Win / Cmd by it) |
 | PC → phone | `clip` | PC clipboard text |
 | PC → phone | `file` | a file offer: id, name, size; the phone downloads it |
 | PC → phone | `camera`, `mic` | `on: bool`, from Start/Stop on the PC |
 | PC → phone | `adb_wifi` | Cast needs Wireless debugging: show the notification |
 | phone → PC | `clip` | phone clipboard text |
-| phone → PC | `info` | model, Wireless debugging on, Developer options on (for Cast) |
+| phone → PC | `info` | phone name, model, Wireless debugging on, Developer options on (for Cast) |
 | phone → PC | `media` | `state: needs_tap`: starting camera/mic waits for a tap |
 
 ### Pairing and trust
@@ -128,13 +131,21 @@ request line in, one or more reply lines out.
   tracked (`events::Transfer`) with progress for the window; the phone shows its own progress
   notifications (`TransferNotifier`).
 - **Clipboard.** Linux: `wl-paste --watch` where the compositor has data-control (Hyprland,
-  Sway, KDE…), else the X11 clipboard through XWayland (GNOME), polled. Echo loops are cut by
+  Sway, KDE…), else the X11 clipboard through XWayland (GNOME), read when XFixes reports a new owner (with a
+  5 s safety poll; 500 ms polling where XFixes isn't available). Echo loops are cut by
   remembering the last text either way. Password-manager entries are never sent.
 - **Remote.** uinput virtual mouse + keyboard (Linux).
 - **Shell.** One PTY per tab per phone, scrollback replayed on reconnect.
 - **Webcam / mic.** ffmpeg writes MJPEG into v4l2loopback ("Dotlink Camera"); `pw-cat` is a
-  PipeWire source ("Dotlink Mic"). Android 14+ only lets the app start them while it's on
-  screen, so a request from the PC in the background becomes a notification with Start.
+  PipeWire source ("Dotlink Mic"). One phone streams each at a time (`Streaming::claim`).
+  Android 14+ only lets the app start them while it's on screen, so a request from the PC in
+  the background becomes a notification with Start.
+- **Latency.** Nothing queues behind a slow link. The phone sends a camera frame only when the
+  socket is idle, mic audio in 10 ms chunks, with TCP_NODELAY and a Wi-Fi lock while linked.
+  The PC hands ffmpeg only the newest frame (a `watch` channel, `mpjpeg` input), shrinks the
+  `pw-cat` pipe to one page and drops mic chunks beyond a short backlog.
+- **Several PCs.** The phone keeps a list of paired PCs (`Prefs`), connects to one at a time
+  and can switch or forget any; a PC sends files and streams to one phone or all.
 - **Cast.** `cast.rs` finds the phone in `adb devices` by model (USB first), or its Wireless
   debugging port over mDNS (`_adb-tls-connect._tcp`) by IP, `adb connect`s and runs scrcpy.
   Pairing uses the code from the phone; its port is found over mDNS too. Without scrcpy on the

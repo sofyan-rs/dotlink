@@ -34,7 +34,7 @@ scripts/         install.sh
 
 Clipboard picks its backend by itself: `wl-paste --watch` where the compositor has the data-control
 protocol, otherwise the X11 clipboard (on GNOME, Mutter keeps XWayland's clipboard in sync with
-Wayland's). Force one with `DOTLINK_CLIPBOARD=x11`.
+Wayland's), which Dotlink follows through XFixes change events. Force one with `DOTLINK_CLIPBOARD=x11`.
 
 ## PC setup
 
@@ -86,6 +86,10 @@ hl.bind("SUPER + ALT + S", hl.dsp.exec_cmd("zenity --file-selection --multiple -
 1. Install the app on the phone: `cd android && ./gradlew installDebug`. Or copy `app/build/outputs/apk/debug/app-debug.apk` to the phone.
 2. On the PC, open **Pair a phone** in Dotlink (or run `dotlink pair`) and scan the QR code with the app. You can paste the link instead.
 
+The phone can be paired with several PCs. When the app opens it asks which one to connect to; tap the
+PC's name at the top to switch (*Change PC*) or forget one. *Disconnect* keeps the phone offline until
+you tap *Reconnect*. The phone's name (Settings) is what the PC lists it as.
+
 The QR code holds the PC's addresses, its certificate fingerprint and a one-time secret (valid for 5 minutes). The phone pins that certificate and gets a token. Later connections use TLS to the pinned certificate, plus the token. If the PC's IP changes, the phone finds it again with mDNS (`_dotlink._tcp`).
 
 ## CLI
@@ -122,6 +126,10 @@ terminal_pin = ""        # if set, the app must send this PIN (Settings → Term
 shell = ""               # default: $SHELL
 camera_device = ""       # default: the v4l2loopback device named "Dotlink Camera"
 camera_size = "1920x1080" # fixed size of Dotlink Camera; phone frames are scaled into it
+cast_screen_off = false  # Cast: turn the phone's screen off while it's shown on the PC
+cast_audio = true        # Cast: play the phone's sound on the PC (Android 11+)
+cast_max_size = 0        # Cast: longest side in pixels; 0 keeps the phone's resolution
+theme = "system"         # the window's look: "system", "light" or "dark"
 ```
 
 `state.json` (paired phones, token hashes) and `cert.pem`/`key.pem` are kept in the same folder.
@@ -132,7 +140,8 @@ camera_size = "1920x1080" # fixed size of Dotlink Camera; phone frames are scale
 - **Clipboard on Android:** Android 10+ lets an app read the clipboard only while it is in front. That is why phone → PC happens when you open the app or tap the notification button.
 - **Cast:** uses the PC's `scrcpy` and `adb` when they're installed. Otherwise the first Cast (or Fix in Setup) downloads the official scrcpy release, which includes adb, into `~/.local/share/dotlink/scrcpy/` (18 MB, SHA-256 checked, no root). The phone needs Developer options. Over USB, allow USB debugging once and press Cast. Over Wi-Fi (Android 11+), turn on Wireless debugging, then pair once: on the phone choose *Pair device with pairing code* and type the code in Dotlink. After that Cast finds the phone by itself (mDNS); if Wireless debugging is off, the phone gets a notification that opens it.
 - **Webcam and mic from the PC:** Start in Devices (or `dotlink camera on`) starts them right away while the Dotlink app is open on the phone. Otherwise Android doesn't let a background app turn on the camera or mic, so the phone shows a notification and one tap on **Start** does it.
-- **Webcam:** the phone sends MJPEG, and ffmpeg writes it to v4l2loopback. The device always has a picture ("phone camera off" when idle), so it stays listed in OBS and browsers. Its size never changes while apps read it.
+- **Webcam:** the phone sends MJPEG, and ffmpeg writes it to v4l2loopback. The device always has a picture ("phone camera off" when idle), so it stays listed in OBS and browsers. Its size never changes while apps read it. Only one phone streams the camera (or the mic) at a time.
+- **Latency:** frames and mic audio that arrive late are dropped instead of queued, so a Wi-Fi hiccup costs a stutter, not a growing delay. While linked, the phone holds a Wi-Fi lock so power saving doesn't add lag.
 - **Security:** anyone with a paired phone gets a shell on your PC. Turn the Shell off or set a PIN in Settings (`terminal = false` / `terminal_pin`) if that's a concern. Forget a phone in Devices (or `dotlink unpair`) to revoke it right away.
 
 ## Platforms

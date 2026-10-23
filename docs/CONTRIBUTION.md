@@ -86,7 +86,9 @@ cargo run -p dotlink
 - **User-facing text** is short, concrete and sentence case: "Turn on Wireless debugging",
   not "Error: ADB WiFi disabled". Errors say what to do.
 - **The Dotline look** (both apps): black or paper white, one red accent, Doto for display
-  type, Geist for text, Geist Mono for labels and data, pill buttons, 16 px cards. Colors live
+  type, Geist for text, Geist Mono for labels and data. Android uses pill buttons and 16 px cards;
+  the desktop uses 8 px corners on controls and 12 px on cards (`RADIUS`, `CARD_RADIUS` in
+  `gui/window.rs`), with dots and badges round. Colors live
   in `android/…/ui/theme/Color.kt` and `desktop/app/src/gui/theme.rs`; keep them in sync.
   Icons are Lucide (Android: `DotlineIcons.kt`; desktop: `gui/assets.rs`).
 
