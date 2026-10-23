@@ -52,10 +52,14 @@ product-name = "Dotlink"
 identifier = "dev.dotlink.Dotlink"
 description = "Link your Android phone with this PC: files, clipboard, remote, shell, webcam, mic"
 category = "Utility"
-before-packaging-command = "cargo build --release -p dotlink"
+# dotlink-camera: the Windows webcam DLL (an empty library elsewhere).
+before-packaging-command = "cargo build --release -p dotlink -p dotlink-camera"
 out-dir = "../target/packages"
 binaries = [{ path = "dotlink", main = true }]
-icons = ["assets/icons/*.png"]
+icons = ["assets/icons/*.png", "assets/dotlink.ico"]
+# Windows: the camera DLL next to dotlink.exe (Setup installs it for the frame server). The
+# pattern matches nothing on Linux.
+resources = ["../target/release/dotlink_camera.dll"]
 
 [package.metadata.packager.deb]
 depends = ["libxkbcommon-x11-0", "libnotify-bin", "pipewire-bin", "ffmpeg"]
@@ -64,7 +68,12 @@ depends = ["libxkbcommon-x11-0", "libnotify-bin", "pipewire-bin", "ffmpeg"]
 desktop-template = "assets/dev.dotlink.Dotlink.desktop"
 
 # TODO(macos): signing-identity, notarization, minimum-system-version; an .icns from assets/icons.
-# TODO(windows): nsis / wix settings (install mode per user, firewall rule for the port).
+# Windows: `cargo packager --release -f nsis` (NSIS is downloaded by cargo-packager). A per-user
+# install, no admin; Setup adds the firewall rule and the camera with one UAC prompt each.
+# TODO(windows): Authenticode signing (`[package.metadata.packager.windows]` signing-command).
+[package.metadata.packager.nsis]
+installer-mode = "currentUser"
+installer-icon = "assets/dotlink.ico"
 
 # `cargo generate-rpm -p app` (cargo install cargo-generate-rpm), after
 # `cargo build --release -p dotlink`. Writes desktop/target/generate-rpm/dotlink-*.rpm.
