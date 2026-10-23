@@ -1,0 +1,109 @@
+# Builds the installers: Linux (.deb, .AppImage, .rpm), Windows (setup .exe) and the Android APK.
+# Run it from the Actions tab (workflow_dispatch) to get them as artifacts, or push a tag like
+# v0.2.0 to also attach them to a GitHub release.
+#
+# Android release signing (optional; without it the APK is signed with a throwaway debug key):
+# repository secrets ANDROID_KEYSTORE_BASE64 (the .jks, base64), ANDROID_KEYSTORE_PASSWORD,
+# ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD.
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    # The oldest supported Ubuntu: packages need its glibc or newer.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev \
+            libfontconfig-dev libfreetype-dev libfuse2 rpm
+      - name: Packagers
+        run: cargo install cargo-packager cargo-generate-rpm --locked
+      - name: .deb and .AppImage
+        working-directory: desktop/app
+        env:
+          NO_STRIP: "1"
+        run: cargo packager --release -f deb,appimage
+      - name: .rpm
+        working-directory: desktop
+        run: cargo generate-rpm -p app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            desktop/target/packages/*.deb
+            desktop/target/packages/*.AppImage
+            desktop/target/generate-rpm/*.rpm
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: Packager
+        run: cargo install cargo-packager --locked
+      - name: Setup .exe
+        working-directory: desktop/app
+        run: cargo packager --release -f nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: desktop/target/packages/*-setup.exe
+
+  android:
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Release keystore
+        if: env.KEYSTORE != ''
+        working-directory: android
+        run: |
+          echo "$KEYSTORE" | base64 -d > release.jks
+          cat > keystore.properties <<EOF
+          storeFile=$PWD/release.jks
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+      - name: APK
+        working-directory: android
+        run: ./gradlew :app:assembleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: android/app/build/outputs/apk/release/*.apk
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
