@@ -10,6 +10,8 @@ pub const DEFAULT_PORT: u16 = 47390;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Name the phones show for this PC; empty means the hostname.
+    pub name: String,
     /// TCP port the HTTPS/WebSocket server listens on.
     pub port: u16,
     /// Where files sent from the phone are saved. `~` is expanded.
@@ -40,6 +42,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            name: String::new(),
             port: DEFAULT_PORT,
             download_dir: "~/Downloads/Dotlink".into(),
             clipboard_sync: true,

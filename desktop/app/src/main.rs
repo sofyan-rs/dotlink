@@ -29,21 +29,38 @@ enum Cmd {
     Daemon,
     /// Show a QR code to pair a phone.
     Pair,
-    /// Send files to the connected phone.
+    /// Send files to the connected phones.
     Send {
+        /// Only to this phone (name or id); every connected phone without it.
+        #[arg(long)]
+        to: Option<String>,
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
-    /// Send the current PC clipboard to the phone.
-    Clip,
+    /// Send the current PC clipboard to the connected phones.
+    Clip {
+        /// Only to this phone (name or id).
+        #[arg(long)]
+        to: Option<String>,
+    },
     /// List paired phones.
     Devices,
     /// Forget a paired phone (by name or id).
     Unpair { device: String },
     /// Turn the phone camera (Dotlink Camera) on or off.
-    Camera { state: OnOff },
+    Camera {
+        state: OnOff,
+        /// The phone to use (name or id); needed when several are connected.
+        #[arg(long)]
+        to: Option<String>,
+    },
     /// Turn the phone mic (Dotlink Mic) on or off.
-    Mic { state: OnOff },
+    Mic {
+        state: OnOff,
+        /// The phone to use (name or id); needed when several are connected.
+        #[arg(long)]
+        to: Option<String>,
+    },
     /// Show the phone's screen on the PC (scrcpy, over USB or Wi-Fi). `stop` ends it.
     Cast {
         #[command(subcommand)]
@@ -116,23 +133,25 @@ async fn command(cmd: Cmd) -> Result<()> {
             })
             .await
         }
-        Cmd::Send { files } => {
+        Cmd::Send { to, files } => {
             let paths: Vec<String> = files
                 .iter()
                 .map(|p| std::fs::canonicalize(p).map(|p| p.to_string_lossy().into_owned()))
                 .collect::<std::io::Result<_>>()?;
-            simple(json!({ "cmd": "send", "paths": paths })).await
+            simple(json!({ "cmd": "send", "paths": paths, "to": to })).await
         }
-        Cmd::Clip => simple(json!({ "cmd": "clip" })).await,
+        Cmd::Clip { to } => simple(json!({ "cmd": "clip", "to": to })).await,
         Cmd::Unpair { device } => simple(json!({ "cmd": "unpair", "id": device })).await,
         Cmd::Quit => simple(json!({ "cmd": "quit" })).await,
         Cmd::Cast { action: None } => simple(json!({ "cmd": "cast", "on": true })).await,
         Cmd::Cast { action: Some(CastCmd::Stop) } => simple(json!({ "cmd": "cast", "on": false })).await,
         Cmd::Cast { action: Some(CastCmd::Pair { code }) } => simple(json!({ "cmd": "cast_pair", "code": code })).await,
-        Cmd::Camera { state } => {
-            simple(json!({ "cmd": "media", "kind": "camera", "on": matches!(state, OnOff::On) })).await
+        Cmd::Camera { state, to } => {
+            simple(json!({ "cmd": "media", "kind": "camera", "on": matches!(state, OnOff::On), "to": to })).await
         }
-        Cmd::Mic { state } => simple(json!({ "cmd": "media", "kind": "mic", "on": matches!(state, OnOff::On) })).await,
+        Cmd::Mic { state, to } => {
+            simple(json!({ "cmd": "media", "kind": "mic", "on": matches!(state, OnOff::On), "to": to })).await
+        }
         Cmd::Devices => {
             ipc::request(json!({ "cmd": "devices" }), |v| {
                 let devices = v["devices"].as_array().cloned().unwrap_or_default();

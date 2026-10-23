@@ -97,12 +97,13 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
             let paths: Vec<PathBuf> =
                 req["paths"].as_array().into_iter().flatten().filter_map(|p| p.as_str().map(PathBuf::from)).collect();
             let msg = result(
-                app.offer_files(&paths).map(|n| format!("sending {n} file(s) to {}", app.online_devices().join(", "))),
+                app.offer_files(&paths, req["to"].as_str())
+                    .map(|(n, names)| format!("sending {n} file(s) to {names}")),
             );
             w.write_all(reply(msg).as_bytes()).await?;
         }
         "clip" => {
-            let msg = result(app.send_clipboard().await.map(|()| "clipboard sent".into()));
+            let msg = result(app.send_clipboard(req["to"].as_str()).await.map(|()| "clipboard sent".into()));
             w.write_all(reply(msg).as_bytes()).await?;
         }
         "devices" => {
@@ -111,13 +112,9 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
         "media" => {
             let kind = req["kind"].as_str().unwrap_or("");
             let on = req["on"].as_bool().unwrap_or(false);
-            let msg = result(app.request_stream(kind, on).map(|()| {
+            let msg = result(app.request_stream(kind, on, req["to"].as_str()).map(|names| {
                 let what = if kind == "mic" { "microphone" } else { "webcam" };
-                format!(
-                    "asked {} to turn the {what} {}",
-                    app.online_devices().join(", "),
-                    if on { "on" } else { "off" }
-                )
+                format!("asked {names} to turn the {what} {}", if on { "on" } else { "off" })
             }));
             w.write_all(reply(msg).as_bytes()).await?;
         }

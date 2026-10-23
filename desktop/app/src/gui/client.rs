@@ -17,7 +17,8 @@ use std::time::Duration;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Status {
     pub version: String,
-    pub hostname: String,
+    /// What the phones call this PC (the configured name, or the hostname).
+    pub name: String,
     pub port: u16,
     pub fingerprint: String,
     pub addresses: Vec<String>,
@@ -98,18 +99,20 @@ impl Client {
         async move { Ok(serde_json::from_value(call.await?)?) }
     }
 
-    pub fn send_files(&self, paths: Vec<PathBuf>) -> impl Future<Output = Result<String>> + use<> {
+    /// `to`: a device id, or None for every connected phone.
+    pub fn send_files(&self, paths: Vec<PathBuf>, to: Option<String>) -> impl Future<Output = Result<String>> + use<> {
         let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-        ok_text(self.call(json!({ "cmd": "send", "paths": paths })))
+        ok_text(self.call(json!({ "cmd": "send", "paths": paths, "to": to })))
     }
 
-    pub fn send_clipboard(&self) -> impl Future<Output = Result<String>> + use<> {
-        ok_text(self.call(json!({ "cmd": "clip" })))
+    pub fn send_clipboard(&self, to: Option<String>) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "clip", "to": to })))
     }
 
     /// Asks the phone to start or stop the camera ("camera") or mic ("mic").
-    pub fn media(&self, kind: &str, on: bool) -> impl Future<Output = Result<String>> + use<> {
-        ok_text(self.call(json!({ "cmd": "media", "kind": kind, "on": on })))
+    /// `to`: the device id to start it on (stopping goes to every phone).
+    pub fn media(&self, kind: &str, on: bool, to: Option<String>) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "media", "kind": kind, "on": on, "to": to })))
     }
 
     /// Starts or stops casting the phone screen.

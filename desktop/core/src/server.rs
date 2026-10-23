@@ -50,7 +50,24 @@ pub struct PhoneInfo {
     pub ip: Option<IpAddr>,
 }
 
+/// Where a file or clipboard goes: one phone, or every connected phone.
+pub struct Target {
+    /// None for every connected phone.
+    pub id: Option<String>,
+    /// The phones' names, comma-separated.
+    pub names: String,
+    /// The phones: (device id, name).
+    pub phones: Vec<(String, String)>,
+}
+
+/// Transfer id of an offer: one transfer per phone when it went to every phone.
+fn transfer_id(offer: &str, every_phone: bool, device: &str) -> String {
+    if every_phone { format!("{offer}/{device}") } else { offer.to_string() }
+}
+
 struct Offer {
+    /// Only this device may download it; None for every phone.
+    device: Option<String>,
     path: PathBuf,
     name: String,
     size: u64,
@@ -65,7 +82,8 @@ pub struct App {
     pub hostname: String,
     pub state: Mutex<State>,
     pairing: Mutex<Option<Pairing>>,
-    control_tx: broadcast::Sender<String>,
+    /// Messages for the phones: (device id, or None for every phone; JSON text).
+    control_tx: broadcast::Sender<(Option<String>, String)>,
     /// Device id → number of open control connections.
     online: Mutex<HashMap<String, usize>>,
     offers: Mutex<HashMap<String, Offer>>,
@@ -124,6 +142,17 @@ impl App {
         self.config.lock().unwrap().clone()
     }
 
+    /// What the phones call this PC: `config.name`, or the hostname.
+    pub fn name(&self) -> String {
+        let name = self.config.lock().unwrap().name.trim().to_string();
+        if name.is_empty() { self.hostname.clone() } else { name }
+    }
+
+    fn hello(&self) -> Value {
+        // `os` ("linux", "windows", "macos") lets the phone label the keys (Super, Win, Cmd).
+        json!({ "t": "hello", "name": self.name(), "terminal": self.config().terminal, "os": std::env::consts::OS })
+    }
+
     /// Saves and applies a new config. Returns true when some of it applies only after a
     /// restart (port, camera).
     pub fn set_config(&self, new: Config) -> Result<bool> {
@@ -132,8 +161,13 @@ impl App {
         let restart = new.port != self.port
             || new.camera_device != config.camera_device
             || new.camera_size != config.camera_size;
+        let renamed = new.name != config.name;
         *config = new;
         drop(config);
+        if renamed {
+            // The phones take the new name from hello.
+            self.send_control(self.hello());
+        }
         self.emit(Event::Config);
         Ok(restart)
     }
@@ -191,6 +225,7 @@ impl App {
         json!({
             "version": env!("CARGO_PKG_VERSION"),
             "hostname": self.hostname,
+            "name": self.name(),
             "port": self.port,
             "fingerprint": self.fingerprint,
             "addresses": local_ips(),
@@ -222,31 +257,75 @@ impl App {
     /// Asks the phones to start or stop streaming the camera or mic (`kind`: "camera" | "mic").
     /// Starting may need a tap on the phone when its app is in the background; the phone then
     /// answers with a `media` message, which becomes [Event::MediaPrompt].
-    pub fn request_stream(&self, kind: &str, on: bool) -> Result<()> {
+    /// There is one Dotlink Camera and one Dotlink Mic, so starting needs one phone (`to`: its
+    /// name or id), unless only one is connected. Stopping goes to every phone. Returns the
+    /// phones asked.
+    pub fn request_stream(&self, kind: &str, on: bool, to: Option<&str>) -> Result<String> {
         if !matches!(kind, "camera" | "mic") {
             bail!("unknown stream \"{kind}\"");
         }
-        if self.online_devices().is_empty() {
-            bail!("no phone connected");
+        if !on {
+            let target = self.target(None)?;
+            self.send_control(json!({ "t": kind, "on": false }));
+            return Ok(target.names);
         }
-        self.send_control(json!({ "t": kind, "on": on }));
-        Ok(())
+        let target = self.target(to)?;
+        if target.id.is_none() && target.names.contains(", ") {
+            bail!("several phones are connected ({}), choose one", target.names);
+        }
+        if let Some(from) = self.streams.lock().unwrap().get(kind) {
+            bail!("{from} is already streaming it");
+        }
+        // With one phone online `target.id` is None and the message reaches just that phone.
+        self.send_control_to(target.id.as_deref(), json!({ "t": kind, "on": true }));
+        Ok(target.names)
     }
 
     /// Sends the current PC clipboard now, whatever the sync setting says.
-    pub async fn send_clipboard(&self) -> Result<()> {
-        let online = self.online_devices();
+    /// `to`: a device name or id, or None for every connected phone.
+    pub async fn send_clipboard(&self, to: Option<&str>) -> Result<()> {
+        let target = self.target(to)?;
         let Some(text) = clipboard::get().await.filter(|t| !t.is_empty()) else {
             bail!("clipboard is empty or not text");
         };
-        if online.is_empty() {
-            bail!("no phone connected");
-        }
         self.remember_clip(&text);
         let chars = text.chars().count();
-        self.send_control(json!({ "t": "clip", "text": text }));
-        self.emit(Event::Clipboard { to_phone: true, device: online.join(", "), chars });
+        self.send_control_to(target.id.as_deref(), json!({ "t": "clip", "text": text }));
+        self.emit(Event::Clipboard { to_phone: true, device: target.names, chars });
         Ok(())
+    }
+
+    /// Resolves `to` (a device name or id) to an online phone, or every online phone for None.
+    pub fn target(&self, to: Option<&str>) -> Result<Target> {
+        let online = self.online.lock().unwrap();
+        let state = self.state.lock().unwrap();
+        let is_online = |d: &Device| online.get(&d.id).copied().unwrap_or(0) > 0;
+        match to {
+            Some(key) => {
+                let dev = state
+                    .devices
+                    .iter()
+                    .find(|d| d.id == key || d.name.eq_ignore_ascii_case(key))
+                    .ok_or_else(|| anyhow!("no paired device \"{key}\""))?;
+                if !is_online(dev) {
+                    bail!("{} is not connected", dev.name);
+                }
+                Ok(Target {
+                    id: Some(dev.id.clone()),
+                    names: dev.name.clone(),
+                    phones: vec![(dev.id.clone(), dev.name.clone())],
+                })
+            }
+            None => {
+                let phones: Vec<(String, String)> =
+                    state.devices.iter().filter(|d| is_online(d)).map(|d| (d.id.clone(), d.name.clone())).collect();
+                if phones.is_empty() {
+                    bail!("no phone connected");
+                }
+                let names = phones.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>().join(", ");
+                Ok(Target { id: None, names, phones })
+            }
+        }
     }
 
     pub fn server_id(&self) -> String {
@@ -255,7 +334,12 @@ impl App {
 
     /// Sends a JSON message to every connected phone.
     pub fn send_control(&self, msg: Value) {
-        let _ = self.control_tx.send(msg.to_string());
+        self.send_control_to(None, msg);
+    }
+
+    /// Sends a JSON message to one phone (by device id), or to every phone for None.
+    pub fn send_control_to(&self, device: Option<&str>, msg: Value) {
+        let _ = self.control_tx.send((device.map(str::to_string), msg.to_string()));
     }
 
     pub fn online_devices(&self) -> Vec<String> {
@@ -286,17 +370,16 @@ impl App {
             "dotlink://pair?h={hosts}&p={}&fp={}&c={secret}&n={}&id={}",
             self.port,
             self.fingerprint,
-            url_encode(&self.hostname),
+            url_encode(&self.name()),
             self.server_id()
         );
         (uri, rx)
     }
 
-    /// Offers files to the connected phone, which downloads them right away.
-    pub fn offer_files(&self, paths: &[PathBuf]) -> Result<usize> {
-        if self.online_devices().is_empty() {
-            bail!("no phone connected");
-        }
+    /// Offers files to a phone (`to`: its name or id) or, for None, to every connected phone.
+    /// The phone downloads them right away. Returns the count and the phones' names.
+    pub fn offer_files(&self, paths: &[PathBuf], to: Option<&str>) -> Result<(usize, String)> {
+        let target = self.target(to)?;
         let mut offers = self.offers.lock().unwrap();
         offers.retain(|_, o| o.created.elapsed() < OFFER_TTL);
         let mut count = 0;
@@ -307,22 +390,45 @@ impl App {
             }
             let id = random_hex(12);
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
-            self.send_control(json!({ "t": "file", "id": id, "name": name, "size": meta.len() }));
-            self.put_transfer(Transfer {
-                id: id.clone(),
-                outgoing: true,
-                device: String::new(),
-                name: name.clone(),
-                size: Some(meta.len()),
-                done: 0,
-                state: TransferState::Waiting,
-                path: path.to_string_lossy().into_owned(),
-                started_at: now_secs(),
-            });
-            offers.insert(id, Offer { path: path.clone(), name, size: meta.len(), created: Instant::now() });
+            self.send_control_to(target.id.as_deref(), json!({ "t": "file", "id": id, "name": name, "size": meta.len() }));
+            for (device, phone) in &target.phones {
+                self.put_transfer(Transfer {
+                    id: transfer_id(&id, target.id.is_none(), device),
+                    outgoing: true,
+                    device: phone.clone(),
+                    name: name.clone(),
+                    size: Some(meta.len()),
+                    done: 0,
+                    state: TransferState::Waiting,
+                    path: path.to_string_lossy().into_owned(),
+                    started_at: now_secs(),
+                });
+            }
+            offers.insert(
+                id,
+                Offer { device: target.id.clone(), path: path.clone(), name, size: meta.len(), created: Instant::now() },
+            );
             count += 1;
         }
-        Ok(count)
+        Ok((count, target.names))
+    }
+
+    /// Saves a phone's new name (from its `info` message).
+    pub fn rename_device(&self, id: &str, name: &str) {
+        let name: String = name.trim().chars().filter(|c| !c.is_control()).take(64).collect();
+        if name.is_empty() {
+            return;
+        }
+        let mut state = self.state.lock().unwrap();
+        let Some(dev) = state.devices.iter_mut().find(|d| d.id == id) else { return };
+        if dev.name == name {
+            return;
+        }
+        tracing::info!("{} is now called {name}", dev.name);
+        dev.name = name;
+        if let Err(e) = state.save() {
+            tracing::warn!("state: {e:#}");
+        }
     }
 
     pub fn unpair(&self, key: &str) -> Result<String> {
@@ -419,13 +525,13 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
     app.emit(Event::Paired { name: name.clone() });
     app.emit(Event::Devices);
     notify("Phone paired", &format!("{name} can now connect to this PC"));
-    Json(json!({ "token": token, "server_id": app.server_id(), "server_name": app.hostname })).into_response()
+    Json(json!({ "token": token, "server_id": app.server_id(), "server_name": app.name() })).into_response()
 }
 
 async fn ping(AxState(app): AxState<Arc<App>>, Authed(_): Authed) -> Json<Value> {
     let config = app.config();
     Json(json!({
-        "name": app.hostname,
+        "name": app.name(),
         "terminal": config.terminal,
         "terminal_pin": !config.terminal_pin.is_empty(),
     }))
@@ -454,12 +560,13 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
     tracing::info!("{} connected", dev.name);
     let (mut tx, mut rx) = socket.split();
     let mut events = app.control_tx.subscribe();
-    let hello = json!({ "t": "hello", "name": app.hostname, "terminal": app.config().terminal });
+    let hello = app.hello();
     let _ = tx.send(Message::Text(hello.to_string().into())).await;
     loop {
         tokio::select! {
             ev = events.recv() => match ev {
-                Ok(text) => if tx.send(Message::Text(text.into())).await.is_err() { break },
+                Ok((Some(to), _)) if to != dev.id => continue,
+                Ok((_, text)) => if tx.send(Message::Text(text.into())).await.is_err() { break },
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(_) => break,
             },
@@ -475,6 +582,10 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                         info.adb_wifi = v["adb_wifi"].as_bool().unwrap_or(false);
                         info.dev_options = v["dev_options"].as_bool().unwrap_or(false);
                         drop(phones);
+                        // The phone's name, as set in its app.
+                        if let Some(name) = v["name"].as_str() {
+                            app.rename_device(&dev.id, name);
+                        }
                         app.emit(Event::Devices);
                     }
                     if v["t"] == "media" && v["state"] == "needs_tap" {
@@ -683,13 +794,16 @@ async fn camera_session(app: Arc<App>, dev: &Device, mut socket: WebSocket) -> R
         }
         _ => return Ok(()),
     };
-    if let Err(e) = find_camera(&app.config().camera_device) {
-        socket.send(Message::Text(json!({ "error": format!("{e:#}") }).to_string().into())).await?;
-        return Err(e);
-    }
+    let streaming = find_camera(&app.config().camera_device).and_then(|_| Streaming::claim(&app, "camera", &dev.name));
+    let _streaming = match streaming {
+        Ok(s) => s,
+        Err(e) => {
+            socket.send(Message::Text(json!({ "error": format!("{e:#}") }).to_string().into())).await?;
+            return Err(e);
+        }
+    };
     socket.send(Message::Text(json!({ "ok": true }).to_string().into())).await?;
     tracing::info!("camera from {} started ({w}x{h})", dev.name);
-    let _streaming = Streaming::new(&app, "camera", &dev.name);
     while let Some(Ok(msg)) = socket.recv().await {
         if let Message::Binary(jpeg) = msg {
             app.camera.send(jpeg);
@@ -710,7 +824,8 @@ async fn ws_mic(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, Authed(de
             }
             _ => return,
         };
-        let mut sink = match MicSink::start(rate, ch) {
+        let started = Streaming::claim(&app, "mic", &dev.name).and_then(|s| Ok((s, MicSink::start(rate, ch)?)));
+        let (_streaming, mut sink) = match started {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!("mic: {e:#}");
@@ -720,7 +835,6 @@ async fn ws_mic(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, Authed(de
         };
         let _ = socket.send(Message::Text(json!({ "ok": true }).to_string().into())).await;
         tracing::info!("mic from {} started", dev.name);
-        let _streaming = Streaming::new(&app, "mic", &dev.name);
         while let Some(Ok(msg)) = socket.recv().await {
             if let Message::Binary(pcm) = msg {
                 sink.write(&pcm);
@@ -812,19 +926,21 @@ async fn save_upload(app: &App, name: &str, sha: Option<&str>, body: Body, progr
 }
 
 async fn download(AxState(app): AxState<Arc<App>>, Authed(dev): Authed, Path(id): Path<String>) -> Response {
-    let (path, name, size) = {
+    let (path, name, size, tid) = {
         let offers = app.offers.lock().unwrap();
         match offers.get(&id) {
-            Some(o) => (o.path.clone(), o.name.clone(), o.size),
-            None => return StatusCode::NOT_FOUND.into_response(),
+            Some(o) if o.device.as_ref().is_none_or(|d| *d == dev.id) => {
+                (o.path.clone(), o.name.clone(), o.size, transfer_id(&id, o.device.is_none(), &dev.id))
+            }
+            _ => return StatusCode::NOT_FOUND.into_response(),
         }
     };
     let file = match tokio::fs::File::open(&path).await {
         Ok(f) => f,
         Err(_) => return StatusCode::GONE.into_response(),
     };
-    let mut transfer = app.transfers.lock().unwrap().iter().find(|t| t.id == id).cloned().unwrap_or(Transfer {
-        id: id.clone(),
+    let mut transfer = app.transfers.lock().unwrap().iter().find(|t| t.id == tid).cloned().unwrap_or(Transfer {
+        id: tid.clone(),
         outgoing: true,
         device: String::new(),
         name: name.clone(),
@@ -904,10 +1020,17 @@ struct Streaming {
 }
 
 impl Streaming {
-    fn new(app: &Arc<App>, kind: &'static str, device: &str) -> Self {
-        app.streams.lock().unwrap().insert(kind, device.to_string());
+    /// Marks `device` as streaming `kind`; fails while another phone streams it (they would
+    /// share one Dotlink Camera / Mic).
+    fn claim(app: &Arc<App>, kind: &'static str, device: &str) -> Result<Self> {
+        let mut streams = app.streams.lock().unwrap();
+        if let Some(from) = streams.get(kind) {
+            bail!("{from} is already streaming the {}", if kind == "mic" { "microphone" } else { "webcam" });
+        }
+        streams.insert(kind, device.to_string());
+        drop(streams);
         app.emit(Event::Streams);
-        Self { app: app.clone(), kind }
+        Ok(Self { app: app.clone(), kind })
     }
 }
 

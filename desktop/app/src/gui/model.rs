@@ -63,6 +63,10 @@ pub struct Model {
     pub has_tray: bool,
     /// Camera/mic asked to start, waiting for the phone: (kind, when).
     pub starting: Vec<(&'static str, Instant)>,
+    /// Device id that Send files / Send clipboard go to; None for every connected phone.
+    pub send_to: Option<String>,
+    /// Device id the webcam and mic start on, when several phones are connected.
+    pub stream_from: Option<String>,
 }
 
 /// [Model::fixing] while "Fix all" runs.
@@ -101,6 +105,8 @@ impl Model {
             restart_needed: false,
             has_tray: false,
             starting: Vec::new(),
+            send_to: None,
+            stream_from: None,
         });
         let mut updates = client.watch();
         model.update(cx, |_, cx| {
@@ -277,11 +283,26 @@ impl Model {
         .detach();
     }
 
+    /// [Model::send_to] while that phone is online; otherwise every connected phone.
+    pub fn send_target(&self) -> Option<String> {
+        let id = self.send_to.as_ref()?;
+        let online = self.status.as_ref()?.devices.iter().any(|d| &d.id == id && d.online);
+        online.then(|| id.clone())
+    }
+
+    /// [Model::stream_from] while that phone is online; otherwise the first online phone.
+    pub fn stream_source(&self) -> Option<String> {
+        let online: Vec<&str> =
+            self.status.as_ref()?.devices.iter().filter(|d| d.online).map(|d| d.id.as_str()).collect();
+        let chosen = self.stream_from.as_deref().filter(|id| online.contains(id));
+        chosen.or(online.first().copied()).map(str::to_string)
+    }
+
     pub fn send_files(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         if paths.is_empty() {
             return;
         }
-        let send = self.client.send_files(paths);
+        let send = self.client.send_files(paths, self.send_target());
         cx.spawn(async move |this, cx| {
             let result = send.await;
             this.update(cx, |this, cx| match result {
@@ -294,7 +315,7 @@ impl Model {
     }
 
     pub fn send_clipboard(&mut self, cx: &mut Context<Self>) {
-        let send = self.client.send_clipboard();
+        let send = self.client.send_clipboard(self.send_target());
         cx.spawn(async move |this, cx| {
             let result = send.await;
             this.update(cx, |this, cx| match result {
@@ -352,7 +373,7 @@ impl Model {
             self.starting.push((kind, Instant::now()));
         }
         cx.notify();
-        let call = self.client.media(kind, on);
+        let call = self.client.media(kind, on, self.stream_source());
         cx.spawn(async move |this, cx| {
             let result = call.await;
             this.update(cx, |this, cx| {

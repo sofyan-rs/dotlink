@@ -91,19 +91,19 @@ The QR code holds the PC's addresses, its certificate fingerprint and a one-time
 ## CLI
 
 ```
-dotlink                   open the app (or bring its window up)
-dotlink --background      start in the tray, without the window (used at login)
-dotlink daemon            run the service without a window
-dotlink pair              show a pairing QR code
-dotlink send FILE...      send files to the phone
-dotlink clip              send the PC clipboard to the phone
-dotlink devices           list paired phones
-dotlink unpair NAME|ID    forget a phone
-dotlink camera on|off     start/stop the phone camera as Dotlink Camera
-dotlink mic on|off        start/stop the phone mic as Dotlink Mic
-dotlink cast [stop]       show the phone screen on the PC (scrcpy)
-dotlink cast pair CODE    pair with the phone's Wireless debugging once
-dotlink quit              stop the running app or daemon
+dotlink                             open the app (or bring its window up)
+dotlink --background                start in the tray, without the window (used at login)
+dotlink daemon                      run the service without a window
+dotlink pair                        show a pairing QR code
+dotlink send [--to PHONE] FILE...   send files to the phones (or one)
+dotlink clip [--to PHONE]           send the PC clipboard to the phones (or one)
+dotlink devices                     list paired phones
+dotlink unpair NAME|ID              forget a phone
+dotlink camera on|off [--to PHONE]  start/stop the phone camera as Dotlink Camera
+dotlink mic on|off [--to PHONE]     start/stop the phone mic as Dotlink Mic
+dotlink cast [stop]                 show the phone screen on the PC (scrcpy)
+dotlink cast pair CODE              pair with the phone's Wireless debugging once
+dotlink quit                        stop the running app or daemon
 ```
 
 The commands talk to whichever is running (app or daemon) over a socket in `$XDG_RUNTIME_DIR`.
@@ -113,6 +113,7 @@ The commands talk to whichever is running (app or daemon) over a socket in `$XDG
 The Settings page edits the same file.
 
 ```toml
+name = ""                # what the phones call this PC; default: the hostname
 port = 47390
 download_dir = "~/Downloads/Dotlink"
 clipboard_sync = true

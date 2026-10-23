@@ -15,6 +15,8 @@ use gpui_component::TitleBar;
 use gpui_component::WindowExt as _;
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
+use gpui_component::button::Button;
+use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_component::switch::Switch;
 use gpui_component::{ActiveTheme as _, Icon};
 use gpui_kit_assets::IconName;
@@ -43,6 +45,7 @@ pub struct MainView {
 /// The Settings page's fields, filled from the service's config once it arrives.
 struct SettingsForm {
     loaded: bool,
+    name: Entity<InputState>,
     download_dir: Entity<InputState>,
     shell: Entity<InputState>,
     terminal_pin: Entity<InputState>,
@@ -63,6 +66,7 @@ impl MainView {
         };
         let form = SettingsForm {
             loaded: false,
+            name: input("This PC's hostname", window, cx),
             download_dir: input("~/Downloads/Dotlink", window, cx),
             shell: input("Your login shell", window, cx),
             terminal_pin: cx.new(|cx| InputState::new(window, cx).placeholder("No PIN").masked(true)),
@@ -159,6 +163,7 @@ impl MainView {
         let set = |state: &Entity<InputState>, value: String, window: &mut Window, cx: &mut Context<Self>| {
             state.update(cx, |s, cx| s.set_value(value, window, cx));
         };
+        set(&self.form.name, config.name.clone(), window, cx);
         set(&self.form.download_dir, config.download_dir.clone(), window, cx);
         set(&self.form.shell, config.shell.clone(), window, cx);
         set(&self.form.terminal_pin, config.terminal_pin.clone(), window, cx);
@@ -200,6 +205,7 @@ impl MainView {
                 return;
             }
         }
+        config.name = text(&self.form.name, cx);
         config.download_dir = text(&self.form.download_dir, cx);
         if config.download_dir.is_empty() {
             config.download_dir = Config::default().download_dir;
@@ -246,7 +252,7 @@ impl Render for MainView {
                 .text_size(px(15.))
                 .child(self.sidebar(&p, page, cx))
                 .child(div().id("content").flex_1().h_full().overflow_y_scroll().child(
-                    div().max_w(px(760.)).px(px(32.)).py(px(28.)).flex().flex_col().gap(px(24.)).child(content),
+                    div().w_full().max_w(px(760.)).mx_auto().px(px(32.)).py(px(28.)).flex().flex_col().gap(px(24.)).child(content),
                 ));
         // GNOME (and other compositors without server-side decorations) leave the title bar to
         // the app: draw one with window controls. gpui-component's Root already adds the
@@ -273,7 +279,7 @@ impl MainView {
     fn sidebar(&self, p: &Palette, page: Page, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.model.read(cx);
         let connected = model.connected;
-        let hostname = model.status.as_ref().map(|s| s.hostname.clone()).unwrap_or_default();
+        let hostname = model.status.as_ref().map(|s| s.name.clone()).unwrap_or_default();
         let online = model.online_names().len();
         let nav = |id: &'static str, icon: IconName, label: &'static str, target: Page, cx: &mut Context<Self>| {
             let selected = page == target;
@@ -394,6 +400,25 @@ impl MainView {
                     )),
             );
         }
+        // Several phones online: choose where Send files / Send clipboard go.
+        let online: Vec<(Option<String>, String)> =
+            status.devices.iter().filter(|d| d.online).map(|d| (Some(d.id.clone()), d.name.clone())).collect();
+        let several = online.len() > 1;
+        let target = several.then(|| {
+            let options: Vec<_> = std::iter::once((None, "All phones".to_string())).chain(online).collect();
+            let model = self.model.clone();
+            div().flex().items_center().gap(px(10.)).child(mono_label(p, "TO")).child(phone_picker(
+                "send-to",
+                options,
+                self.model.read(cx).send_target(),
+                move |id, cx| {
+                    model.update(cx, |m, cx| {
+                        m.send_to = id;
+                        cx.notify();
+                    })
+                },
+            ))
+        });
         let accent = p.accent;
         let addresses = status.addresses.iter().map(|a| format!("{a}:{}", status.port)).collect::<Vec<_>>().join("  ");
 
@@ -418,7 +443,10 @@ impl MainView {
                         let paths = paths.paths().to_vec();
                         this.model.update(cx, |m, cx| m.send_files(paths, cx));
                     }))
-                    .child(div().text_color(p.ink_muted).child(if any_online {
+                    .children(target)
+                    .child(div().text_color(p.ink_muted).child(if several {
+                        "Drop files here to send them to the chosen phone"
+                    } else if any_online {
                         "Drop files here to send them to your phone"
                     } else {
                         "Open Dotlink on your phone to send it files"
@@ -460,7 +488,7 @@ impl MainView {
                 p,
                 "This PC",
                 group(p)
-                    .child(kv(p, "Name", status.hostname.clone()))
+                    .child(kv(p, "Name", status.name.clone()))
                     .child(kv(p, "Address", addresses).border_t_1().border_color(p.line))
                     .child(
                         kv(p, "Fingerprint", format!("{}…", &status.fingerprint[..32.min(status.fingerprint.len())]))
@@ -576,6 +604,29 @@ impl MainView {
             return None;
         }
         let mut list = group(p);
+        // Several phones online: choose the one the webcam and mic start on.
+        let online: Vec<(Option<String>, String)> = model
+            .status
+            .iter()
+            .flat_map(|s| &s.devices)
+            .filter(|d| d.online)
+            .map(|d| (Some(d.id.clone()), d.name.clone()))
+            .collect();
+        let first = usize::from(online.len() > 1);
+        if online.len() > 1 {
+            let entity = self.model.clone();
+            list = list.child(row(p).child(div().flex_1().child("Phone")).child(phone_picker(
+                "stream-from",
+                online,
+                model.stream_source(),
+                move |id, cx| {
+                    entity.update(cx, |m, cx| {
+                        m.stream_from = id;
+                        cx.notify();
+                    })
+                },
+            )));
+        }
         for (i, (kind, title, device_name, from)) in rows.into_iter().enumerate() {
             let starting = from.is_none() && model.is_starting(kind);
             let (subtitle, dot) = match (&from, starting) {
@@ -601,7 +652,7 @@ impl MainView {
                 };
             list = list.child(
                 row(p)
-                    .when(i > 0, |r| r.border_t_1().border_color(p.line))
+                    .when(i + first > 0, |r| r.border_t_1().border_color(p.line))
                     .child(status_dot(dot))
                     .child(
                         div()
@@ -937,6 +988,11 @@ impl MainView {
             ))
             .child(section(
                 p,
+                "This PC",
+                group(p).child(field("Name", "What your phones call this PC.", &form.name, true)),
+            ))
+            .child(section(
+                p,
                 "Files",
                 group(p).child(field("Download folder", "Files from the phone go here.", &form.download_dir, true)),
             ))
@@ -1113,6 +1169,33 @@ fn segmented(
                 .on_click(move |_, _, cx| on_select(i, cx))
         },
     ))
+}
+
+/// A button showing the chosen phone that opens a menu of `options` (device id, or None for
+/// "all"; name).
+fn phone_picker(
+    id: &'static str,
+    options: Vec<(Option<String>, String)>,
+    selected: Option<String>,
+    on_select: impl Fn(Option<String>, &mut App) + 'static,
+) -> impl IntoElement {
+    let label = options.iter().find(|(d, _)| *d == selected).map(|(_, n)| n.clone()).unwrap_or_default();
+    let on_select = std::rc::Rc::new(on_select);
+    Button::new(id).outline().h(px(CONTROL)).label(label).dropdown_caret(true).dropdown_menu_with_anchor(
+        gpui::Anchor::TopRight,
+        move |mut menu, _, _| {
+            for (device, name) in &options {
+                let on_select = on_select.clone();
+                let device = device.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(name.clone())
+                        .checked(device == selected)
+                        .on_click(move |_, _, cx| on_select(device.clone(), cx)),
+                );
+            }
+            menu.min_w(px(200.))
+        },
+    )
 }
 
 /// Greys out a pill that can't be used right now.
