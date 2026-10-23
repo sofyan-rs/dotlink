@@ -7,7 +7,13 @@
 <style>
   @font-face { font-family: "Geist Mono"; src: url("file:///android_res/font/geist_mono.ttf"); }
   /* Icons used by prompts, fastfetch, eza… Fallback only: Geist Mono draws the letters. */
-  @font-face { font-family: "Symbols Nerd Font Mono"; src: url("symbols-nerd-mono.ttf"); }
+  /* Its glyphs are 1 em wide, the Geist Mono cell 0.6 em: without size-adjust every icon spills
+     over the next cell (the space after it). Scaled, an icon fills exactly one cell. */
+  @font-face { font-family: "Symbols Nerd Font Mono"; src: url("symbols-nerd-mono.ttf"); size-adjust: 60%; }
+  /* Unicode symbols neither has and Android lacks or only has proportional: ⏺ ⎿ ⏵ (Claude
+     Code), arrows, dingbats, braille (spinners, btop graphs), legacy computing. A subset of
+     JuliaMono, see symbols-mono-LICENSE.txt. */
+  @font-face { font-family: "Dotlink Symbols Mono"; src: url("symbols-mono.ttf"); }
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   /* Room around the text, so it doesn't touch the rounded corners. */
   #term { position: absolute; inset: 14px 8px 14px 12px; }
@@ -18,10 +24,13 @@
 <div id="term"></div>
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
+<script src="addon-webgl.js"></script>
 <script>
   // Kotlin side: window.Bridge (input, resize, ready). Kotlin calls termWrite / termReset / termFocus.
   const term = new Terminal({
-    fontFamily: '"Geist Mono", "Symbols Nerd Font Mono", monospace',
+    // Symbols before Nerd Font: both have ❯ ⚡ and a few more, and the symbols font draws them
+    // at the cell's size; the Nerd Font is then only asked for its private-use icons.
+    fontFamily: '"Geist Mono", "Dotlink Symbols Mono", "Symbols Nerd Font Mono", monospace',
     fontSize: 13,
     cursorBlink: true,
     scrollback: 5000,
@@ -38,6 +47,14 @@
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(document.getElementById("term"));
+  // WebGL draws box lines and powerline separators itself (customGlyphs), exactly one cell
+  // tall and wide, where a font's would come out too small or too wide; it's also smoother.
+  // Without WebGL, or when the GPU drops the context, the DOM renderer takes over.
+  try {
+    const webgl = new WebglAddon.WebglAddon();
+    webgl.onContextLoss(() => webgl.dispose());
+    term.loadAddon(webgl);
+  } catch (e) {}
 
   let last = "";
   function refit() {
@@ -63,7 +80,7 @@
   window.termFontSize = (px) => { term.options.fontSize = px; refit(); };
 
   // Cell size depends on the fonts: re-measure once they have loaded.
-  Promise.all([document.fonts.load('13px "Geist Mono"'), document.fonts.load('13px "Symbols Nerd Font Mono"')]).then(() => {
+  Promise.all(['"Geist Mono"', '"Symbols Nerd Font Mono"', '"Dotlink Symbols Mono"'].map((f) => document.fonts.load("13px " + f))).then(() => {
     const family = term.options.fontFamily;
     term.options.fontFamily = "monospace"; // a real change makes xterm measure the cell again
     term.options.fontFamily = family;
