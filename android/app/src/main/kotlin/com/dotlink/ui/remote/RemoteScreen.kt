@@ -37,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -76,6 +77,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlinx.coroutines.delay
 
 /** The `/ws/input` socket. Messages are dropped while it is not open. */
 private class InputChannel(
@@ -144,6 +146,7 @@ private class InputChannel(
 }
 
 private const val SENTINEL = "  "
+private const val RESET_MS = 400L
 private const val TAP_MS = 250L
 private const val HOLD_MS = 450L
 
@@ -404,9 +407,12 @@ private fun KeyChip(
 }
 
 /**
- * A keyboard button with an invisible text field behind it. The field always holds a
- * two-space sentinel; whatever the keyboard adds is sent and the sentinel is restored, and
- * each removed character becomes a Backspace.
+ * A keyboard button with an invisible text field behind it. The field starts with a two-space
+ * sentinel; whatever the keyboard adds is sent and each removed character becomes a
+ * Backspace. Changes are measured against the last text seen, not the sentinel: a keyboard
+ * that commits again before our reset reaches it still holds the previous character, which
+ * would otherwise be sent twice. The sentinel comes back once typing pauses, and right away
+ * after a Backspace so there is always something left to delete.
  */
 @Composable
 private fun KeyboardToggle(
@@ -418,14 +424,23 @@ private fun KeyboardToggle(
     val keyboard = LocalSoftwareKeyboardController.current
     var focused by remember { mutableStateOf(false) }
     val sentinel = TextFieldValue(SENTINEL, TextRange(SENTINEL.length))
+    var value by remember { mutableStateOf(sentinel) }
+    LaunchedEffect(value.text) {
+        if (value.text.length > SENTINEL.length) {
+            delay(RESET_MS)
+            value = sentinel
+        }
+    }
     Box {
         BasicTextField(
-            value = sentinel,
+            value = value,
             onValueChange = { v ->
+                val old = value.text
                 val t = v.text
-                val common = t.commonPrefixWith(SENTINEL).length
-                repeat(SENTINEL.length - common) { onKey("BACKSPACE") }
+                val common = t.commonPrefixWith(old).length
+                repeat(old.length - common) { onKey("BACKSPACE") }
                 onTyped(t.substring(common))
+                value = if (t.length < SENTINEL.length) sentinel else v
             },
             keyboardOptions =
                 KeyboardOptions(
