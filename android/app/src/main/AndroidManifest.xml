@@ -69,6 +69,15 @@
             android:taskAffinity=""
             android:theme="@style/Theme.Dotlink.Translucent" />
 
+        <!-- Behind the "Start" button when the PC asks for the webcam or mic. -->
+        <activity
+            android:name=".ui.StreamActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Dotlink.Translucent" />
+
         <service
             android:name=".link.LinkService"
             android:exported="false"

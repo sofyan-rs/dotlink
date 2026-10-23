@@ -380,7 +380,29 @@ private fun SessionTabs(controller: TermController) {
                 onClose = { controller.closeSession(tab.id) },
             )
         }
-        Key("+") { controller.open(null, fresh = true) }
+        NewSessionButton { controller.open(null, fresh = true) }
+    }
+}
+
+/** + at the end of the session tabs: a 40 dp circle like the tabs, with a real icon. */
+@Composable
+private fun NewSessionButton(onClick: () -> Unit) {
+    val colors = Dotline.colors
+    Box(
+        modifier =
+            Modifier
+                .size(40.dp)
+                .clip(Dotline.radius.pill)
+                .border(Dotline.size.stroke, colors.lineStrong, Dotline.radius.pill)
+                .pointerInput(onClick) {
+                    awaitEachGesture {
+                        awaitFirstDown()
+                        if (waitForUpOrCancellation() != null) onClick()
+                    }
+                },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(DotlineIcons.Plus, contentDescription = "New session", tint = colors.ink, modifier = Modifier.size(20.dp))
     }
 }
 

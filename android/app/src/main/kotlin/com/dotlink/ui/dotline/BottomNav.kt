@@ -71,7 +71,7 @@ enum class MainTab(
     Remote("REMOTE", DotlineIcons.Mouse),
     Shell("SHELL", DotlineIcons.Terminal),
     Camera("CAMERA", DotlineIcons.Camera),
-    Settings("SETTINGS", DotlineIcons.Sliders),
+    Settings("SETTINGS", DotlineIcons.Settings),
 }
 
 /**

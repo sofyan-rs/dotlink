@@ -1,12 +1,16 @@
 package com.dotlink.link
 
+import android.Manifest
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -16,6 +20,7 @@ import com.dotlink.DotlinkApp
 import com.dotlink.R
 import com.dotlink.ui.ClipboardActivity
 import com.dotlink.ui.MainActivity
+import com.dotlink.ui.StreamActivity
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -41,6 +46,12 @@ class LinkService : LifecycleService() {
                 if (s is LinkState.Unpaired) stopSelf() else promote()
             }
         }
+        lifecycleScope.launch {
+            link.streamRequests.collect { (kind, on) -> onStreamRequest(kind, on) }
+        }
+        lifecycleScope.launch { link.adbWifiRequests.collect { showAdbWifiPrompt() } }
+        val transfers = TransferNotifier(this, link)
+        lifecycleScope.launch { link.transfers.collect { transfers.update(it) } }
         val cm = getSystemService(ConnectivityManager::class.java)
         networkCallback =
             object : ConnectivityManager.NetworkCallback() {
@@ -80,6 +91,7 @@ class LinkService : LifecycleService() {
         if (camera != null) return
         link.cameraOn.value = true
         promote()
+        cancelStreamPrompt("camera")
         camera =
             CameraStreamer(this, this, link) { error ->
                 camera = null
@@ -98,6 +110,7 @@ class LinkService : LifecycleService() {
         if (mic != null) return
         link.micOn.value = true
         promote()
+        cancelStreamPrompt("mic")
         mic =
             MicStreamer(link) { error ->
                 mic = null
@@ -105,6 +118,104 @@ class LinkService : LifecycleService() {
                 error?.let { link.notices.tryEmit("Microphone stopped: $it") }
             }.also { it.start() }
     }
+
+    /**
+     * The PC asked to turn [kind] on or off. Stopping always works. Starting works only while
+     * one of our activities is on screen (Android 14+ keeps background apps off the camera and
+     * mic); otherwise we post a notification whose Start button opens [StreamActivity].
+     */
+    private fun onStreamRequest(
+        kind: String,
+        on: Boolean,
+    ) {
+        val camera = kind == "camera"
+        if (!on) {
+            cancelStreamPrompt(kind)
+            if (camera) this.camera?.stop() else mic?.stop()
+            return
+        }
+        if ((camera && this.camera != null) || (!camera && mic != null)) return
+        val permission = if (camera) Manifest.permission.CAMERA else Manifest.permission.RECORD_AUDIO
+        val granted = ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        if (granted && DotlinkApp.inForeground) {
+            try {
+                if (camera) startCamera() else startMic()
+                return
+            } catch (e: SecurityException) {
+                // Lost the foreground in between: fall back to asking.
+                if (camera) link.cameraOn.value = false else link.micOn.value = false
+                promote()
+            }
+        }
+        showStreamPrompt(kind)
+        link.sendStreamNeedsTap(kind)
+    }
+
+    private fun showStreamPrompt(kind: String) {
+        val what = if (kind == "camera") "webcam" else "microphone"
+        val start =
+            PendingIntent.getActivity(
+                this,
+                if (kind == "camera") 10 else 11,
+                StreamActivity.intent(this, kind),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        val n =
+            NotificationCompat
+                .Builder(this, DotlinkApp.CHANNEL_REQUESTS)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("${link.prefs.serverName} wants your $what")
+                .setContentText("Tap Start to use this phone as the PC's $what.")
+                .setContentIntent(start)
+                .addAction(0, "Start", start)
+                .setAutoCancel(true)
+                .setTimeoutAfter(60_000)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build()
+        getSystemService(NotificationManager::class.java).notify(promptId(kind), n)
+    }
+
+    /**
+     * The PC wants to cast this screen but can't reach it: Wireless debugging is off (or the
+     * phone isn't plugged in). Opens Developer options at that switch, or About phone when
+     * Developer options are off (tap Build number 7 times).
+     */
+    private fun showAdbWifiPrompt() {
+        val devOptions = Settings.Global.getInt(contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1
+        val target =
+            if (devOptions) {
+                Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                    // Scrolls to and highlights the switch on AOSP-based Settings.
+                    .putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
+            } else {
+                Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)
+            }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val open = PendingIntent.getActivity(this, 12, target, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val text =
+            if (devOptions) {
+                "Turn on Wireless debugging to show this screen on the PC. Or plug the phone in over USB."
+            } else {
+                "Turn on Developer options first: tap Build number 7 times, then turn on Wireless debugging."
+            }
+        val n =
+            NotificationCompat
+                .Builder(this, DotlinkApp.CHANNEL_REQUESTS)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("${link.prefs.serverName} wants to cast this screen")
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setContentIntent(open)
+                .addAction(0, if (devOptions) "Open settings" else "Open About phone", open)
+                .setAutoCancel(true)
+                .setTimeoutAfter(120_000)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build()
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ADB_WIFI_PROMPT, n)
+    }
+
+    private fun cancelStreamPrompt(kind: String) = getSystemService(NotificationManager::class.java).cancel(promptId(kind))
+
+    private fun promptId(kind: String) = if (kind == "camera") NOTIFICATION_CAMERA_PROMPT else NOTIFICATION_MIC_PROMPT
 
     /** (Re)starts foreground mode with the types we currently need. */
     private fun promote() {
@@ -154,6 +265,9 @@ class LinkService : LifecycleService() {
 
     companion object {
         private const val NOTIFICATION_ID = 1
+        private const val NOTIFICATION_CAMERA_PROMPT = 2
+        private const val NOTIFICATION_MIC_PROMPT = 3
+        private const val NOTIFICATION_ADB_WIFI_PROMPT = 4
         const val ACTION_CAMERA_ON = "camera_on"
         const val ACTION_CAMERA_OFF = "camera_off"
         const val ACTION_CAMERA_REBIND = "camera_rebind"

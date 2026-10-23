@@ -8,6 +8,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Intent
+import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -106,6 +107,12 @@ class Link(
     /** [Prefs.themeMode], observable so every open screen re-themes at once. */
     val themeMode = MutableStateFlow(prefs.themeMode)
 
+    /** The PC wants to cast this screen but Wireless debugging is off; LinkService asks the user. */
+    val adbWifiRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 2)
+
+    /** The PC asked to turn the camera ("camera") or mic ("mic") on or off; LinkService acts on it. */
+    val streamRequests = MutableSharedFlow<Pair<String, Boolean>>(extraBufferCapacity = 8)
+
     /** One-off messages for the UI (errors, "Clipboard sent"). */
     val notices = MutableSharedFlow<String>(extraBufferCapacity = 16)
 
@@ -202,6 +209,35 @@ class Link(
     fun start() {
         if (!prefs.paired || controlJob?.isActive == true) return
         controlJob = scope.launch { controlLoop() }
+        watchDebugSettings()
+    }
+
+    private var debugObserver: ContentObserver? = null
+
+    /** Tells the PC when Developer options or Wireless debugging are turned on or off. */
+    private fun watchDebugSettings() {
+        if (debugObserver != null) return
+        val observer =
+            object : ContentObserver(null) {
+                override fun onChange(selfChange: Boolean) = sendInfo()
+            }
+        val resolver = app.contentResolver
+        resolver.registerContentObserver(Settings.Global.getUriFor(ADB_WIFI_ENABLED), false, observer)
+        resolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.DEVELOPMENT_SETTINGS_ENABLED), false, observer)
+        debugObserver = observer
+    }
+
+    private fun globalFlag(name: String) = runCatching { Settings.Global.getInt(app.contentResolver, name, 0) == 1 }.getOrDefault(false)
+
+    /** For casting: the model (to find this phone in `adb devices`) and the debugging switches. */
+    private fun sendInfo() {
+        val msg =
+            JSONObject()
+                .put("t", "info")
+                .put("model", Build.MODEL)
+                .put("adb_wifi", globalFlag(ADB_WIFI_ENABLED))
+                .put("dev_options", globalFlag(Settings.Global.DEVELOPMENT_SETTINGS_ENABLED))
+        control?.send(msg.toString())
     }
 
     fun stop() {
@@ -233,6 +269,8 @@ class Link(
                                 text: String,
                             ) {
                                 backoff = 1_000L
+                                // Set here too: "hello" (which we answer) can beat the assignment below.
+                                control = webSocket
                                 onControl(text)
                             }
 
@@ -306,8 +344,11 @@ class Link(
                 val name = msg.optString("name", prefs.serverName)
                 prefs.serverName = name
                 state.value = LinkState.Online(name)
+                sendInfo()
             }
+            "adb_wifi" -> adbWifiRequests.tryEmit(Unit)
             "clip" -> setPhoneClipboard(msg.optString("text"))
+            "camera", "mic" -> streamRequests.tryEmit(msg.optString("t") to msg.optBoolean("on"))
             "file" ->
                 scope.launch {
                     download(msg.getString("id"), msg.optString("name", "file"), msg.optLong("size", -1))
@@ -325,6 +366,11 @@ class Link(
             val cm = app.getSystemService(ClipboardManager::class.java)
             cm.setPrimaryClip(ClipData.newPlainText("Dotlink", text))
         }
+    }
+
+    /** Tells the PC that starting [kind] ("camera" | "mic") waits for a tap on our notification. */
+    fun sendStreamNeedsTap(kind: String) {
+        control?.send(JSONObject().put("t", "media").put("kind", kind).put("state", "needs_tap").toString())
     }
 
     /** Sends [text] to the PC clipboard. False when not connected. */
@@ -559,6 +605,9 @@ class Link(
 
     companion object {
         private const val TAG = "Dotlink"
+
+        /** Settings.Global.ADB_WIFI_ENABLED, hidden from the public SDK. */
+        private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
 
         /** Trusts only the certificate whose SHA-256 is [fingerprint]; host names are ignored. */
         fun pinnedClient(
