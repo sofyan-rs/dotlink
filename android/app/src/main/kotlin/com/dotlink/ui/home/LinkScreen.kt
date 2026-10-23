@@ -93,7 +93,7 @@ fun LinkScreen(
             titleClickLabel = "Change PC",
             subline =
                 when (state) {
-                    is LinkState.Online -> "${link.host}:${link.prefs.port}"
+                    is LinkState.Online -> if (link.viaUsb) "USB cable" else "${link.host}:${link.prefs.port} · Wi-Fi"
                     LinkState.Connecting -> "Connecting…"
                     LinkState.Disconnected -> "Disconnected · tap ↻ to reconnect"
                     else -> "Offline · retrying"

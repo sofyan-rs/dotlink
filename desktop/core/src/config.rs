@@ -37,6 +37,9 @@ pub struct Config {
     pub cast_max_size: u32,
     /// The desktop window's look: "system" (follow the desktop), "light" or "dark".
     pub theme: String,
+    /// Link phones plugged in over USB (with USB debugging allowed) through the cable
+    /// (`adb reverse`) instead of Wi-Fi.
+    pub usb_link: bool,
 }
 
 impl Default for Config {
@@ -55,6 +58,7 @@ impl Default for Config {
             cast_audio: true,
             cast_max_size: 0,
             theme: "system".into(),
+            usb_link: true,
         }
     }
 }

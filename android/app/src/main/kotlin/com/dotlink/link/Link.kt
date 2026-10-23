@@ -4,10 +4,13 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
@@ -18,6 +21,7 @@ import android.provider.Settings
 import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.dotlink.DotlinkApp
 import com.dotlink.R
 import kotlinx.coroutines.CompletableDeferred
@@ -135,7 +139,13 @@ class Link(
     /** Last text that went through the link either way, so we don't bounce it back. */
     @Volatile private var lastClip: String? = null
 
-    val host: String? get() = prefs.lastHost
+    /** The address the link uses right now; [USB_HOST] over the cable. */
+    @Volatile private var currentHost: String? = null
+
+    val host: String? get() = currentHost ?: prefs.lastHost
+
+    /** Connected through the USB cable (`adb reverse` on the PC) rather than Wi-Fi. */
+    val viaUsb: Boolean get() = currentHost == USB_HOST
 
     // ---------- HTTP ----------
 
@@ -144,7 +154,7 @@ class Link(
 
     private fun url(
         path: String,
-        host: String = prefs.lastHost ?: prefs.hosts.first(),
+        host: String = currentHost ?: prefs.lastHost ?: prefs.hosts.first(),
     ): String {
         val h = if (host.contains(':')) "[$host]" else host
         return "https://$h:${prefs.port}$path"
@@ -180,7 +190,8 @@ class Link(
                         .toString()
                         .toRequestBody("application/json".toMediaType())
                 var lastError: Throwable? = null
-                for (host in hosts) {
+                // The cable first: works without Wi-Fi when the PC has set up `adb reverse`.
+                for (host in listOf(USB_HOST) + hosts) {
                     val h = if (host.contains(':')) "[$host]" else host
                     try {
                         pinned.newCall(Request.Builder().url("https://$h:$port/pair").post(body).build()).execute().use { res ->
@@ -194,7 +205,7 @@ class Link(
                                     name = json.optString("server_name", uri.getQueryParameter("n") ?: "PC"),
                                     serverId = serverId,
                                     hosts = hosts,
-                                    lastHost = host,
+                                    lastHost = if (host == USB_HOST) hosts.first() else host,
                                     port = port,
                                     fingerprint = fp,
                                     token = json.getString("token"),
@@ -250,6 +261,36 @@ class Link(
         choosePc.value = false
         controlJob = scope.launch { controlLoop() }
         watchDebugSettings()
+        watchUsb()
+    }
+
+    private var usbReceiver: BroadcastReceiver? = null
+
+    /**
+     * Retries right away when a USB cable is plugged in, instead of after the offline backoff
+     * (up to 30 s): the PC sets up `adb reverse` within a few seconds of seeing the phone.
+     * Already online over Wi-Fi, the control loop's own probe moves the link to the cable.
+     */
+    private fun watchUsb() {
+        if (usbReceiver != null) return
+        val receiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(
+                    context: Context,
+                    intent: Intent,
+                ) {
+                    if (!intent.getBooleanExtra("connected", false)) return
+                    scope.launch {
+                        repeat(4) {
+                            delay(2_000)
+                            if (state.value !is LinkState.Online) kicks.trySend(Unit)
+                        }
+                    }
+                }
+            }
+        // A system broadcast (sticky, hidden from the SDK constants); delivered to unexported receivers too.
+        ContextCompat.registerReceiver(app, receiver, IntentFilter(USB_STATE), ContextCompat.RECEIVER_NOT_EXPORTED)
+        usbReceiver = receiver
     }
 
     private var debugObserver: ContentObserver? = null
@@ -340,11 +381,32 @@ class Link(
                         },
                     )
                 control = ws
+                currentHost = host
+                // On Wi-Fi, switch to the cable as soon as it's plugged in.
+                val upgrade =
+                    if (host == USB_HOST) {
+                        null
+                    } else {
+                        scope.launch {
+                            while (isActive) {
+                                delay(USB_PROBE_MS)
+                                if (ping(USB_HOST)) {
+                                    Log.i(TAG, "USB link available, switching")
+                                    ws.close(1000, "switching to USB")
+                                    closed.complete(Unit)
+                                    kicks.trySend(Unit)
+                                    break
+                                }
+                            }
+                        }
+                    }
                 try {
                     closed.await()
                 } finally {
+                    upgrade?.cancel()
                     ws.cancel()
                     control = null
+                    currentHost = null
                 }
             }
             if (!prefs.paired) break
@@ -354,9 +416,9 @@ class Link(
         }
     }
 
-    /** First reachable address: the last good one, the ones from pairing, then mDNS. */
+    /** First reachable address: the USB cable, the last good one, the ones from pairing, then mDNS. */
     private suspend fun resolveHost(): String? {
-        val candidates = (listOfNotNull(prefs.lastHost) + prefs.hosts).distinct()
+        val candidates = (listOf(USB_HOST) + listOfNotNull(prefs.lastHost) + prefs.hosts).distinct()
         for (h in candidates) if (ping(h)) return h
         val found = Discovery.find(app, prefs.serverId) ?: return null
         if (!ping(found)) return null
@@ -369,7 +431,8 @@ class Link(
             val quick = http().newBuilder().connectTimeout(1500, TimeUnit.MILLISECONDS).readTimeout(3, TimeUnit.SECONDS).build()
             quick.newCall(request("/ping", host).build()).execute().use { res ->
                 if (res.code == 401) revoked()
-                if (res.isSuccessful) prefs.lastHost = host
+                // The cable isn't an address to come back to over Wi-Fi.
+                if (res.isSuccessful && host != USB_HOST) prefs.lastHost = host
                 res.isSuccessful
             }
         } catch (_: Exception) {
@@ -663,6 +726,19 @@ class Link(
 
     companion object {
         private const val TAG = "Dotlink"
+
+        /**
+         * This phone's loopback: with USB debugging allowed, the PC runs `adb reverse` for its
+         * port, and connections here reach it through the cable. The pinned certificate still
+         * decides whether it is the right PC.
+         */
+        const val USB_HOST = "127.0.0.1"
+
+        /** How often a Wi-Fi link checks whether the cable has become available. */
+        private const val USB_PROBE_MS = 5_000L
+
+        /** UsbManager.ACTION_USB_STATE: a cable was plugged in or out. */
+        private const val USB_STATE = "android.hardware.usb.action.USB_STATE"
 
         /** Settings.Global.ADB_WIFI_ENABLED, hidden from the public SDK. */
         private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"

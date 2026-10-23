@@ -407,6 +407,11 @@ async fn launch(app: &Arc<App>, id: &str, name: &str, serial: &str, usb: bool, r
     Ok(true)
 }
 
+/// Serials of the phones plugged in over USB that allow debugging from this PC.
+pub(crate) async fn usb_serials() -> Result<Vec<String>> {
+    Ok(adb_devices().await?.into_iter().filter(|d| d.usb && d.state == "device").map(|d| d.serial).collect())
+}
+
 struct AdbDevice {
     serial: String,
     /// "device", "unauthorized", "offline"…
@@ -448,7 +453,7 @@ fn adb_model(model: &str) -> String {
 }
 
 /// Runs adb and returns stdout + stderr.
-async fn adb(args: &[&str]) -> Result<String> {
+pub(crate) async fn adb(args: &[&str]) -> Result<String> {
     let adb = find_tool("adb").context("adb is not installed (see Setup)")?;
     let out = tokio::time::timeout(Duration::from_secs(20), command(adb).args(args).stdin(Stdio::null()).output())
         .await

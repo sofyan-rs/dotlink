@@ -400,7 +400,11 @@ impl MainView {
         }
         for (i, d) in status.devices.iter().enumerate() {
             let id = d.id.clone();
-            let subtitle = if d.online { "Online".to_string() } else { format!("Paired {}", ago(d.paired_at)) };
+            let subtitle = match (d.online, d.usb) {
+                (true, true) => "Online · USB".to_string(),
+                (true, false) => "Online · Wi-Fi".to_string(),
+                _ => format!("Paired {}", ago(d.paired_at)),
+            };
             phones = phones.child(
                 row(p)
                     .when(i > 0, |r| r.border_t_1().border_color(p.line))

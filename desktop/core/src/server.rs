@@ -46,8 +46,10 @@ pub struct PhoneInfo {
     pub adb_wifi: bool,
     /// Developer options are on.
     pub dev_options: bool,
-    /// Where its control connection comes from.
+    /// Where its control connection comes from (its Wi-Fi address; USB links don't change it).
     pub ip: Option<IpAddr>,
+    /// Control connections over the USB cable (`adb reverse`, seen as 127.0.0.1).
+    pub usb: usize,
 }
 
 /// Where a file or clipboard goes: one phone, or every connected phone.
@@ -215,6 +217,7 @@ impl App {
                     "paired_at": d.paired_at,
                     "model": phones.get(&d.id).map(|p| p.model.clone()),
                     "adb_wifi": phones.get(&d.id).map(|p| p.adb_wifi),
+                    "usb": phones.get(&d.id).is_some_and(|p| p.usb > 0),
                 })
             })
             .collect()
@@ -559,10 +562,20 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(v6)),
         v4 => v4,
     };
-    app.phones.lock().unwrap().entry(dev.id.clone()).or_default().ip = Some(ip);
+    // Through `adb reverse` the phone connects from this PC's loopback.
+    let usb = ip.is_loopback();
+    {
+        let mut phones = app.phones.lock().unwrap();
+        let phone = phones.entry(dev.id.clone()).or_default();
+        if usb {
+            phone.usb += 1;
+        } else {
+            phone.ip = Some(ip);
+        }
+    }
     *app.online.lock().unwrap().entry(dev.id.clone()).or_default() += 1;
     app.emit(Event::Devices);
-    tracing::info!("{} connected", dev.name);
+    tracing::info!("{} connected{}", dev.name, if usb { " over USB" } else { "" });
     let (mut tx, mut rx) = socket.split();
     let mut events = app.control_tx.subscribe();
     let hello = app.hello();
@@ -617,6 +630,9 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
     }
     if let Some(n) = app.online.lock().unwrap().get_mut(&dev.id) {
         *n = n.saturating_sub(1);
+    }
+    if usb && let Some(phone) = app.phones.lock().unwrap().get_mut(&dev.id) {
+        phone.usb = phone.usb.saturating_sub(1);
     }
     app.emit(Event::Devices);
     tracing::info!("{} disconnected", dev.name);

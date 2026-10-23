@@ -46,6 +46,9 @@ pub struct DeviceInfo {
     pub name: String,
     pub online: bool,
     pub paired_at: u64,
+    /// Connected through the USB cable rather than Wi-Fi.
+    #[serde(default)]
+    pub usb: bool,
 }
 
 /// What the watch connection reports to the window.
