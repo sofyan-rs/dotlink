@@ -4,6 +4,10 @@
 //! `dotlink` opens the app (window + tray, the service runs inside it). `dotlink daemon` runs
 //! the service alone, without a window. The other subcommands talk to whichever is running.
 
+// Windows: a GUI program, so opening the app shows no console window. The CLI subcommands
+// borrow the console of the terminal they were started from (`attach_console`).
+#![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
+
 #[cfg(feature = "gui")]
 mod gui;
 
@@ -85,6 +89,7 @@ enum OnOff {
 }
 
 fn main() -> Result<()> {
+    attach_console();
     let cli = Cli::parse();
     init_logging();
     let rt = tokio::runtime::Runtime::new()?;
@@ -105,6 +110,18 @@ fn open_app(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
 fn open_app(rt: tokio::runtime::Runtime, _background: bool) -> Result<()> {
     rt.block_on(dotlink_core::service::run(None, None))
 }
+
+/// A `windows_subsystem = "windows"` program starts without stdout; started from a terminal,
+/// print there (`dotlink status`, `--help`, logs). Started from the Start menu there is no
+/// parent console and nothing changes.
+#[cfg(all(windows, feature = "gui"))]
+fn attach_console() {
+    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+}
+
+#[cfg(not(all(windows, feature = "gui")))]
+fn attach_console() {}
 
 fn init_logging() {
     tracing_subscriber::fmt()

@@ -9,14 +9,13 @@
 //! Closing the window keeps the app (and the phone connection) running; Quit in the tray or
 //! in Settings stops it.
 //!
-//! TODO(windows, macos):
+//! TODO(macos):
 //! - [ ] Tray: see tray.rs.
-//! - [ ] macOS: an app menu (About, Quit ⌘Q) via `cx.set_menus`, and reopening the window when
-//!       the Dock icon is clicked (`cx.on_reopen`). Hide the Dock icon while only in the menu bar.
-//! - [ ] Windows: check gpui-platform's features (x11/wayland are Linux only; the Windows
-//!       backend may want `windows-manifest`), and the window icon from assets/dotlink.svg.
-//! - [ ] Packaging: .msi/NSIS (Windows), signed + notarized .app in a .dmg (macOS). See the
-//!       `[package.metadata.packager]` section in Cargo.toml.
+//! - [ ] An app menu (About, Quit ⌘Q) via `cx.set_menus`, and reopening the window when
+//!   the Dock icon is clicked (`cx.on_reopen`). Hide the Dock icon while only in the menu bar.
+//!
+//! TODO(windows, macos): packaging: .msi/NSIS (Windows), signed + notarized .app in a .dmg
+//! (macOS). See the `[package.metadata.packager]` section in Cargo.toml.
 
 mod assets;
 mod client;
@@ -120,6 +119,14 @@ pub fn run(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
                     dotlink_core::platform::notify(
                         "Dotlink is still running",
                         "Your phone stays connected. Open Dotlink again to show the window; Quit is in Settings.",
+                    );
+                }
+                // Windows users expect closing the window to quit the app: say once that it didn't.
+                if cfg!(windows) && has_tray && !state.told_still_running {
+                    state.told_still_running = true;
+                    dotlink_core::platform::notify(
+                        "Dotlink is still running",
+                        "Your phone stays connected. Dotlink is in the notification area; Quit is in its menu.",
                     );
                 }
             })

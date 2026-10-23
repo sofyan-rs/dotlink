@@ -8,7 +8,7 @@ default-run = "dotlink"
 [features]
 default = ["gui"]
 # The window and the tray icon. `--no-default-features` builds the headless daemon + CLI only.
-gui = ["dep:gpui", "dep:gpui-platform", "dep:gpui-component", "dep:gpui-kit-assets", "dep:ksni"]
+gui = ["dep:gpui", "dep:gpui-platform", "dep:gpui-component", "dep:gpui-kit-assets", "dep:ksni", "dep:tray-icon"]
 
 [dependencies]
 dotlink-core = { path = "../core" }
@@ -24,14 +24,25 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 # GPUI (Zed's UI framework) as published by gpui-kit, and its component library.
 gpui = { package = "gpui-pre", version = "=0.3.9", optional = true }
-gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9", optional = true, features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9", optional = true, features = ["font-kit", "runtime_shaders"] }
 gpui-component = { version = "0.8.0", optional = true }
 gpui-kit-assets = { version = "0.8.0", optional = true }
 
 # Tray icon. Linux: StatusNotifierItem over D-Bus (KDE, Waybar, GNOME with AppIndicator).
-# TODO(windows, macos): use the `tray-icon` crate there (menu bar item on macOS).
+# Windows: `tray-icon` below. TODO(macos): `tray-icon` there too (menu bar item).
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.7", optional = true }
+# X11 and Wayland backends only exist on Linux; the same crate as above, with more features.
+gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9", optional = true, features = ["x11", "wayland"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
+# Tray icon in the notification area.
+tray-icon = { version = "0.21", optional = true }
+
+[target.'cfg(windows)'.build-dependencies]
+# The .exe's icon (Explorer, taskbar, Alt-Tab).
+winresource = "0.1"
 
 # `cargo packager --release` (cargo install cargo-packager) builds the installers into
 # desktop/target/packages. Linux: .deb, AppImage, pacman PKGBUILD. On new distros (Fedora 44)

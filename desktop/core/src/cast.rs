@@ -218,7 +218,7 @@ async fn connect(name: &str, info: &PhoneInfo) -> Result<(String, bool), Missing
 async fn launch(app: &Arc<App>, name: &str, serial: &str, usb: bool) -> Result<()> {
     let config = app.config();
     let scrcpy = find_tool("scrcpy").context("scrcpy is not installed (see Setup)")?;
-    let mut cmd = Command::new(scrcpy);
+    let mut cmd = command(scrcpy);
     cmd.arg("--serial").arg(serial).arg("--window-title").arg(format!("{name} · Dotlink"));
     if config.cast_screen_off {
         cmd.arg("--turn-screen-off");
@@ -314,10 +314,20 @@ fn adb_model(model: &str) -> String {
 /// Runs adb and returns stdout + stderr.
 async fn adb(args: &[&str]) -> Result<String> {
     let adb = find_tool("adb").context("adb is not installed (see Setup)")?;
-    let out = tokio::time::timeout(Duration::from_secs(20), Command::new(adb).args(args).stdin(Stdio::null()).output())
+    let out = tokio::time::timeout(Duration::from_secs(20), command(adb).args(args).stdin(Stdio::null()).output())
         .await
         .context("adb took too long")??;
     Ok(format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+}
+
+/// A command for adb or scrcpy. On Windows without a console window: they are console
+/// programs (scrcpy opens its own window besides).
+fn command(program: PathBuf) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    cmd
 }
 
 fn last_line(s: &str) -> Option<&str> {
@@ -365,11 +375,12 @@ fn scrcpy_asset() -> Option<(String, &'static str)> {
         ("linux", "x86_64") => ("linux-x86_64", "9f969d30cc574816077edecda65719c1c70b0aee1df1ba5fa00779ac07b8fd6e"),
         ("macos", "aarch64") => ("macos-aarch64", "33611e51977a8289e2e124b220f727895181ef2eb9060e0987a4dc2db9cf0d6b"),
         ("macos", "x86_64") => ("macos-x86_64", "31a5467a9e907f162b093267cbbab1276b15c6e709c2ea8159566a8d165beb50"),
-        // TODO(windows): the .zip builds need unzipping (`zip` crate) and `scrcpy.exe`:
-        // ("windows", "x86_64") => win64, b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5
+        ("windows", "x86_64") => ("win64", "b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5"),
+        ("windows", "aarch64") => ("winarm64", "16c3fc2068df64946f670e3504b4752073ebae47a416a45b46e79a5ab19c689b"),
         _ => return None,
     };
-    Some((format!("scrcpy-{target}-{SCRCPY_VERSION}.tar.gz"), sha))
+    let ext = if cfg!(windows) { "zip" } else { "tar.gz" };
+    Some((format!("scrcpy-{target}-{SCRCPY_VERSION}.{ext}"), sha))
 }
 
 /// Where the downloaded scrcpy (and its adb) live.
@@ -404,12 +415,17 @@ pub async fn install() -> Result<()> {
         let tmp = dir.with_extension("part");
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp)?;
-        tar::Archive::new(flate2::read::GzDecoder::new(&data[..])).unpack(&tmp)?;
+        if asset.ends_with(".zip") {
+            zip::ZipArchive::new(std::io::Cursor::new(&data[..]))?.extract(&tmp)?;
+        } else {
+            tar::Archive::new(flate2::read::GzDecoder::new(&data[..])).unpack(&tmp)?;
+        }
         // The archive holds one folder (scrcpy-linux-x86_64-v5.0.1/); keep its contents.
+        let scrcpy = if cfg!(windows) { "scrcpy.exe" } else { "scrcpy" };
         let inner = std::fs::read_dir(&tmp)?
             .flatten()
             .map(|e| e.path())
-            .find(|p| p.join("scrcpy").is_file())
+            .find(|p| p.join(scrcpy).is_file())
             .context("unexpected archive layout")?;
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::rename(&inner, &dir)?;
@@ -431,9 +447,15 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
         return Some(found);
     }
     if name == "adb" {
+        // Android Studio's default SDK location on each OS.
         let sdk = std::env::var_os("ANDROID_HOME").map(PathBuf::from).or_else(|| {
-            dirs::home_dir()
-                .map(|h| h.join(if cfg!(target_os = "macos") { "Library/Android/sdk" } else { "Android/Sdk" }))
+            if cfg!(windows) {
+                dirs::data_local_dir().map(|d| d.join("Android/Sdk"))
+            } else if cfg!(target_os = "macos") {
+                dirs::home_dir().map(|h| h.join("Library/Android/sdk"))
+            } else {
+                dirs::home_dir().map(|h| h.join("Android/Sdk"))
+            }
         });
         if let Some(adb) = sdk.map(|s| s.join("platform-tools").join(&exe)).filter(|p| p.is_file()) {
             return Some(adb);

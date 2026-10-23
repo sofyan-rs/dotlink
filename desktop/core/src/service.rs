@@ -96,9 +96,19 @@ async fn terminate() {
     }
 }
 
-#[cfg(not(unix))]
+/// The console window closing, logoff or shutdown (sent to processes with a console; a GUI
+/// process gets WM_ENDSESSION instead and simply exits).
+#[cfg(windows)]
 async fn terminate() {
-    std::future::pending().await
+    use tokio::signal::windows::{ctrl_close, ctrl_logoff, ctrl_shutdown};
+    match (ctrl_close(), ctrl_logoff(), ctrl_shutdown()) {
+        (Ok(mut close), Ok(mut logoff), Ok(mut shutdown)) => tokio::select! {
+            _ = close.recv() => {}
+            _ = logoff.recv() => {}
+            _ = shutdown.recv() => {}
+        },
+        _ => std::future::pending().await,
+    }
 }
 
 /// Announces `_dotlink._tcp` so the phone can find the PC after its IP changes.

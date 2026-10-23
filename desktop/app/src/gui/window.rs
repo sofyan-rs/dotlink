@@ -288,6 +288,11 @@ impl Render for MainView {
     }
 }
 
+#[cfg(windows)]
+const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks Windows for administrator rights once.";
+#[cfg(not(windows))]
+const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for your password once (polkit).";
+
 // ---------- sidebar ----------
 
 impl MainView {
@@ -861,7 +866,7 @@ impl MainView {
         }
         let fixable = model.checks.iter().filter(|c| !c.ok && c.fixable).count();
         let mut body =
-            page(p, "Setup", Some("What each feature needs from this PC. Fix asks for your password once (polkit)."))
+            page(p, "Setup", Some(SETUP_INTRO))
                 .child(
                     div()
                         .flex()

@@ -3,7 +3,7 @@
 //!
 //! Linux/macOS: a Unix socket in the user's runtime dir. Windows: a named pipe.
 
-use crate::config::{Config, runtime_dir};
+use crate::config::Config;
 use crate::events::UiRequest;
 use crate::server::App;
 use anyhow::{Context, Result, bail};
@@ -16,24 +16,38 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[cfg(unix)]
 fn socket_name() -> std::io::Result<Name<'static>> {
+    use crate::config::runtime_dir;
     use interprocess::local_socket::GenericFilePath;
     // Inside $XDG_RUNTIME_DIR, which only this user can open.
     runtime_dir().join("dotlink.sock").to_fs_name::<GenericFilePath>()
 }
 
-// TODO(windows): named pipes are reachable by other users by default. Create the listener
-// with a security descriptor that only allows the current user (interprocess's
-// `ListenerOptionsExt::security_descriptor`) before shipping.
+/// `\\.\pipe\dotlink-<user SID>`: one per user, also when two users share a name across domains.
 #[cfg(windows)]
 fn socket_name() -> std::io::Result<Name<'static>> {
     use interprocess::local_socket::GenericNamespaced;
-    let user = std::env::var("USERNAME").unwrap_or_default();
-    format!("dotlink-{user}").to_ns_name::<GenericNamespaced>()
+    format!("dotlink-{}", crate::platform::user_sid()?).to_ns_name::<GenericNamespaced>()
+}
+
+#[cfg(unix)]
+fn listener_options() -> std::io::Result<ListenerOptions<'static>> {
+    Ok(ListenerOptions::new().name(socket_name()?))
+}
+
+/// Named pipes are open to every user on the machine by default; through this one they could
+/// pair a phone or read the clipboard. Only this user (and nobody else, not even admins) gets in.
+#[cfg(windows)]
+fn listener_options() -> std::io::Result<ListenerOptions<'static>> {
+    use interprocess::os::windows::local_socket::ListenerOptionsExt;
+    use interprocess::os::windows::security_descriptor::SecurityDescriptor;
+    let sddl = format!("D:P(A;;GA;;;{})", crate::platform::user_sid()?);
+    let sd = SecurityDescriptor::deserialize(&widestring::U16CString::from_str_truncate(sddl))?;
+    Ok(ListenerOptions::new().name(socket_name()?).security_descriptor(sd))
 }
 
 #[cfg(unix)]
 fn remove_stale_socket() {
-    let _ = std::fs::remove_file(runtime_dir().join("dotlink.sock"));
+    let _ = std::fs::remove_file(crate::config::runtime_dir().join("dotlink.sock"));
 }
 
 #[cfg(windows)]
@@ -57,7 +71,7 @@ pub async fn serve(app: Arc<App>) -> Result<()> {
         bail!("Dotlink is already running");
     }
     remove_stale_socket();
-    let listener = ListenerOptions::new().name(socket_name()?).create_tokio()?;
+    let listener = listener_options()?.create_tokio()?;
     loop {
         let stream = listener.accept().await?;
         let app = app.clone();
