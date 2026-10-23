@@ -106,8 +106,9 @@ cargo run -p dotlink
 
 ## Windows and macOS
 
-The stubs in `core/src/platform/windows` and `macos` were written on Linux and have not been
-compiled for those systems yet. [PORTING.md](PORTING.md) has the plan: the order of work, the APIs to use for each
+`core/src/platform/windows` builds and runs on Windows (MSVC toolchain); everything but the
+webcam and mic is implemented. The `macos` stubs were written on Linux and have not been
+compiled there yet. [PORTING.md](PORTING.md) has the plan: the order of work, the APIs to use for each
 platform item, packaging and signing, and a checklist per OS.
 
 ## Commits

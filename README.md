@@ -1,7 +1,7 @@
 # Dotlink
 
 Link an Android phone with a Linux PC over your Wi-Fi. No account, no cloud. Made on Hyprland, works on any desktop.
-On the PC it's one app: the service, a window and a tray icon. Windows and macOS are next (see [Platforms](#platforms)).
+On the PC it's one app: the service, a window and a tray icon. Windows is in progress, macOS is next (see [Platforms](#platforms)).
 
 | Feature | Phone → PC | PC → phone |
 |---|---|---|
@@ -16,7 +16,7 @@ On the PC it's one app: the service, a window and a tray icon. Windows and macOS
 ```
 desktop/         Rust workspace for the PC app
   core/          the service: pairing, HTTPS/WebSocket API, control socket (dotlink-core)
-    src/platform/  per-OS code: linux/ (complete), windows/ and macos/ (stubs + TODO)
+    src/platform/  per-OS code: linux/ (complete), windows/ (no webcam/mic yet), macos/ (stubs + TODO)
   app/           the `dotlink` binary: window (GPUI) + tray + CLI
 android/         Kotlin + Jetpack Compose app, Dotline UI kit from dotnote
 scripts/         install.sh
@@ -148,18 +148,19 @@ theme = "system"         # the window's look: "system", "light" or "dark"
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| App (window), pairing, files, shell | ✅ | written, not built yet | written, not built yet |
-| Clipboard, notifications | ✅ | written (arboard, notify-rust) | written (arboard, notify-rust) |
-| Tray | ✅ | TODO | TODO |
-| Remote, start at login, Setup checks | ✅ | TODO | TODO |
+| App (window), pairing, files, shell | ✅ | built, not yet tested with a phone | written, not built yet |
+| Clipboard, notifications | ✅ | built (arboard, toasts with Open / Show in folder) | written (arboard, notify-rust) |
+| Tray | ✅ | built (`tray-icon`) | TODO |
+| Remote, start at login, Setup checks | ✅ | built (SendInput, Run key, firewall) | TODO |
+| Cast | ✅ | built (downloads scrcpy) | download only |
 | Webcam, microphone | ✅ | TODO (needs a driver) | TODO (needs a system extension) |
+| Installer | ✅ | TODO | TODO |
 
-Everything OS-specific lives in `desktop/core/src/platform/`. `linux/` is the reference;
-`windows/mod.rs` and `macos/mod.rs` are stubs (not compiled yet: build them on those systems first) that list what to build in their TODO comments
-(SendInput / CGEvent for the remote, login items, virtual camera and mic). The tray on those two needs
-the `tray-icon` crate (`desktop/app/src/gui/tray.rs`), and the named pipe on Windows needs a
-user-only security descriptor (`desktop/core/src/ipc.rs`). Search for `TODO(windows)` and `TODO(macos)`,
-and see [docs/PORTING.md](docs/PORTING.md) for the plan.
+Everything OS-specific lives in `desktop/core/src/platform/`. `linux/` is the reference.
+`windows/` builds and runs; webcam and mic are still stubs. `macos/mod.rs` is a stub (not
+compiled yet: build it on a Mac first) that lists what to build in its TODO comments (CGEvent
+for the remote, login items, virtual camera and mic, the tray via `tray-icon`). Search for
+`TODO(windows)` and `TODO(macos)`, and see [docs/PORTING.md](docs/PORTING.md) for the plan.
 
 ## Development
 

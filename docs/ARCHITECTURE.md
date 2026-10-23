@@ -35,7 +35,9 @@ desktop/                 Rust workspace
       mod.rs             the contract every platform module fills
       linux/             complete: uinput, v4l2loopback, PipeWire, wl-clipboard/X11,
                          notify-send, XDG/Hyprland autostart, Setup checks + fixes
-      windows/ macos/    stubs with TODO lists
+      windows/           SendInput, Run-key autostart, firewall Setup check, toasts;
+                         webcam and mic still stubs
+      macos/             stubs with TODO lists
       polling_clipboard.rs  arboard-based clipboard shared by X11, Windows, macOS
   app/                   the `dotlink` binary
     src/main.rs          CLI; `dotlink` with no command opens the app
@@ -119,7 +121,8 @@ mDNS (`_dotlink._tcp`, matched by server id).
 
 ## Control socket (CLI and window)
 
-`$XDG_RUNTIME_DIR/dotlink.sock` on Linux/macOS (user-only), a named pipe on Windows. One JSON
+`$XDG_RUNTIME_DIR/dotlink.sock` on Linux/macOS (user-only), on Windows the named pipe
+`\\.\pipe\dotlink-<user SID>` with an ACL that only lets that user in. One JSON
 request line in, one or more reply lines out.
 
 `pair` · `send` · `clip` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` ·
@@ -160,8 +163,9 @@ request line in, one or more reply lines out.
 ## Platforms
 
 `core/src/platform/mod.rs` lists the items every platform module provides. Linux is the
-reference. `windows/mod.rs` and `macos/mod.rs` are stubs that compile the rest of the app and
-say what to build (SendInput / CGEvent, login items, virtual camera and mic drivers, tray).
+reference. `windows/` has everything but the webcam and mic. `macos/mod.rs` is a stub that
+compiles the rest of the app and says what to build (CGEvent, login items, virtual camera and
+mic drivers, tray).
 Search for `TODO(windows)` and `TODO(macos)`; [PORTING.md](PORTING.md) is the plan, step by step.
 
 Window decorations: GPUI asks for server-side decorations; where the compositor leaves them to

@@ -1,7 +1,8 @@
 # Porting the desktop app to Windows and macOS
 
-Linux is complete and is the reference. The Windows and macOS modules exist, but they were
-written on Linux and **have never been compiled on those systems**. This page is the plan:
+Linux is complete and is the reference. Windows builds and runs (Steps 1–5 are written; the
+phone tests are still to do). The macOS module was written on Linux and **has never been
+compiled there**. This page is the plan:
 what already works in principle, what each OS still needs, in which order, and how to test
 it. [ARCHITECTURE.md](ARCHITECTURE.md) explains the pieces; this page assumes it.
 
@@ -13,18 +14,18 @@ The Android app needs no changes: it already reads the PC's OS from `hello` (`os
 
 | Piece | Where | Windows | macOS |
 |---|---|---|---|
-| Service, pairing, files, mDNS, TLS | `core/src/server.rs`, `service.rs` | portable, untested | portable, untested |
-| Control socket (CLI ↔ service ↔ window) | `core/src/ipc.rs` | named pipe, **needs a user-only ACL** | Unix socket in `$TMPDIR` |
-| Shell | `core/src/term.rs` (portable-pty) | ConPTY + `powershell.exe` | login shell |
+| Service, pairing, files, mDNS, TLS | `core/src/server.rs`, `service.rs` | runs, untested with a phone | portable, untested |
+| Control socket (CLI ↔ service ↔ window) | `core/src/ipc.rs` | named pipe `dotlink-<SID>`, user-only ACL | Unix socket in `$TMPDIR` |
+| Shell | `core/src/term.rs` (portable-pty) | ConPTY + `pwsh.exe` or `powershell.exe` | login shell |
 | Clipboard | `platform/polling_clipboard.rs` (arboard, 500 ms poll) | works | works |
-| Notifications | `notify-rust` | text only, no buttons | text only, no buttons |
+| Notifications | `notify-rust` | toasts under `dev.dotlink.Dotlink` (registered in HKCU), Open / Show in folder | text only, no buttons |
 | Open file / Show in folder | `platform/{windows,macos}/mod.rs` | `explorer` | `open`, `open -R` |
-| Window | `app/src/gui/` (GPUI) | Cargo features need gating | Cargo features need gating |
-| Tray | `app/src/gui/tray.rs` | **TODO** | **TODO** (menu bar) |
-| Remote (mouse + keyboard) | `Input` | **TODO** (SendInput) | **TODO** (CGEvent + Accessibility) |
-| Start at login | `autostart` | **TODO** (Run key) | **TODO** (SMAppService / LaunchAgent) |
-| Setup checks | `setup` | **TODO** (firewall) | **TODO** (Accessibility, Local Network) |
-| Cast (scrcpy) | `core/src/cast.rs` | **TODO**: download is .zip | download works (tar.gz) |
+| Window | `app/src/gui/` (GPUI) | done (icon embedded by `app/build.rs`) | Cargo features gated, untested |
+| Tray | `app/src/gui/tray.rs` | done (`tray-icon`) | **TODO** (menu bar) |
+| Remote (mouse + keyboard) | `Input` | done (SendInput) | **TODO** (CGEvent + Accessibility) |
+| Start at login | `autostart` | done (Run key, honours Task Manager) | **TODO** (SMAppService / LaunchAgent) |
+| Setup checks | `setup` | done (firewall rule, Public network) | **TODO** (Accessibility, Local Network) |
+| Cast (scrcpy) | `core/src/cast.rs` | done (.zip download, SDK adb) | download works (tar.gz) |
 | Webcam | `CameraHub` | **TODO**: virtual camera | **TODO**: Camera Extension |
 | Microphone | `MicSink` | **TODO**: virtual audio device | **TODO**: virtual audio device |
 | Installer | `app/Cargo.toml` packager section | **TODO**: NSIS/MSI | **TODO**: signed .app in .dmg |
