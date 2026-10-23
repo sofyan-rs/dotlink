@@ -61,7 +61,7 @@ fun TabScreen(
     }
 }
 
-/** Section overline with the standard gaps (24 dp above, 8 dp below), inset 16 dp. */
+/** Section overline with the standard gaps (24 dp above, 8 dp below), flush with the group below. */
 @Composable
 fun Section(
     label: String,
@@ -69,19 +69,19 @@ fun Section(
 ) {
     Column(Modifier.padding(horizontal = Dotline.space.s4)) {
         Spacer(Modifier.height(Dotline.space.s5))
-        SectionLabel(label, Modifier.padding(start = Dotline.space.s4, bottom = Dotline.space.s2))
+        SectionLabel(label, Modifier.padding(bottom = Dotline.space.s2))
         content()
     }
 }
 
-/** Grey helper text under a group. */
+/** Grey helper text under a group, flush with the section label. */
 @Composable
 fun Hint(text: String) {
     Text(
         text = text,
         style = Dotline.type.bodyS,
         color = Dotline.colors.inkMuted,
-        modifier = Modifier.padding(start = Dotline.space.s4, end = Dotline.space.s4, top = Dotline.space.s2),
+        modifier = Modifier.padding(top = Dotline.space.s2),
     )
 }
 

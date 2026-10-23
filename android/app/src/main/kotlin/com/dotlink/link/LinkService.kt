@@ -79,8 +79,16 @@ class LinkService : LifecycleService() {
             ACTION_DISCONNECT -> {
                 camera?.stop()
                 mic?.stop()
-                link.stop()
+                link.disconnect()
                 stopSelf()
+            }
+            ACTION_SWITCH -> {
+                // Streams go to the old PC; stop them before leaving it.
+                camera?.stop()
+                mic?.stop()
+                link.stop()
+                intent.getStringExtra(EXTRA_PC)?.let { link.switchTo(it) }
+                link.start()
             }
             else -> link.kick()
         }
@@ -276,6 +284,10 @@ class LinkService : LifecycleService() {
         const val ACTION_MIC_OFF = "mic_off"
         const val ACTION_DISCONNECT = "disconnect"
 
+        /** Reconnect to the PC in [EXTRA_PC], or to the active PC again (after pairing or unpairing one). */
+        const val ACTION_SWITCH = "switch"
+        const val EXTRA_PC = "pc"
+
         private fun intent(
             context: Context,
             action: String?,
@@ -285,8 +297,9 @@ class LinkService : LifecycleService() {
         fun send(
             context: Context,
             action: String? = null,
+            pc: String? = null,
         ) {
-            ContextCompat.startForegroundService(context, intent(context, action))
+            ContextCompat.startForegroundService(context, intent(context, action).putExtra(EXTRA_PC, pc))
         }
     }
 }

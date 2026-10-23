@@ -298,6 +298,24 @@ object DotlineIcons {
 
     /** Front / back camera. Lucide: switch-camera. */
     val SwitchCamera: ImageVector by lazy { lineIcon("SwitchCamera", "M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5M9 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0zM18 22l-3-3 3-3M6 2l3 3-3 3") }
+
+    /** Check for updates. Lucide: refresh-cw. */
+    val Refresh: ImageVector by lazy {
+        lineIcon("Refresh", "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5")
+    }
+
+    /** Report a bug. Lucide: bug. */
+    val Bug: ImageVector by lazy {
+        lineIcon("Bug", "M12 20v-9M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4zM14.12 3.88 16 2M21 21a4 4 0 0 0-3.81-4M21 5a4 4 0 0 1-3.55 3.97M22 13h-4M3 21a4 4 0 0 1 3.81-4M3 5a4 4 0 0 0 3.55 3.97M6 13H2M8 2l1.88 1.88M9 7.13V6a3 3 0 1 1 6 0v1.13")
+    }
+
+    /** About the app. Lucide: info. */
+    val Info: ImageVector by lazy { lineIcon("Info", "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0zM12 16v-4M12 8h.01") }
+
+    /** A website. Lucide: globe. */
+    val Globe: ImageVector by lazy {
+        lineIcon("Globe", "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0zM12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20")
+    }
 }
 
 /**

@@ -76,6 +76,7 @@ private val TrailingChevronSize = 18.dp
  * @param onLongClick long press on the row (e.g. open the actions sheet).
  * @param onMoreClick shows a ⋮ button at the right edge when not `null`.
  * @param moreContentDescription TalkBack text of the ⋮ button.
+ * @param moreIcon the button's icon, when it does one thing (e.g. trash) instead of opening a menu.
  * @param trailing slot at the end of the row: [ListRowValue], [ListRowChevron], a switch, a radio …
  */
 @Composable
@@ -94,6 +95,7 @@ fun ListRow(
     onLongClick: (() -> Unit)? = null,
     onMoreClick: (() -> Unit)? = null,
     moreContentDescription: String = "Actions for $title",
+    moreIcon: ImageVector = DotlineIcons.More,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val contentColor = if (destructive) Dotline.colors.accentText else Dotline.colors.ink
@@ -108,6 +110,7 @@ fun ListRow(
         onLongClick = onLongClick,
         onMoreClick = onMoreClick,
         moreContentDescription = moreContentDescription,
+        moreIcon = moreIcon,
     ) {
         if (leadingIcon != null) {
             Icon(
@@ -197,6 +200,7 @@ internal fun ListRowFrame(
     onLongClick: (() -> Unit)?,
     onMoreClick: (() -> Unit)?,
     moreContentDescription: String,
+    moreIcon: ImageVector = DotlineIcons.More,
     stateDescription: String? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
@@ -242,7 +246,7 @@ internal fun ListRowFrame(
             content = content,
         )
         if (onMoreClick != null) {
-            MoreButton(onClick = onMoreClick, contentDescription = moreContentDescription)
+            MoreButton(onClick = onMoreClick, contentDescription = moreContentDescription, icon = moreIcon)
         }
     }
 }

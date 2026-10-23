@@ -58,6 +58,9 @@ sealed interface LinkState {
 
     data object Offline : LinkState
 
+    /** "Disconnect for now": no retrying, and opening the app doesn't reconnect. */
+    data object Disconnected : LinkState
+
     data object Connecting : LinkState
 
     data class Online(
@@ -88,6 +91,9 @@ class Link(
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val state = MutableStateFlow<LinkState>(if (prefs.paired) LinkState.Offline else LinkState.Unpaired)
+
+    /** Several PCs are paired and none was picked since the app started: ask which one. */
+    val choosePc = MutableStateFlow(prefs.pcs.size > 1)
     val transfers = MutableStateFlow<List<Transfer>>(emptyList())
     val cameraOn = MutableStateFlow(false)
 
@@ -178,13 +184,19 @@ class Link(
                             val text = res.body?.string().orEmpty()
                             if (!res.isSuccessful) error(text.ifBlank { "PC answered ${res.code}" })
                             val json = JSONObject(text)
-                            prefs.hosts = hosts
-                            prefs.lastHost = host
-                            prefs.port = port
-                            prefs.fingerprint = fp
-                            prefs.token = json.getString("token")
-                            prefs.serverId = json.optString("server_id")
-                            prefs.serverName = json.optString("server_name", uri.getQueryParameter("n") ?: "PC")
+                            val serverId = json.optString("server_id")
+                            prefs.addPc(
+                                Pc(
+                                    id = serverId.ifEmpty { fp },
+                                    name = json.optString("server_name", uri.getQueryParameter("n") ?: "PC"),
+                                    serverId = serverId,
+                                    hosts = hosts,
+                                    lastHost = host,
+                                    port = port,
+                                    fingerprint = fp,
+                                    token = json.getString("token"),
+                                ),
+                            )
                             client = null
                             state.value = LinkState.Offline
                             return@runCatching prefs.serverName
@@ -197,17 +209,42 @@ class Link(
             }
         }
 
+    /** Forgets the active PC. Another paired PC, if any, becomes active (not connected yet). */
     fun unpair() {
         stop()
         prefs.clearPairing()
         client = null
-        state.value = LinkState.Unpaired
+        state.value = if (prefs.paired) LinkState.Offline else LinkState.Unpaired
+    }
+
+    /**
+     * Forgets the PC [id]. Forgetting the active one moves to another paired PC, or back to
+     * pairing when it was the last. Call from the foreground (it may start [LinkService]).
+     */
+    fun forget(id: String) {
+        if (id != prefs.active?.id) {
+            prefs.removePc(id)
+        } else if (prefs.pcs.size > 1) {
+            unpair()
+            LinkService.send(app, LinkService.ACTION_SWITCH)
+        } else {
+            LinkService.send(app, LinkService.ACTION_DISCONNECT)
+            unpair()
+        }
+    }
+
+    /** Makes [id] the active PC. Call with the link stopped; [start] connects to it. */
+    fun switchTo(id: String) {
+        prefs.activeId = id
+        client = null
+        state.value = LinkState.Offline
     }
 
     // ---------- control connection ----------
 
     fun start() {
         if (!prefs.paired || controlJob?.isActive == true) return
+        choosePc.value = false
         controlJob = scope.launch { controlLoop() }
         watchDebugSettings()
     }
@@ -237,6 +274,7 @@ class Link(
                 .put("model", Build.MODEL)
                 .put("adb_wifi", globalFlag(ADB_WIFI_ENABLED))
                 .put("dev_options", globalFlag(Settings.Global.DEVELOPMENT_SETTINGS_ENABLED))
+                .put("name", deviceName())
         control?.send(msg.toString())
     }
 
@@ -246,6 +284,12 @@ class Link(
         control?.close(1000, null)
         control = null
         if (prefs.paired) state.value = LinkState.Offline
+    }
+
+    /** Stops the link until the user reconnects (see [LinkState.Disconnected]). */
+    fun disconnect() {
+        stop()
+        if (prefs.paired) state.value = LinkState.Disconnected
     }
 
     /** Retry right away (network changed, app opened). */
@@ -331,10 +375,11 @@ class Link(
 
     /** The PC forgot this phone (`dotlink unpair`). */
     private fun revoked() {
+        val name = prefs.serverName
         prefs.clearPairing()
         client = null
-        state.value = LinkState.Unpaired
-        notices.tryEmit("The PC unpaired this phone")
+        state.value = if (prefs.paired) LinkState.Offline else LinkState.Unpaired
+        notices.tryEmit("$name forgot this phone")
     }
 
     private fun onControl(text: String) {
@@ -343,6 +388,7 @@ class Link(
             "hello" -> {
                 val name = msg.optString("name", prefs.serverName)
                 prefs.serverName = name
+                msg.optString("os").takeIf { it.isNotEmpty() }?.let { prefs.pcOs = it }
                 state.value = LinkState.Online(name)
                 sendInfo()
             }
@@ -599,9 +645,18 @@ class Link(
         return md.digest().toHex()
     }
 
-    private fun deviceName(): String =
+    /** What the PCs call this phone: the name set in Settings, or the system one. */
+    fun deviceName(): String = prefs.phoneName.trim().ifEmpty { systemDeviceName() }
+
+    fun systemDeviceName(): String =
         Settings.Global.getString(app.contentResolver, Settings.Global.DEVICE_NAME)
             ?: "${Build.MANUFACTURER} ${Build.MODEL}"
+
+    /** Saves this phone's name and tells the connected PC (`info`). */
+    fun renamePhone(name: String) {
+        prefs.phoneName = name
+        sendInfo()
+    }
 
     companion object {
         private const val TAG = "Dotlink"

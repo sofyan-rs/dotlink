@@ -52,6 +52,7 @@ private val TitleChevronSize = 20.dp
  * @param onTitleClick makes the title a button with a ▾ after it, when not `null`.
  * @param titleClickLabel what TalkBack says the title button does.
  * @param subline mono text under the title, e.g. "9 notes".
+ * @param sublineError shows the subline in red (it is an error, e.g. "wrong terminal PIN").
  * @param status positive status after the subline with a dot in front, e.g. "Synced 2 min ago".
  * @param actions trailing icon buttons, usually [ScreenTitleAction]s.
  */
@@ -62,6 +63,7 @@ fun ScreenTitle(
     onTitleClick: (() -> Unit)? = null,
     titleClickLabel: String = "Switch vault",
     subline: String? = null,
+    sublineError: Boolean = false,
     status: String? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
@@ -84,7 +86,7 @@ fun ScreenTitle(
             Row(horizontalArrangement = Arrangement.spacedBy(Dotline.space.s1), content = actions)
         }
         if (subline != null || status != null) {
-            Subline(subline = subline, status = status)
+            Subline(subline = subline, status = status, error = sublineError)
         }
     }
 }
@@ -173,13 +175,19 @@ private fun TitleText(
 private fun Subline(
     subline: String?,
     status: String?,
+    error: Boolean,
 ) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(Dotline.space.s2),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (subline != null) {
-            Text(subline, style = Dotline.type.data, color = Dotline.colors.inkMuted, maxLines = 1)
+            Text(
+                subline,
+                style = Dotline.type.data,
+                color = if (error) Dotline.colors.accentText else Dotline.colors.inkMuted,
+                maxLines = 1,
+            )
         }
         if (subline != null && status != null) {
             Text("·", style = Dotline.type.data, color = Dotline.colors.inkMuted)

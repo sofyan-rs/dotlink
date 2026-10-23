@@ -164,6 +164,7 @@ fun DotlineMenuDivider(modifier: Modifier = Modifier) {
  * @param contentDescription what TalkBack says, e.g. "Actions for Example".
  * @param open `true` while its menu is open: the button gets a `surfaceRaised` fill (Editor-Menu).
  * @param tint icon colour: `inkMuted` in list rows, pass `Dotline.colors.ink` in top bars.
+ * @param icon ⋮ by default; a single action can show its own icon (e.g. trash for Forget).
  */
 @Composable
 fun MoreButton(
@@ -172,6 +173,7 @@ fun MoreButton(
     modifier: Modifier = Modifier,
     open: Boolean = false,
     tint: Color = Dotline.colors.inkMuted,
+    icon: ImageVector = DotlineIcons.More,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
@@ -193,7 +195,7 @@ fun MoreButton(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = DotlineIcons.More,
+            imageVector = icon,
             contentDescription = contentDescription,
             tint = if (open) Dotline.colors.ink else tint,
             modifier = Modifier.size(SmallIconSize),
