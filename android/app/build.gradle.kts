@@ -13,11 +13,14 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        // Phones only: ML Kit's barcode library is ~6 MB per ABI, and x86 builds are for emulators.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Sideloaded personal build: sign with the debug key so the APK installs directly.
             signingConfig = signingConfigs.getByName("debug")

@@ -1708,6 +1708,7 @@ dependencies = [
  "hostname",
  "if-addrs",
  "interprocess",
+ "libc",
  "mdns-sd",
  "notify-rust",
  "portable-pty",
@@ -1722,6 +1723,7 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "tracing",
  "ureq",
+ "x11rb",
 ]
 
 [[package]]

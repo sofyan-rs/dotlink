@@ -85,7 +85,7 @@ impl MicSink {
         bail!("the phone mic is not supported on macOS yet")
     }
 
-    pub fn write(&mut self, _pcm: &[u8]) {}
+    pub fn write(&mut self, _pcm: axum::body::Bytes) {}
 }
 
 pub mod autostart {

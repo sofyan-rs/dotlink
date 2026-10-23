@@ -8,6 +8,8 @@ use tokio::process::{Child, ChildStdin, Command};
 
 pub const CAMERA_LABEL: &str = "Dotlink Camera";
 const MIC_SOURCE: &str = "dotlink_mic";
+/// Phone mic chunks (10 ms each) allowed to wait for pw-cat before older ones are dropped.
+const MIC_BACKLOG: usize = 3;
 
 /// Finds the loopback device: the configured path, or the one whose name is [CAMERA_LABEL].
 pub fn find_camera(configured: &str) -> Result<PathBuf> {
@@ -24,6 +26,10 @@ pub fn find_camera(configured: &str) -> Result<PathBuf> {
 }
 
 /// An ffmpeg process that decodes MJPEG frames from stdin into the loopback device.
+///
+/// Frames go in as multipart JPEG with a Content-Length each: `jpeg_pipe` only knows where a
+/// frame ends once the next one starts, and with ffmpeg's default threading the device ran
+/// three frames behind the phone (100 ms at 30 fps). This way it is one.
 pub struct CameraSink {
     child: Child,
     stdin: ChildStdin,
@@ -38,8 +44,8 @@ impl CameraSink {
         let mut child = Command::new("ffmpeg")
             .args(["-hide_banner", "-loglevel", "error", "-nostdin"])
             .args(["-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32", "-analyzeduration", "0"])
-            .args(["-use_wallclock_as_timestamps", "1", "-f", "jpeg_pipe", "-i", "pipe:0"])
-            .args(["-vf", &filter, "-fps_mode", "passthrough", "-f", "v4l2"])
+            .args(["-use_wallclock_as_timestamps", "1", "-threads", "1", "-f", "mpjpeg", "-i", "pipe:0"])
+            .args(["-vf", &filter, "-fps_mode", "passthrough", "-threads", "1", "-f", "v4l2"])
             .arg(device)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -54,7 +60,10 @@ impl CameraSink {
         if let Some(status) = self.child.try_wait()? {
             bail!("ffmpeg exited: {status}");
         }
+        let header = format!("--dotlink\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n", jpeg.len());
+        self.stdin.write_all(header.as_bytes()).await?;
         self.stdin.write_all(jpeg).await?;
+        self.stdin.write_all(b"\r\n").await?;
         Ok(())
     }
 }
@@ -67,12 +76,14 @@ impl CameraSink {
 /// the device at one size shows garbage if the writer switches to another.
 #[derive(Clone)]
 pub struct CameraHub {
-    frames: tokio::sync::mpsc::Sender<axum::body::Bytes>,
+    /// The newest phone frame. A frame still waiting when the next arrives is replaced:
+    /// writing it late would only delay everything after it.
+    frames: std::sync::Arc<tokio::sync::watch::Sender<axum::body::Bytes>>,
 }
 
 impl CameraHub {
     pub fn start(configured_device: String, size: (u32, u32)) -> Self {
-        let (frames, mut rx) = tokio::sync::mpsc::channel::<axum::body::Bytes>(2);
+        let (frames, mut rx) = tokio::sync::watch::channel(axum::body::Bytes::new());
         tokio::spawn(async move {
             let mut sink: Option<CameraSink> = None;
             let mut current = size;
@@ -85,8 +96,11 @@ impl CameraHub {
             let mut dumped = std::time::Instant::now();
             loop {
                 let jpeg = tokio::select! {
-                    frame = rx.recv() => {
-                        let Some(jpeg) = frame else { break };
+                    changed = rx.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                        let jpeg = rx.borrow_and_update().clone();
                         last_phone = Some(std::time::Instant::now());
                         if dump && dumped.elapsed() > std::time::Duration::from_secs(1) {
                             dumped = std::time::Instant::now();
@@ -140,12 +154,12 @@ impl CameraHub {
                 }
             }
         });
-        Self { frames }
+        Self { frames: std::sync::Arc::new(frames) }
     }
 
-    /// Queues a phone frame; dropped when ffmpeg is behind (keeps latency low).
+    /// Hands a phone frame to ffmpeg, replacing one that is still waiting (keeps latency low).
     pub fn send(&self, jpeg: axum::body::Bytes) {
-        let _ = self.frames.try_send(jpeg);
+        self.frames.send_replace(jpeg);
     }
 }
 
@@ -185,7 +199,7 @@ async fn placeholder_jpeg((w, h): (u32, u32)) -> axum::body::Bytes {
 /// No modules or FIFOs, so nothing is left behind when it stops.
 pub struct MicSink {
     _child: Child,
-    queue: tokio::sync::mpsc::Sender<Vec<u8>>,
+    queue: tokio::sync::mpsc::Sender<axum::body::Bytes>,
 }
 
 impl MicSink {
@@ -203,11 +217,24 @@ impl MicSink {
             .spawn()
             .context("starting pw-cat")?;
         let mut stdin = child.stdin.take().unwrap();
-        // ~200 ms of 20 ms chunks. When PipeWire falls behind, whole chunks are dropped
-        // (never partial ones, which would shift every following sample).
-        let (queue, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10);
+        // A pipe holds 64 KB by default: ~680 ms of 48 kHz mono, and once a Wi-Fi hiccup fills
+        // it the delay never shrinks (we write as fast as pw-cat plays). One page keeps it short.
+        {
+            use std::os::fd::AsRawFd;
+            // SAFETY: plain fcntl on a pipe fd we own; failing just keeps the default size.
+            unsafe { libc::fcntl(stdin.as_raw_fd(), libc::F_SETPIPE_SZ, 4096) };
+        }
+        // Chunks that pile up after a stall are dropped down to a few (whole chunks only:
+        // partial ones would shift every following sample), so the mic catches up again.
+        let (queue, mut rx) = tokio::sync::mpsc::channel::<axum::body::Bytes>(16);
         tokio::spawn(async move {
-            while let Some(chunk) = rx.recv().await {
+            while let Some(mut chunk) = rx.recv().await {
+                while rx.len() > MIC_BACKLOG {
+                    match rx.try_recv() {
+                        Ok(newer) => chunk = newer,
+                        Err(_) => break,
+                    }
+                }
                 if stdin.write_all(&chunk).await.is_err() {
                     break;
                 }
@@ -216,7 +243,7 @@ impl MicSink {
         Ok(Self { _child: child, queue })
     }
 
-    pub fn write(&mut self, pcm: &[u8]) {
-        let _ = self.queue.try_send(pcm.to_vec());
+    pub fn write(&mut self, pcm: axum::body::Bytes) {
+        let _ = self.queue.try_send(pcm);
     }
 }

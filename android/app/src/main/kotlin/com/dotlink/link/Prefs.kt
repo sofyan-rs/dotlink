@@ -56,6 +56,12 @@ class Prefs(
 ) {
     private val sp = context.getSharedPreferences("dotlink", Context.MODE_PRIVATE)
 
+    /**
+     * [pcs], parsed. Every pairing property ([token], [lastHost], [serverName]…) reads it, on
+     * each request and in screens, so the JSON is parsed only when it changes.
+     */
+    @Volatile private var pcsCache: List<Pc>? = null
+
     init {
         migrateSinglePc()
     }
@@ -67,11 +73,14 @@ class Prefs(
     /** Every paired PC, in pairing order. */
     var pcs: List<Pc>
         get() =
-            runCatching {
+            pcsCache ?: runCatching {
                 val a = JSONArray(sp.getString("pcs", "[]"))
                 List(a.length()) { Pc.fromJson(a.getJSONObject(it)) }
-            }.getOrDefault(emptyList())
-        private set(v) = sp.edit { putString("pcs", JSONArray(v.map { it.toJson() }).toString()) }
+            }.getOrDefault(emptyList()).also { pcsCache = it }
+        private set(v) {
+            pcsCache = v
+            sp.edit { putString("pcs", JSONArray(v.map { it.toJson() }).toString()) }
+        }
 
     var activeId: String?
         get() = sp.getString("active_pc", null)
@@ -88,8 +97,9 @@ class Prefs(
     }
 
     private fun updateActive(change: (Pc) -> Pc) {
-        val id = active?.id ?: return
-        pcs = pcs.map { if (it.id == id) change(it) else it }
+        val current = active ?: return
+        val changed = change(current)
+        if (changed != current) pcs = pcs.map { if (it.id == current.id) changed else it }
     }
 
     val hosts: List<String> get() = active?.hosts.orEmpty()

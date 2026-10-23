@@ -837,7 +837,7 @@ async fn ws_mic(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, Authed(de
         tracing::info!("mic from {} started", dev.name);
         while let Some(Ok(msg)) = socket.recv().await {
             if let Message::Binary(pcm) = msg {
-                sink.write(&pcm);
+                sink.write(pcm);
             }
         }
         tracing::info!("mic from {} stopped", dev.name);
@@ -898,7 +898,9 @@ async fn save_upload(app: &App, name: &str, sha: Option<&str>, body: Body, progr
     tokio::fs::create_dir_all(&dir).await?;
     let dest = unique_path(&dir, name);
     let part = dir.join(format!(".{name}.{}.part", random_hex(4)));
-    let mut file = tokio::fs::File::create(&part).await?;
+    // Each write to a tokio File is a trip to the blocking pool; the body arrives in ~16 KB
+    // TLS records, so batch them.
+    let mut file = tokio::io::BufWriter::with_capacity(1024 * 1024, tokio::fs::File::create(&part).await?);
     let mut hasher = Sha256::new();
     let mut stream = body.into_data_stream();
     let result: Result<()> = async {

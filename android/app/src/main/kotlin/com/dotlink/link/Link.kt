@@ -44,12 +44,15 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.BufferedSink
 import org.json.JSONObject
+import java.net.InetAddress
+import java.net.Socket
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import javax.net.SocketFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 
@@ -695,6 +698,7 @@ class Link(
                 .Builder()
                 .sslSocketFactory(ssl.socketFactory, tm)
                 .hostnameVerifier { _, _ -> true } // Safe: the certificate itself is pinned.
+                .socketFactory(NoDelaySocketFactory)
                 .connectTimeout(timeoutSec, TimeUnit.SECONDS)
                 .readTimeout(readTimeoutSec, TimeUnit.SECONDS)
                 .pingInterval(15, TimeUnit.SECONDS)
@@ -704,3 +708,39 @@ class Link(
 }
 
 fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+/**
+ * Sockets with TCP_NODELAY. Remote moves, Shell keystrokes and control messages are tiny;
+ * Nagle's algorithm would hold each one back until the previous was acknowledged.
+ */
+private object NoDelaySocketFactory : SocketFactory() {
+    private val system = getDefault()
+
+    private fun Socket.noDelay() = apply { tcpNoDelay = true }
+
+    override fun createSocket(): Socket = system.createSocket().noDelay()
+
+    override fun createSocket(
+        host: String,
+        port: Int,
+    ): Socket = system.createSocket(host, port).noDelay()
+
+    override fun createSocket(
+        host: String,
+        port: Int,
+        localHost: InetAddress,
+        localPort: Int,
+    ): Socket = system.createSocket(host, port, localHost, localPort).noDelay()
+
+    override fun createSocket(
+        host: InetAddress,
+        port: Int,
+    ): Socket = system.createSocket(host, port).noDelay()
+
+    override fun createSocket(
+        address: InetAddress,
+        port: Int,
+        localAddress: InetAddress,
+        localPort: Int,
+    ): Socket = system.createSocket(address, port, localAddress, localPort).noDelay()
+}

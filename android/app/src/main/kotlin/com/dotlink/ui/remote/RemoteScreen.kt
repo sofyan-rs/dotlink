@@ -115,15 +115,21 @@ private class InputChannel(
         ws?.send(msg.toString())
     }
 
+    // Moves and scrolls come with every touch event (up to 120 a second): plain strings, no
+    // JSONObject per event.
     fun move(
         x: Float,
         y: Float,
-    ) = send(JSONObject().put("t", "move").put("x", x.toDouble()).put("y", y.toDouble()))
+    ) {
+        ws?.send("{\"t\":\"move\",\"x\":$x,\"y\":$y}")
+    }
 
     fun scroll(
         x: Float,
         y: Float,
-    ) = send(JSONObject().put("t", "scroll").put("x", x.toDouble()).put("y", y.toDouble()))
+    ) {
+        ws?.send("{\"t\":\"scroll\",\"x\":$x,\"y\":$y}")
+    }
 
     fun button(
         b: String,

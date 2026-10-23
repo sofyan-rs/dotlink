@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.wifi.WifiManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -37,12 +38,30 @@ class LinkService : LifecycleService() {
     private var mic: MicStreamer? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
+    /*
+     * Wi-Fi power saving batches a phone's packets: pings to it took 90 ms on average, up to
+     * 300 ms. Remote, Shell, the webcam and the mic all felt that. The low-latency lock only
+     * applies while our app is on screen (no cost otherwise); the high-performance one keeps
+     * streams smooth with the screen off.
+     */
+    private val wifi by lazy { applicationContext.getSystemService(WifiManager::class.java) }
+    private val lowLatency by lazy { wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "dotlink:link").apply { setReferenceCounted(false) } }
+
+    @Suppress("DEPRECATION") // Still honoured before Android 14; harmless after.
+    private val highPerf by lazy { wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "dotlink:stream").apply { setReferenceCounted(false) } }
+
+    private fun WifiManager.WifiLock.hold(on: Boolean) {
+        if (on && !isHeld) acquire() else if (!on && isHeld) release()
+    }
+
     override fun onCreate() {
         super.onCreate()
         promote()
         link.start()
         lifecycleScope.launch {
-            combine(link.state, link.cameraOn, link.micOn) { s, c, m -> Triple(s, c, m) }.collect { (s) ->
+            combine(link.state, link.cameraOn, link.micOn) { s, c, m -> Triple(s, c, m) }.collect { (s, c, m) ->
+                lowLatency.hold(s is LinkState.Online)
+                highPerf.hold(s is LinkState.Online && (c || m))
                 if (s is LinkState.Unpaired) stopSelf() else promote()
             }
         }
@@ -268,6 +287,8 @@ class LinkService : LifecycleService() {
         networkCallback?.let { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) }
         camera?.stop()
         mic?.stop()
+        lowLatency.hold(false)
+        highPerf.hold(false)
         super.onDestroy()
     }
 

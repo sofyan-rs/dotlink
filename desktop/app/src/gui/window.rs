@@ -21,6 +21,7 @@ use gpui_component::switch::Switch;
 use gpui_component::{ActiveTheme as _, Icon};
 use gpui_kit_assets::IconName;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Line height of a row's title, so things beside it can line up with it.
@@ -39,6 +40,8 @@ pub struct MainView {
     form: SettingsForm,
     /// The 6-digit Wireless debugging pairing code, when Cast needs pairing.
     cast_code: Entity<InputState>,
+    /// The pairing QR code, encoded once per URI (the page repaints every second).
+    qr: Option<(String, Arc<Qr>)>,
     _subs: Vec<Subscription>,
 }
 
@@ -109,9 +112,13 @@ impl MainView {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let waiting = this.update(cx, |this, cx| {
                     let m = this.model.read(cx);
-                    // Pairing countdown, and "Starting…" running out.
-                    let waiting = matches!(m.pairing, Pairing::Waiting { .. }) || !m.starting.is_empty();
-                    if waiting {
+                    // Pairing countdown, and "Starting…" running out; only on the page showing it.
+                    let ticking = match m.page {
+                        Page::Pair => matches!(m.pairing, Pairing::Waiting { .. }),
+                        Page::Devices => !m.starting.is_empty(),
+                        _ => false,
+                    };
+                    if ticking {
                         cx.notify();
                     }
                 });
@@ -122,7 +129,7 @@ impl MainView {
         })
         .detach();
         let cast_code = cx.new(|cx| InputState::new(window, cx).placeholder("6-digit code"));
-        Self { model, form, cast_code, _subs: subs }
+        Self { model, form, cast_code, qr: None, _subs: subs }
     }
 
     fn go(&mut self, page: Page, cx: &mut Context<Self>) {
@@ -176,6 +183,13 @@ impl MainView {
         self.form.terminal = config.terminal;
         self.form.cast_screen_off = config.cast_screen_off;
         self.form.cast_audio = config.cast_audio;
+    }
+
+    fn encode_qr(&mut self, cx: &mut Context<Self>) {
+        let Pairing::Waiting { uri, .. } = &self.model.read(cx).pairing else { return };
+        if self.qr.as_ref().is_none_or(|(cached, _)| cached != uri) {
+            self.qr = Some((uri.clone(), Arc::new(Qr::new(uri))));
+        }
     }
 
     fn save_theme(&mut self, cx: &mut Context<Self>) {
@@ -233,6 +247,7 @@ impl MainView {
 impl Render for MainView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.load_form(window, cx);
+        self.encode_qr(cx);
         let p = palette(cx);
         let page = self.model.read(cx).page;
         let content = match page {
@@ -679,7 +694,7 @@ impl MainView {
                     .flex()
                     .gap(px(28.))
                     .items_start()
-                    .child(qr(&uri, 260.))
+                    .child(qr(self.qr.as_ref().map(|(_, q)| q.clone()), 260.))
                     .child(
                         div()
                             .flex_1()
@@ -1371,29 +1386,49 @@ fn transfer_row(p: &Palette, t: &Transfer) -> Div {
         })
 }
 
+/// A QR code's dark modules, as horizontal runs per row: (row, first column, length).
+pub struct Qr {
+    width: usize,
+    runs: Vec<(usize, usize, usize)>,
+}
+
+impl Qr {
+    fn new(data: &str) -> Self {
+        let Ok(code) = qrcode::QrCode::new(data.as_bytes()) else { return Self { width: 0, runs: Vec::new() } };
+        let width = code.width();
+        let dark: Vec<bool> = code.to_colors().into_iter().map(|m| m == qrcode::Color::Dark).collect();
+        let mut runs = Vec::new();
+        for (y, row) in dark.chunks(width).enumerate() {
+            let mut x = 0;
+            while x < width {
+                if !row[x] {
+                    x += 1;
+                    continue;
+                }
+                let start = x;
+                while x < width && row[x] {
+                    x += 1;
+                }
+                runs.push((y, start, x - start));
+            }
+        }
+        Self { width, runs }
+    }
+}
+
 /// The pairing QR code, dark modules on a white tile (scanners want that, also in dark mode).
-fn qr(data: &str, side: f32) -> impl IntoElement {
-    let code = qrcode::QrCode::new(data.as_bytes()).ok();
-    let (width, modules) = match &code {
-        Some(c) => (c.width(), c.to_colors().into_iter().map(|m| m == qrcode::Color::Dark).collect::<Vec<_>>()),
-        None => (0, Vec::new()),
-    };
+fn qr(code: Option<Arc<Qr>>, side: f32) -> impl IntoElement {
     div().flex_none().size(px(side)).rounded(px(CARD_RADIUS)).bg(gpui::white()).p(px(14.)).child(
         canvas(
             |_, _, _| {},
             move |bounds: Bounds<gpui::Pixels>, _, window, _| {
-                if width == 0 {
-                    return;
-                }
-                let cell = bounds.size.width / width as f32;
-                for (i, dark) in modules.iter().enumerate() {
-                    if *dark {
-                        let (x, y) = ((i % width) as f32, (i / width) as f32);
-                        let origin = point(bounds.origin.x + cell * x, bounds.origin.y + cell * y);
-                        // A hair of overlap so neighbouring modules don't show seams.
-                        window
-                            .paint_quad(fill(Bounds::new(origin, size(cell + px(0.5), cell + px(0.5))), gpui::black()));
-                    }
+                let Some(code) = code.as_ref().filter(|c| c.width > 0) else { return };
+                let cell = bounds.size.width / code.width as f32;
+                for &(y, x, len) in &code.runs {
+                    let origin = point(bounds.origin.x + cell * x as f32, bounds.origin.y + cell * y as f32);
+                    // A hair of overlap so neighbouring modules don't show seams.
+                    let size = size(cell * len as f32 + px(0.5), cell + px(0.5));
+                    window.paint_quad(fill(Bounds::new(origin, size), gpui::black()));
                 }
             },
         )

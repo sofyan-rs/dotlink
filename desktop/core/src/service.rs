@@ -77,7 +77,14 @@ async fn serve(app: Arc<App>, identity: tls::Identity) -> Result<()> {
         }
         shutdown.shutdown();
     });
-    axum_server::bind_rustls(addr, tls).handle(handle).serve(server::router(app).into_make_service_with_connect_info::<SocketAddr>()).await?;
+    // TCP_NODELAY: Remote moves, Shell keystrokes and control messages are tiny packets that
+    // Nagle's algorithm would otherwise hold back for an ACK.
+    let acceptor = axum_server::tls_rustls::RustlsAcceptor::new(tls).acceptor(axum_server::accept::NoDelayAcceptor);
+    axum_server::bind(addr)
+        .acceptor(acceptor)
+        .handle(handle)
+        .serve(server::router(app).into_make_service_with_connect_info::<SocketAddr>())
+        .await?;
     Ok(())
 }
 

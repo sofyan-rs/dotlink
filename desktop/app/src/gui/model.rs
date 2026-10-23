@@ -67,6 +67,10 @@ pub struct Model {
     pub send_to: Option<String>,
     /// Device id the webcam and mic start on, when several phones are connected.
     pub stream_from: Option<String>,
+    /// A status request is on its way; `refresh_again` asks for one more after it (events come
+    /// in bursts, e.g. a phone connecting sends Devices twice).
+    refreshing: bool,
+    refresh_again: bool,
 }
 
 /// [Model::fixing] while "Fix all" runs.
@@ -107,6 +111,8 @@ impl Model {
             starting: Vec::new(),
             send_to: None,
             stream_from: None,
+            refreshing: false,
+            refresh_again: false,
         });
         let mut updates = client.watch();
         model.update(cx, |_, cx| {
@@ -161,10 +167,19 @@ impl Model {
     }
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.refreshing {
+            self.refresh_again = true;
+            return;
+        }
+        self.refreshing = true;
         let status = self.client.status();
         cx.spawn(async move |this, cx| {
             let result = status.await;
             this.update(cx, |this, cx| {
+                this.refreshing = false;
+                if std::mem::take(&mut this.refresh_again) {
+                    this.refresh(cx);
+                }
                 match result {
                     Ok(s) => {
                         // A stream that is now running is no longer "starting".
