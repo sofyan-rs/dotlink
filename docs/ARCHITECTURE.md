@@ -151,6 +151,9 @@ request line in, one or more reply lines out.
   and can switch or forget any; a PC sends files and streams to one phone or all.
 - **Cast.** `cast.rs` finds the phone in `adb devices` by model (USB first), or its Wireless
   debugging port over mDNS (`_adb-tls-connect._tcp`) by IP, `adb connect`s and runs scrcpy.
+  Each paired phone has its own cast (state, scrcpy, adb serial), so several run at once; a
+  serial in use by one phone isn't matched to another, and with two phones of the same model
+  only the IP (Wi-Fi) identifies them. Status reports `casts`: device id → state.
   Pairing uses the code from the phone; its port is found over mDNS too. Without scrcpy on the
   PC, the official release (with adb) is downloaded into the data folder, checked against a
   pinned SHA-256.

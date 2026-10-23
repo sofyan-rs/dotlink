@@ -105,8 +105,8 @@ dotlink devices                     list paired phones
 dotlink unpair NAME|ID              forget a phone
 dotlink camera on|off [--to PHONE]  start/stop the phone camera as Dotlink Camera
 dotlink mic on|off [--to PHONE]     start/stop the phone mic as Dotlink Mic
-dotlink cast [stop]                 show the phone screen on the PC (scrcpy)
-dotlink cast pair CODE              pair with the phone's Wireless debugging once
+dotlink cast [stop] [--to PHONE]    show a phone's screen on the PC (scrcpy); stop alone ends every cast
+dotlink cast pair CODE [--to PHONE] pair with the phone's Wireless debugging once
 dotlink quit                        stop the running app or daemon
 ```
 
@@ -138,7 +138,7 @@ theme = "system"         # the window's look: "system", "light" or "dark"
 
 - **Keyboard layout:** remote typing maps characters with a US layout, so other layouts may type different characters. Special keys and shortcuts work on any layout.
 - **Clipboard on Android:** Android 10+ lets an app read the clipboard only while it is in front. That is why phone → PC happens when you open the app or tap the notification button.
-- **Cast:** uses the PC's `scrcpy` and `adb` when they're installed. Otherwise the first Cast (or Fix in Setup) downloads the official scrcpy release, which includes adb, into `~/.local/share/dotlink/scrcpy/` (18 MB, SHA-256 checked, no root). The phone needs Developer options. Over USB, allow USB debugging once and press Cast. Over Wi-Fi (Android 11+), turn on Wireless debugging, then pair once: on the phone choose *Pair device with pairing code* and type the code in Dotlink. After that Cast finds the phone by itself (mDNS); if Wireless debugging is off, the phone gets a notification that opens it.
+- **Cast:** uses the PC's `scrcpy` and `adb` when they're installed. Otherwise the first Cast (or Fix in Setup) downloads the official scrcpy release, which includes adb, into `~/.local/share/dotlink/scrcpy/` (18 MB, SHA-256 checked, no root). The phone needs Developer options. Over USB, allow USB debugging once and press Cast. Over Wi-Fi (Android 11+), turn on Wireless debugging, then pair once: on the phone choose *Pair device with pairing code* and type the code in Dotlink. After that Cast finds the phone by itself (mDNS); if Wireless debugging is off, the phone gets a notification that opens it. Several phones can cast at once, each in its own window (Cast per phone on the Devices page, or `--to`). Two phones of the same model can't be told apart over USB, so then they cast over Wi-Fi.
 - **Webcam and mic from the PC:** Start in Devices (or `dotlink camera on`) starts them right away while the Dotlink app is open on the phone. Otherwise Android doesn't let a background app turn on the camera or mic, so the phone shows a notification and one tap on **Start** does it.
 - **Webcam:** the phone sends MJPEG, and ffmpeg writes it to v4l2loopback. The device always has a picture ("phone camera off" when idle), so it stays listed in OBS and browsers. Its size never changes while apps read it. Only one phone streams the camera (or the mic) at a time.
 - **Latency:** frames and mic audio that arrive late are dropped instead of queued, so a Wi-Fi hiccup costs a stutter, not a growing delay. While linked, the phone holds a Wi-Fi lock so power saving doesn't add lag.
