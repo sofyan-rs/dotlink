@@ -235,7 +235,7 @@ impl App {
             "camera": self.streams.lock().unwrap().get("camera"),
             "mic": self.streams.lock().unwrap().get("mic"),
             "has_ui": self.ui.lock().unwrap().is_some(),
-            "cast": self.cast.state(),
+            "casts": self.cast.states(),
         })
     }
 
@@ -340,6 +340,11 @@ impl App {
     /// Sends a JSON message to one phone (by device id), or to every phone for None.
     pub fn send_control_to(&self, device: Option<&str>, msg: Value) {
         let _ = self.control_tx.send((device.map(str::to_string), msg.to_string()));
+    }
+
+    /// Device ids of the phones connected right now.
+    pub fn online_ids(&self) -> Vec<String> {
+        self.online.lock().unwrap().iter().filter(|(_, n)| **n > 0).map(|(id, _)| id.clone()).collect()
     }
 
     pub fn online_devices(&self) -> Vec<String> {

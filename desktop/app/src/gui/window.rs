@@ -1,5 +1,6 @@
 //! The Dotlink window: a sidebar and five pages.
 
+use super::client::{DeviceInfo, Status};
 use super::model::{Model, Notice, Page, Pairing};
 use super::theme::{self, DISPLAY, MONO, Palette, palette};
 use dotlink_core::cast::CastState;
@@ -381,7 +382,7 @@ impl MainView {
         let status = &status;
         let any_online = status.devices.iter().any(|d| d.online);
         let streams = self.streams(p, status.camera.clone(), status.mic.clone(), any_online, cx);
-        let cast = self.cast_card(p, &status.cast, any_online, cx);
+        let cast = self.cast_card(p, status, cx);
         // The latest transfers right under the drop zone, so sending shows its progress here.
         let recent: Vec<Transfer> = status.transfers.iter().take(3).cloned().collect();
         let mut recent_list = group(p);
@@ -519,85 +520,101 @@ impl MainView {
             .into_any_element()
     }
 
-    /// The phone's screen in a scrcpy window: state, Cast/Stop, and pairing when it's needed.
-    fn cast_card(&self, p: &Palette, cast: &CastState, any_online: bool, cx: &mut Context<Self>) -> Div {
-        let (dot, title, detail): (Hsla, String, String) = match cast {
-            CastState::Idle => (
-                p.ink_faint,
-                "Off".into(),
-                "Shows the phone's screen in a window, with mouse and keyboard. Over USB or Wi-Fi.".into(),
-            ),
-            CastState::Installing { .. } => {
-                (p.ink, "Installing scrcpy…".into(), "Downloading it once (18 MB) so Cast can run.".into())
-            }
-            CastState::Connecting { device } => (p.ink, format!("Connecting to {device}…"), String::new()),
-            CastState::Casting { device, usb } => (
-                p.positive,
-                format!("Casting {device}"),
-                format!("Over {}. Close the window or press Stop to end.", if *usb { "USB" } else { "Wi-Fi" }),
-            ),
-            CastState::NeedsWifiDebugging { device } => (
-                p.accent,
-                "Wireless debugging is off".into(),
-                format!("{device} shows a notification that opens the setting. Or plug it in over USB."),
-            ),
-            CastState::NeedsPairing { device } => (
-                p.accent,
-                "Pair once".into(),
-                format!(
-                    "On {device}: Developer options → Wireless debugging → Pair device with pairing code. Type the code here."
+    /// Each phone's screen in its own scrcpy window: one row per connected phone (and any phone
+    /// still casting), with its state, Cast/Stop, and pairing when it's needed.
+    fn cast_card(&self, p: &Palette, status: &Status, cx: &mut Context<Self>) -> Div {
+        let phones: Vec<&DeviceInfo> =
+            status.devices.iter().filter(|d| d.online || status.casts.contains_key(&d.id)).collect();
+        let mut card = group(p);
+        if phones.is_empty() {
+            return card.child(
+                row(p).child(status_dot(p.ink_faint)).child(
+                    div().flex_1().min_w(px(0.)).text_color(p.ink_muted).child(
+                        "Shows a connected phone's screen in a window, with mouse and keyboard. Over USB or Wi-Fi.",
+                    ),
                 ),
-            ),
-            CastState::Failed { error, .. } => (p.accent, "Couldn't cast".into(), error.clone()),
-        };
-        let busy = matches!(cast, CastState::Connecting { .. } | CastState::Installing { .. });
-        let button = match cast {
-            CastState::Casting { .. } => pill(p, "cast-stop", "Stop", Kind::Ghost).on_click(
-                cx.listener(|this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.set_cast(false, cx))),
-            ),
-            _ if busy => enabled(pill(p, "cast-start", "Connecting…", Kind::Primary), false),
-            CastState::Idle => {
-                enabled(pill(p, "cast-start", "Cast", Kind::Primary), any_online).when(any_online, |b| {
-                    b.on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.set_cast(true, cx))),
-                    )
-                })
-            }
-            _ => enabled(pill(p, "cast-start", "Try again", Kind::Secondary), any_online).when(any_online, |b| {
-                b.on_click(
-                    cx.listener(|this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.set_cast(true, cx))),
-                )
-            }),
-        };
-        let mut card = group(p).child(
-            row(p)
-                .child(status_dot(dot))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .flex()
-                        .flex_col()
-                        .child(div().font_weight(FontWeight::MEDIUM).child(title))
-                        .when(!detail.is_empty(), |d| {
-                            d.child(div().text_size(px(13.)).text_color(p.ink_muted).child(detail))
-                        }),
-                )
-                .child(button),
-        );
-        if matches!(cast, CastState::NeedsPairing { .. }) {
+            );
+        }
+        // One code field: pairing is done for one phone at a time.
+        let mut code_shown = false;
+        for (i, d) in phones.into_iter().enumerate() {
+            let cast = status.cast(&d.id);
+            let (dot, detail): (Hsla, String) = match &cast {
+                CastState::Idle => (p.ink_faint, "Shows its screen in a window, with mouse and keyboard.".into()),
+                CastState::Installing { .. } => (p.ink, "Installing scrcpy (18 MB, once)…".into()),
+                CastState::Connecting { .. } => (p.ink, "Connecting…".into()),
+                CastState::Casting { usb, .. } => (
+                    p.positive,
+                    format!("Casting over {}. Close the window or press Stop to end.", if *usb { "USB" } else { "Wi-Fi" }),
+                ),
+                CastState::NeedsWifiDebugging { .. } => (
+                    p.accent,
+                    "Wireless debugging is off. The phone shows a notification that opens the setting; or plug it in over USB."
+                        .into(),
+                ),
+                CastState::NeedsPairing { .. } => (
+                    p.accent,
+                    "Pair once: Developer options → Wireless debugging → Pair device with pairing code. Type the code here."
+                        .into(),
+                ),
+                CastState::Failed { error, .. } => (p.accent, format!("Couldn't cast: {error}")),
+            };
+            let busy = matches!(cast, CastState::Connecting { .. } | CastState::Installing { .. });
+            let pill_id = SharedString::from(format!("cast-{}", d.id));
+            let (id, online) = (d.id.clone(), d.online);
+            let button = match cast {
+                // Connecting can take a while (mDNS, adb connect); Cancel ends it like Stop.
+                CastState::Casting { .. } | CastState::Connecting { .. } | CastState::Installing { .. } => {
+                    pill(p, pill_id, if busy { "Cancel" } else { "Stop" }, Kind::Ghost).on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            let id = id.clone();
+                            this.model.update(cx, |m, cx| m.set_cast(false, Some(id), cx))
+                        },
+                    ))
+                }
+                ref other => {
+                    let (label, kind) =
+                        if matches!(other, CastState::Idle) { ("Cast", Kind::Primary) } else { ("Try again", Kind::Secondary) };
+                    enabled(pill(p, pill_id, label, kind), online).when(online, |b| {
+                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            let id = id.clone();
+                            this.model.update(cx, |m, cx| m.set_cast(true, Some(id), cx))
+                        }))
+                    })
+                }
+            };
             card = card.child(
                 row(p)
-                    .border_t_1()
-                    .border_color(p.line)
-                    .child(div().w(px(200.)).child(Input::new(&self.cast_code).h(px(CONTROL))))
-                    .child(pill(p, "cast-pair", "Pair", Kind::Primary).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            let code = this.cast_code.read(cx).value().to_string();
-                            this.model.update(cx, |m, cx| m.pair_cast(code, cx));
-                        },
-                    ))),
+                    .when(i > 0, |r| r.border_t_1().border_color(p.line))
+                    .child(status_dot(dot))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .flex()
+                            .flex_col()
+                            .child(div().font_weight(FontWeight::MEDIUM).child(d.name.clone()))
+                            .child(div().text_size(px(13.)).text_color(p.ink_muted).child(detail)),
+                    )
+                    .child(button),
             );
+            if matches!(cast, CastState::NeedsPairing { .. }) && !code_shown {
+                code_shown = true;
+                let id = d.id.clone();
+                card = card.child(
+                    row(p)
+                        .border_t_1()
+                        .border_color(p.line)
+                        .child(div().w(px(200.)).child(Input::new(&self.cast_code).h(px(CONTROL))))
+                        .child(pill(p, "cast-pair", "Pair", Kind::Primary).on_click(cx.listener(
+                            move |this, _: &ClickEvent, _, cx| {
+                                let code = this.cast_code.read(cx).value().to_string();
+                                let id = id.clone();
+                                this.model.update(cx, |m, cx| m.pair_cast(id, code, cx));
+                            },
+                        ))),
+                );
+            }
         }
         card
     }

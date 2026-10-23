@@ -248,8 +248,17 @@ fn listen_tray(mut rx: futures::channel::mpsc::UnboundedReceiver<TrayAction>, cx
                         .detach();
                     }
                     TrayAction::SendClipboard => model.update(cx, |m, cx| m.send_clipboard(cx)),
-                    // Needing pairing shows on the Devices page.
-                    TrayAction::Cast => model.update(cx, |m, cx| m.set_cast(true, cx)),
+                    // With several phones online, the Devices page asks which one. Needing
+                    // pairing shows there too.
+                    TrayAction::Cast => {
+                        let online = model.read(cx).online_names().len();
+                        if online > 1 {
+                            model.update(cx, |m, _| m.page = Page::Devices);
+                            show_window(cx);
+                        } else {
+                            model.update(cx, |m, cx| m.set_cast(true, None, cx));
+                        }
+                    }
                     TrayAction::Quit => quit(cx),
                 }
             });

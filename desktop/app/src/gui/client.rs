@@ -10,6 +10,7 @@ use dotlink_core::ipc;
 use futures::channel::{mpsc, oneshot};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -28,7 +29,15 @@ pub struct Status {
     /// Phone streaming the camera / mic right now.
     pub camera: Option<String>,
     pub mic: Option<String>,
-    pub cast: CastState,
+    /// Device id → its cast, for the phones that aren't Idle.
+    #[serde(default)]
+    pub casts: HashMap<String, CastState>,
+}
+
+impl Status {
+    pub fn cast(&self, id: &str) -> CastState {
+        self.casts.get(id).cloned().unwrap_or(CastState::Idle)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -115,13 +124,14 @@ impl Client {
         ok_text(self.call(json!({ "cmd": "media", "kind": kind, "on": on, "to": to })))
     }
 
-    /// Starts or stops casting the phone screen.
-    pub fn cast(&self, on: bool) -> impl Future<Output = Result<String>> + use<> {
-        ok_text(self.call(json!({ "cmd": "cast", "on": on })))
+    /// Starts or stops casting a phone's screen (by device id; None: the first phone online, or
+    /// every cast for stop).
+    pub fn cast(&self, on: bool, id: Option<&str>) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "cast", "on": on, "id": id })))
     }
 
-    pub fn cast_pair(&self, code: &str) -> impl Future<Output = Result<String>> + use<> {
-        ok_text(self.call(json!({ "cmd": "cast_pair", "code": code })))
+    pub fn cast_pair(&self, id: &str, code: &str) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "cast_pair", "id": id, "code": code })))
     }
 
     pub fn unpair(&self, id: &str) -> impl Future<Output = Result<String>> + use<> {

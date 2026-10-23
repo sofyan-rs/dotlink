@@ -135,9 +135,9 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
         "cast" => {
             let id = req["id"].as_str();
             let msg = if req["on"].as_bool().unwrap_or(true) {
-                result(crate::cast::start(&app, id).await.map(|()| "casting".into()))
+                result(crate::cast::start(&app, id).await.map(String::from))
             } else {
-                crate::cast::stop(&app);
+                crate::cast::stop(&app, id);
                 json!({ "ok": "stopped" })
             };
             w.write_all(reply(msg).as_bytes()).await?;

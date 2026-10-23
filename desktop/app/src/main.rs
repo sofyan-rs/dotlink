@@ -65,8 +65,11 @@ enum Cmd {
         #[arg(long)]
         to: Option<String>,
     },
-    /// Show the phone's screen on the PC (scrcpy, over USB or Wi-Fi). `stop` ends it.
+    /// Show a phone's screen on the PC (scrcpy, over USB or Wi-Fi). `stop` ends it.
     Cast {
+        /// The phone (name or id); without it, the first one connected (`stop`: every cast).
+        #[arg(long, global = true)]
+        to: Option<String>,
         #[command(subcommand)]
         action: Option<CastCmd>,
     },
@@ -160,9 +163,13 @@ async fn command(cmd: Cmd) -> Result<()> {
         Cmd::Clip { to } => simple(json!({ "cmd": "clip", "to": to })).await,
         Cmd::Unpair { device } => simple(json!({ "cmd": "unpair", "id": device })).await,
         Cmd::Quit => simple(json!({ "cmd": "quit" })).await,
-        Cmd::Cast { action: None } => simple(json!({ "cmd": "cast", "on": true })).await,
-        Cmd::Cast { action: Some(CastCmd::Stop) } => simple(json!({ "cmd": "cast", "on": false })).await,
-        Cmd::Cast { action: Some(CastCmd::Pair { code }) } => simple(json!({ "cmd": "cast_pair", "code": code })).await,
+        Cmd::Cast { to, action: None } => simple(json!({ "cmd": "cast", "on": true, "id": to })).await,
+        Cmd::Cast { to, action: Some(CastCmd::Stop) } => {
+            simple(json!({ "cmd": "cast", "on": false, "id": to })).await
+        }
+        Cmd::Cast { to, action: Some(CastCmd::Pair { code }) } => {
+            simple(json!({ "cmd": "cast_pair", "code": code, "id": to })).await
+        }
         Cmd::Camera { state, to } => {
             simple(json!({ "cmd": "media", "kind": "camera", "on": matches!(state, OnOff::On), "to": to })).await
         }
