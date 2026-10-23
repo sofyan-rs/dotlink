@@ -155,6 +155,9 @@ fn show_window(cx: &mut App) {
         titlebar: Some(gpui::TitlebarOptions { title: Some("Dotlink".into()), ..Default::default() }),
         app_id: Some(APP_ID.into()),
         window_min_size: Some(size(px(720.), px(520.))),
+        // Where we draw our own frame (GNOME), its shadow must be see-through; every view
+        // paints its own opaque background, so this changes nothing elsewhere.
+        window_background: gpui::WindowBackgroundAppearance::Transparent,
         ..Default::default()
     };
     let opened = cx.open_window(options, |window, cx| {

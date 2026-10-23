@@ -16,7 +16,7 @@ use gpui_component::WindowExt as _;
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::switch::Switch;
-use gpui_component::{TitleBar, window_border};
+use gpui_component::TitleBar;
 use gpui_kit_assets::IconName;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -229,19 +229,17 @@ impl Render for MainView {
                     .child(div().max_w(px(760.)).px(px(32.)).py(px(28.)).flex().flex_col().gap(px(24.)).child(content)),
             );
         // GNOME (and other compositors without server-side decorations) leave the title bar to
-        // the app: draw one with window controls, plus a resizable border. KDE and Hyprland
-        // decorate (or tile) the window themselves.
+        // the app: draw one with window controls. gpui-component's Root already adds the
+        // resizable frame and its shadow. KDE and Hyprland decorate (or tile) the window.
         if matches!(window.window_decorations(), Decorations::Client { .. }) {
-            window_border()
-                .child(
-                    div()
-                        .size_full()
-                        .flex()
-                        .flex_col()
-                        .bg(p.bg)
-                        .child(TitleBar::new().child(mono_label(&p, "DOTLINK")))
-                        .child(div().flex_1().min_h(px(0.)).child(body)),
-                )
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(p.bg)
+                // Empty: the sidebar right under it already says DOTLINK.
+                .child(TitleBar::new())
+                .child(div().flex_1().min_h(px(0.)).child(body))
                 .into_any_element()
         } else {
             body.into_any_element()
