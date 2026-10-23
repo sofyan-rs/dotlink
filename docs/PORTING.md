@@ -24,11 +24,11 @@ The Android app needs no changes: it already reads the PC's OS from `hello` (`os
 | Tray | `app/src/gui/tray.rs` | done (`tray-icon`) | **TODO** (menu bar) |
 | Remote (mouse + keyboard) | `Input` | done (SendInput) | **TODO** (CGEvent + Accessibility) |
 | Start at login | `autostart` | done (Run key, honours Task Manager) | **TODO** (SMAppService / LaunchAgent) |
-| Setup checks | `setup` | done (firewall rule, Public network) | **TODO** (Accessibility, Local Network) |
+| Setup checks | `setup` | done (firewall rule, Public network, camera, VB-CABLE, adb/scrcpy) | **TODO** (Accessibility, Local Network) |
 | Cast (scrcpy) | `core/src/cast.rs` | done (.zip download, SDK adb) | download works (tar.gz) |
-| Webcam | `CameraHub` | **TODO**: virtual camera | **TODO**: Camera Extension |
-| Microphone | `MicSink` | **TODO**: virtual audio device | **TODO**: virtual audio device |
-| Installer | `app/Cargo.toml` packager section | **TODO**: NSIS/MSI | **TODO**: signed .app in .dmg |
+| Webcam | `CameraHub` | done (Windows 11 virtual camera, `desktop/camera` DLL) | **TODO**: Camera Extension |
+| Microphone | `MicSink` | done (plays into VB-CABLE through WASAPI) | **TODO**: virtual audio device |
+| Installer | `app/Cargo.toml` packager section | done (NSIS setup .exe, per user; not signed yet) | **TODO**: signed .app in .dmg |
 
 `platform::features()` tells the window what to show. Each OS starts with `remote`,
 `camera` and `mic` set to `false`; turn a flag on in the same commit that makes the feature
@@ -142,7 +142,7 @@ used (its ACL is already user-only); revisit it only if the config dir becomes c
   `NSBonjourServices` = `_dotlink._tcp`, `_adb-tls-connect._tcp`, `_adb-tls-pairing._tcp`,
   or browsing fails silently (Cast won't find the phone). This only applies to a bundled
   `.app`; `cargo run` from Terminal inherits Terminal's permission.
-- `mdns-sd` binds UDP 5353 next to the OS's own responder (Windows 10+ and mDNSResponder on
+- `mdns-sd` binds UDP 5353 next to the OS's own responder (Windows 11 and mDNSResponder on
   macOS). Check that the phone still finds the PC after its IP changes.
 
 ## Step 3: feels native
@@ -246,8 +246,8 @@ Same `Check` struct as Linux; fixable ones get a Fix button.
 |---|---|---|---|
 | `firewall` | Network | an inbound TCP rule for the port exists (`netsh advfirewall firewall show rule name=Dotlink`) | `netsh advfirewall firewall add rule name=Dotlink dir=in action=allow protocol=TCP localport=<port> profile=private,domain` through an elevated `ShellExecuteW(…, "runas", …)` (one UAC prompt) |
 | `network_profile` | Network | the active Wi-Fi is Private (Public blocks the rule above) | not fixable: explain where to switch it |
-| `mic_driver` | Microphone | the virtual audio device is present (see Step 7) | link to the download |
-| `camera` | Webcam | Windows 11 22H2+ (or the fallback driver is installed) | not fixable |
+| `vb_cable` | Microphone | VB-CABLE's "CABLE Input" is present (see Step 7) | opens its download page |
+| `camera` | Webcam | the camera DLL is installed in Program Files and registered | installs it (one UAC prompt) |
 
 **macOS**
 
@@ -309,14 +309,10 @@ while apps are reading.
 
 ### Windows webcam
 
-- **Windows 11 (22H2+)**: `MFCreateVirtualCamera` registers a camera every app sees
-  (Teams, Zoom, browsers, OBS). It needs a **media source COM DLL** (a separate
-  `cdylib` crate, or C++), registered by the installer; the app passes it frames through
-  shared memory or a named pipe. The DLL decodes JPEG to NV12 (or the app does, with
-  `zune-jpeg`/`image`, so the DLL stays small).
-- **Windows 10**: no virtual camera API. A DirectShow source filter works for most desktop
-  apps (not for Windows Hello or UWP apps). [Softcam](https://github.com/tshino/softcam)
-  (MIT) is a ready-made one fed from user code. Decide whether Windows 10 is worth it.
+Done: `MFCreateVirtualCamera` (Windows 11) registers a camera every app sees (Teams, Zoom,
+browsers, OBS). Its **media source COM DLL** is the `desktop/camera` crate, installed and
+registered by Setup; Dotlink decodes the JPEG to NV12 (`zune-jpeg`) and passes it through a
+shared file. Windows 10 has no virtual camera API and isn't supported.
 
 ### Windows microphone
 

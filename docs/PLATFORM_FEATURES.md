@@ -5,7 +5,9 @@ reference implementation; [PORTING.md](PORTING.md) is the plan for the rest. Eve
 OS-specific lives in `desktop/core/src/platform/{linux,windows,macos}/` (plus the tray in
 `desktop/app/src/gui/tray.rs` and the camera DLL in `desktop/camera/`).
 
-Status as of 2026-10-23.
+Status as of 2026-10-23. Tested with an iQOO I2218 (Android 16) against Fedora 44 (GNOME, KDE
+Plasma, Hyprland) and Windows 11 Pro 26H2 (build 26300); macOS hasn't been built yet. Windows
+means Windows 11 only: Windows 10 isn't supported.
 
 | Mark | Meaning |
 |---|---|
@@ -150,7 +152,7 @@ apps read, and a placeholder shows while the phone camera is off.
 |---|---|---|---|
 | Method | `v4l2loopback` device "Dotlink Camera", fed by `ffmpeg` | Windows 11 virtual camera (`MFCreateVirtualCamera`, per user, while Dotlink runs). Its media source is `dotlink_camera.dll` (`desktop/camera`), loaded by the Camera Frame Server; Dotlink decodes the JPEG (`zune-jpeg`), fits it into NV12 and shares it through `%ProgramData%\Dotlink\camera.bin` | ❌ (plan: CoreMediaIO Camera Extension) |
 | Setup | kernel module + device (Setup, polkit) | Setup → Fix (UAC once): DLL into `%ProgramFiles%\Dotlink`, class registered under HKLM | — |
-| Requirements | v4l2loopback, ffmpeg | Windows 11 (build 22000+); Windows 10 isn't supported | — |
+| Requirements | v4l2loopback, ffmpeg | Windows 11 (build 22000+) | — |
 | Status | ✅ | 🟡 the camera is listed and delivers 1920×1080 NV12 at 30 fps to Media Foundation apps; phone frames arrive in it. Still to check: a real picture in the Camera app / a call | ❌ |
 
 ### Microphone (phone mic)
@@ -215,7 +217,6 @@ so the mic catches up after a Wi-Fi stall.
 - Microphone: test with VB-CABLE installed.
 - Check toasts, the tray menu, start at login, and Cast over Wi-Fi.
 - Installer, CI.
-- Windows 10 webcam (a DirectShow source filter) if it's wanted.
 
 **macOS**
 - Build it first (Step 1 in [PORTING.md](PORTING.md)), then everything marked ❌ above.

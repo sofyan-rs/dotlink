@@ -19,6 +19,19 @@ Windows works (installer still to come), macOS is planned.
 
 Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on the phone.
 
+## Requirements
+
+| | Needs | Tested on |
+|---|---|---|
+| **Phone** | Android 10 or newer; Cast over Wi-Fi needs Android 11+ | iQOO I2218, Android 16 |
+| **Linux** | x86_64, a desktop with PipeWire; any Wayland or X11 desktop | Fedora 44: GNOME, KDE Plasma, Hyprland |
+| **Windows** | Windows 11, x64 (Windows 10 isn't supported) | Windows 11 Pro 26H2 (build 26300) |
+| **macOS** | not supported yet (planned: macOS 13 Ventura or newer) | — |
+
+Other distros and desktops (Ubuntu, Debian, Arch, openSUSE; Sway, niri, X11 desktops) are expected to
+work, since `install.sh` and Setup handle their packages, but haven't been tested on every release.
+What has been tested per feature: [docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEATURES.md).
+
 ## Install
 
 ### Phone
@@ -61,7 +74,7 @@ cd desktop && cargo build --release
 
 Run `desktop/target/release/dotlink.exe`, keeping `dotlink_camera.dll` next to it.
 
-- **Webcam:** Windows 11. Setup → *Fix* installs **Dotlink Camera** (asks for administrator rights
+- **Webcam:** Setup → *Fix* installs **Dotlink Camera** (asks for administrator rights
   once).
 - **Microphone:** install [VB-CABLE](https://vb-audio.com/Cable/) (free). In your app, pick
   **CABLE Output** as the microphone.
@@ -151,14 +164,14 @@ Forget a phone in **Devices** (or `dotlink unpair`) to cut it off right away.
 
 - Remote typing uses a US keyboard layout on Linux; on Windows any layout works.
 - One phone at a time streams the webcam (or the mic).
-- Windows: the webcam needs Windows 11, the mic needs VB-CABLE.
+- Windows: Windows 11 only; the mic needs VB-CABLE.
 
 ## Platforms
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | Files, clipboard, shell, remote, Cast | ✅ | ✅ | planned |
-| Webcam, microphone | ✅ | ✅ (Windows 11 / VB-CABLE) | planned |
+| Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | planned |
 | Tray, start at login, Setup | ✅ | ✅ | planned |
 | Installer | ✅ .deb, .rpm, AppImage | not yet | planned |
 

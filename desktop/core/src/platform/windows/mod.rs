@@ -1,7 +1,5 @@
-//! Windows 10 and 11: everything Linux has. The webcam needs Windows 11 (a virtual camera whose
-//! media source is the `camera` crate's DLL); the mic needs the VB-CABLE driver.
-//!
-//! TODO(windows): a webcam on Windows 10 would need a DirectShow source filter instead.
+//! Windows 11 (Windows 10 isn't supported): everything Linux has. The webcam is a virtual camera
+//! whose media source is the `camera` crate's DLL; the mic needs the VB-CABLE driver.
 
 pub mod autostart;
 pub(crate) mod camera;
