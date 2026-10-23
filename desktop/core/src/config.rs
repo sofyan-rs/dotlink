@@ -33,6 +33,8 @@ pub struct Config {
     pub cast_audio: bool,
     /// Cast: longest side of the picture in pixels; 0 keeps the phone's resolution.
     pub cast_max_size: u32,
+    /// The desktop window's look: "system" (follow the desktop), "light" or "dark".
+    pub theme: String,
 }
 
 impl Default for Config {
@@ -49,6 +51,7 @@ impl Default for Config {
             cast_screen_off: false,
             cast_audio: true,
             cast_max_size: 0,
+            theme: "system".into(),
         }
     }
 }

@@ -166,6 +166,8 @@ impl Model {
                             "camera" => s.camera.is_none(),
                             _ => s.mic.is_none(),
                         });
+                        // The theme lives in config.toml, so it also follows edits made elsewhere.
+                        super::theme::set_choice(super::theme::choice_from(&s.config.theme), cx);
                         this.status = Some(s)
                     }
                     Err(e) => tracing::debug!("status: {e:#}"),

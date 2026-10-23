@@ -5,6 +5,7 @@
 use gpui::{App, Hsla, SharedString, Window, px, rgb, rgba};
 use gpui_component::{Theme, ThemeMode};
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 pub const DISPLAY: &str = "Doto";
 pub const SANS: &str = "Geist";
@@ -62,7 +63,8 @@ fn light() -> Palette {
         on_accent: rgb(0xFFFFFF).into(),
         accent_text: rgb(0xD70015).into(),
         positive: rgb(0x0B6B3C).into(),
-        nav_selected: rgb(0xFFFFFF).into(),
+        // The phone's white chip sits on a grey nav bar; the sidebar here is white itself.
+        nav_selected: rgb(0xE2E2E2).into(),
     }
 }
 
@@ -83,10 +85,42 @@ pub fn load_fonts(cx: &mut App) {
 }
 
 /// Follows the system's light/dark setting and paints gpui-component's widgets in Dotline colors.
+/// Settings → Theme: 0 follows the desktop, 1 light, 2 dark (same order as the phone app).
+static CHOICE: AtomicU8 = AtomicU8::new(0);
+
+pub fn choice() -> u8 {
+    CHOICE.load(Ordering::Relaxed)
+}
+
+/// `config.theme` as a [choice].
+pub fn choice_from(name: &str) -> u8 {
+    match name {
+        "light" => 1,
+        "dark" => 2,
+        _ => 0,
+    }
+}
+
+pub fn choice_name(choice: u8) -> &'static str {
+    ["system", "light", "dark"][choice.min(2) as usize]
+}
+
+/// Sets the theme choice and repaints; no-op when it's already that.
+pub fn set_choice(choice: u8, cx: &mut App) {
+    if CHOICE.swap(choice, Ordering::Relaxed) != choice {
+        apply(None, cx);
+        cx.refresh_windows();
+    }
+}
+
 pub fn apply(window: Option<&mut Window>, cx: &mut App) {
-    let mode: ThemeMode = match window.as_ref() {
-        Some(w) => w.appearance().into(),
-        None => cx.window_appearance().into(),
+    let mode: ThemeMode = match choice() {
+        1 => ThemeMode::Light,
+        2 => ThemeMode::Dark,
+        _ => match window.as_ref() {
+            Some(w) => w.appearance().into(),
+            None => cx.window_appearance().into(),
+        },
     };
     Theme::change(mode, window, cx);
     let p = if mode.is_dark() { dark() } else { light() };

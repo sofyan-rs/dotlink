@@ -8,15 +8,15 @@ use dotlink_core::events::{Transfer, TransferState};
 use dotlink_core::platform;
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, Context, Decorations, Div, Entity, ExternalPaths, FontWeight, Hsla, PathPromptOptions,
-    SharedString, Stateful, Subscription, Window, canvas, div, fill, point, px, size,
+    AnyElement, App, Bounds, ClickEvent, Context, Decorations, Div, Entity, ExternalPaths, FontWeight, Hsla,
+    PathPromptOptions, SharedString, Stateful, Subscription, Window, canvas, div, fill, point, px, size,
 };
-use gpui_component::Icon;
+use gpui_component::TitleBar;
 use gpui_component::WindowExt as _;
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::switch::Switch;
-use gpui_component::TitleBar;
+use gpui_component::{ActiveTheme as _, Icon};
 use gpui_kit_assets::IconName;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -72,11 +72,24 @@ impl MainView {
         let subs = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.subscribe_in(&model, window, |_, _, notice: &Notice, window, cx| {
-                let note = if notice.error {
-                    Notification::error(notice.text.clone())
+                // Our own icon + text row: the built-in typed toast pins its icon 18px from the
+                // top (tuned for a 16px rem), which sits low next to our 15px text.
+                let (icon, color) = if notice.error {
+                    (gpui_component::IconName::CircleX, cx.theme().danger)
                 } else {
-                    Notification::success(notice.text.clone())
+                    (gpui_component::IconName::CircleCheck, cx.theme().success)
                 };
+                let text = SharedString::from(notice.text.clone());
+                let note = Notification::new().content(move |_, _, _| {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_sm()
+                        .child(Icon::new(icon.clone()).flex_none().text_color(color))
+                        .child(text.clone())
+                        .into_any_element()
+                });
                 window.push_notification(note, cx);
             }),
             cx.observe_window_appearance(window, |_, window, cx| theme::apply(Some(window), cx)),
@@ -155,6 +168,12 @@ impl MainView {
         self.form.cast_audio = config.cast_audio;
     }
 
+    fn save_theme(&mut self, cx: &mut Context<Self>) {
+        let Some(mut config) = self.model.read(cx).status.as_ref().map(|s| s.config.clone()) else { return };
+        config.theme = theme::choice_name(theme::choice()).into();
+        self.model.update(cx, |m, cx| m.save_config_quietly(config, cx));
+    }
+
     /// Switches apply as soon as they're flipped (only the text fields wait for Save).
     fn save_switches(&mut self, cx: &mut Context<Self>) {
         let Some(mut config) = self.model.read(cx).status.as_ref().map(|s| s.config.clone()) else { return };
@@ -212,22 +231,18 @@ impl Render for MainView {
             Page::Setup => self.setup(&p, cx).into_any_element(),
             Page::Settings => self.settings(&p, cx).into_any_element(),
         };
-        let body = div()
-            .size_full()
-            .flex()
-            .bg(p.bg)
-            .text_color(p.ink)
-            .font_family(theme::SANS)
-            .text_size(px(15.))
-            .child(self.sidebar(&p, page, cx))
-            .child(
-                div()
-                    .id("content")
-                    .flex_1()
-                    .h_full()
-                    .overflow_y_scroll()
-                    .child(div().max_w(px(760.)).px(px(32.)).py(px(28.)).flex().flex_col().gap(px(24.)).child(content)),
-            );
+        let body =
+            div()
+                .size_full()
+                .flex()
+                .bg(p.bg)
+                .text_color(p.ink)
+                .font_family(theme::SANS)
+                .text_size(px(15.))
+                .child(self.sidebar(&p, page, cx))
+                .child(div().id("content").flex_1().h_full().overflow_y_scroll().child(
+                    div().max_w(px(760.)).px(px(32.)).py(px(28.)).flex().flex_col().gap(px(24.)).child(content),
+                ));
         // GNOME (and other compositors without server-side decorations) leave the title bar to
         // the app: draw one with window controls. gpui-component's Root already adds the
         // resizable frame and its shadow. KDE and Hyprland decorate (or tile) the window.
@@ -860,7 +875,24 @@ impl MainView {
                 .child(div().flex_1().child(Input::new(state).h(px(CONTROL))))
         };
 
+        let view = cx.entity().downgrade();
+        let theme_choice = theme::choice();
         page(p, "Settings", None)
+            .child(section(
+                p,
+                "Theme",
+                group(p).child(row(p).child(segmented(
+                    p,
+                    "theme",
+                    &["SYSTEM", "LIGHT", "DARK"],
+                    theme_choice as usize,
+                    move |i, cx| {
+                        theme::set_choice(i as u8, cx);
+                        // Saved like the switches: right away, no Save needed.
+                        view.update(cx, |this, cx| this.save_theme(cx)).ok();
+                    },
+                ))),
+            ))
             .child(section(
                 p,
                 "General",
@@ -1043,6 +1075,38 @@ fn pill(p: &Palette, id: impl Into<gpui::ElementId>, label: impl Into<SharedStri
         .when(matches!(kind, Kind::Ghost), |d| d.border_1().border_color(p.line_strong))
         .hover(move |s| s.bg(hover))
         .child(label.into())
+}
+
+/// Dotline segmented control (SegmentedControl.kt): a `surface_raised` pill well with 4 px
+/// padding; the selected segment is an `ink` pill with `on_ink` text, the others muted.
+fn segmented(
+    p: &Palette,
+    id: &'static str,
+    options: &[&'static str],
+    selected: usize,
+    on_select: impl Fn(usize, &mut App) + 'static,
+) -> Div {
+    let on_select = std::rc::Rc::new(on_select);
+    div().flex().gap(px(4.)).p(px(4.)).rounded(px(999.)).bg(p.surface_raised).children(options.iter().enumerate().map(
+        |(i, label)| {
+            let on_select = on_select.clone();
+            let on = i == selected;
+            div()
+                .id((id, i))
+                .h(px(CONTROL - 8.))
+                .px(px(16.))
+                .flex()
+                .items_center()
+                .rounded(px(999.))
+                .font_family(MONO)
+                .text_size(px(12.))
+                .cursor_pointer()
+                .when(on, |d| d.bg(p.ink).text_color(p.on_ink))
+                .when(!on, |d| d.text_color(p.ink_muted).hover(|s| s.text_color(p.ink)))
+                .child(*label)
+                .on_click(move |_, _, cx| on_select(i, cx))
+        },
+    ))
 }
 
 /// Greys out a pill that can't be used right now.
