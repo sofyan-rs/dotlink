@@ -26,7 +26,7 @@ means Windows 11 only: Windows 10 isn't supported.
 | Clipboard, both ways | ✅ | ✅ | 🔧 |
 | Shell | ✅ | ✅ | 🔧 |
 | Remote (touchpad + keyboard) | ✅ | ✅ | ❌ |
-| Cast (scrcpy) | ✅ | ✅ USB, 🟡 Wi-Fi | 🔧 |
+| Cast (scrcpy) | ✅ | ✅ | 🔧 |
 | Webcam (phone camera) | ✅ | ✅ | ❌ |
 | Microphone (phone mic) | ✅ | ✅ (VB-CABLE) | ❌ |
 | Notifications | ✅ | ✅ | 🔧 text only |
@@ -116,6 +116,12 @@ disconnecting; scrollback is replayed.
 | Tab titles | foreground process group → `/proc/<pid>/comm` | the shell's exe name (`QueryFullProcessImageNameW`) | ❌ (`None`) |
 | Status | ✅ | ✅ commands, colours, resize, tab title `PWSH` | 🔧 |
 
+On the phone, xterm.js (WebGL renderer) draws the text in Geist Mono, then two fallback fonts:
+"Dotlink Symbols Mono" (a renamed JuliaMono subset: ⏺ ⎿ ⏵ and other technical symbols,
+arrows, dingbats, braille, legacy computing, all one cell wide) and Symbols Nerd Font Mono for
+icons, scaled to one cell. Powerline separators and box lines are drawn by xterm itself at the
+cell's size.
+
 Known issue (all OSes, phone side): text injected very fast (adb, ~20 ms per character) can
 come out doubled in xterm.js. Normal typing is fine.
 
@@ -141,7 +147,7 @@ One cast per phone, several at once; Stop also cancels while connecting.
 | scrcpy / adb | PATH, Android SDK, or the downloaded release (`.tar.gz`) | PATH, `%LOCALAPPDATA%\Android\Sdk`, or the downloaded release (`.zip`, win64 / winarm64) | PATH, `~/Library/Android/sdk`, or the downloaded release (`.tar.gz`) |
 | Process cleanup | kill on stop | job object (`KILL_ON_JOB_CLOSE`): ends package-manager shims and their child | kill on stop |
 | USB detection | `usb:` in `adb devices -l` | serial isn't `ip:port` or an mDNS name (Windows' adb prints no `usb:`) | `usb:` field |
-| Status | ✅ | ✅ USB, download, stop, cancel, several phones (tested with one); 🟡 Wi-Fi | 🔧 |
+| Status | ✅ | ✅ USB and Wi-Fi, download, stop, cancel, several phones (tested with one) | 🔧 |
 
 ### Webcam (phone camera)
 
@@ -216,7 +222,6 @@ switches to the plain microphone.
 ## Still to do
 
 **Windows**
-- Cast over Wi-Fi (Wireless debugging).
 - Code signing (Authenticode) for the installer and the exe; CI.
 - Offer more formats than NV12 if a camera app refuses it.
 
