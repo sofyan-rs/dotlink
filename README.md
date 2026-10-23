@@ -158,7 +158,8 @@ Everything OS-specific lives in `desktop/core/src/platform/`. `linux/` is the re
 `windows/mod.rs` and `macos/mod.rs` are stubs (not compiled yet: build them on those systems first) that list what to build in their TODO comments
 (SendInput / CGEvent for the remote, login items, virtual camera and mic). The tray on those two needs
 the `tray-icon` crate (`desktop/app/src/gui/tray.rs`), and the named pipe on Windows needs a
-user-only security descriptor (`desktop/core/src/ipc.rs`). Search for `TODO(windows)` and `TODO(macos)`.
+user-only security descriptor (`desktop/core/src/ipc.rs`). Search for `TODO(windows)` and `TODO(macos)`,
+and see [docs/PORTING.md](docs/PORTING.md) for the plan.
 
 ## Development
 

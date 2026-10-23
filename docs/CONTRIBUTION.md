@@ -107,8 +107,8 @@ cargo run -p dotlink
 ## Windows and macOS
 
 The stubs in `core/src/platform/windows` and `macos` were written on Linux and have not been
-compiled for those systems yet. Start with `cargo build -p dotlink` there, then work through
-the TODO lists at the top of each module, in their order.
+compiled for those systems yet. [PORTING.md](PORTING.md) has the plan: the order of work, the APIs to use for each
+platform item, packaging and signing, and a checklist per OS.
 
 ## Commits
 

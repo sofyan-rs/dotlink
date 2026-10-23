@@ -162,7 +162,7 @@ request line in, one or more reply lines out.
 `core/src/platform/mod.rs` lists the items every platform module provides. Linux is the
 reference. `windows/mod.rs` and `macos/mod.rs` are stubs that compile the rest of the app and
 say what to build (SendInput / CGEvent, login items, virtual camera and mic drivers, tray).
-Search for `TODO(windows)` and `TODO(macos)`.
+Search for `TODO(windows)` and `TODO(macos)`; [PORTING.md](PORTING.md) is the plan, step by step.
 
 Window decorations: GPUI asks for server-side decorations; where the compositor leaves them to
 the app (GNOME), the window draws gpui-component's `TitleBar` and a resizable border.
