@@ -1,0 +1,26 @@
+[package]
+name = "dotlink-camera"
+description = "\"Dotlink Camera\" for Windows 11: the media source the camera frame server loads, fed by Dotlink"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "dotlink_camera"
+# cdylib: dotlink_camera.dll, registered for the frame server. rlib: Dotlink itself uses
+# `shared` (the frame file and the CLSID).
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(windows)'.dependencies]
+windows-core = "0.62.2"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_MediaFoundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Memory",
+    "Win32_System_Variant",
+] }

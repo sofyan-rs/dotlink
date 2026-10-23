@@ -54,6 +54,37 @@ pub fn checks(port: u16) -> Vec<Check> {
         },
         fixable: false,
     });
+    // Webcam: the virtual camera's media source, installed where the frame server can load it.
+    let camera = super::camera::installed_ok();
+    out.push(Check {
+        id: "camera".into(),
+        feature: "Webcam".into(),
+        title: "\"Dotlink Camera\" (Windows 11 virtual camera)".into(),
+        ok: camera.is_ok(),
+        detail: match &camera {
+            Ok(()) => String::new(),
+            Err(e) => e.clone(),
+        },
+        fixable: camera.is_err() && super::camera::os_supported() && super::camera::bundled_dll().is_some(),
+    });
+
+    // Microphone: VB-CABLE provides the device apps record from.
+    let cable = super::media::find_cable().is_some();
+    out.push(Check {
+        id: "vb_cable".into(),
+        feature: "Microphone".into(),
+        title: "VB-CABLE audio driver".into(),
+        ok: cable,
+        detail: if cable {
+            format!("In your app, pick \"{}\" as the microphone.", super::media::CABLE_OUTPUT)
+        } else {
+            "The phone mic plays into it, and apps use its \"CABLE Output\" as their microphone. \
+             Fix opens its download page: unzip, run VBCABLE_Setup_x64.exe as administrator, restart Dotlink."
+                .into()
+        },
+        fixable: !cable,
+    });
+
     // Cast. The scrcpy download includes adb; Cast also downloads it on first use.
     let downloadable = crate::cast::can_install();
     for (id, title) in [("adb", "adb (Android platform tools)"), ("scrcpy", "scrcpy")] {
@@ -113,7 +144,13 @@ fn exe_allowed_on_public() -> bool {
 pub async fn fix(id: &str, port: u16) -> Result<()> {
     match id {
         "firewall" => add_firewall_rule(port).await,
+        "camera" => install_camera().await,
         "adb" | "scrcpy" => crate::cast::install().await,
+        // A driver only its own installer can add (and only VB-Audio may hand out).
+        "vb_cable" => {
+            super::open_path(std::path::Path::new(super::media::VB_CABLE_URL));
+            Ok(())
+        }
         _ => bail!("nothing to fix for \"{id}\""),
     }
 }
@@ -125,6 +162,54 @@ pub async fn fix_many(ids: &[String], port: u16) -> Result<()> {
     }
     for id in ids.iter().filter(|id| *id != "adb" && *id != "scrcpy") {
         fix(id, port).await?;
+    }
+    Ok(())
+}
+
+/// Installs the camera DLL into Program Files and registers its class under HKLM, as
+/// administrator (one UAC prompt). The frame server is stopped first so an older DLL it has
+/// loaded can be replaced; Windows starts it again on the next camera use.
+async fn install_camera() -> Result<()> {
+    let source = super::camera::bundled_dll().ok_or_else(|| anyhow::anyhow!("dotlink_camera.dll is missing next to Dotlink"))?;
+    let target = super::camera::installed_dll();
+    let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    let key = format!(r"HKLM:\SOFTWARE\Classes\CLSID\{}", dotlink_camera::shared::CLSID_STR);
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'\n\
+         $dll = {target}\n\
+         New-Item -ItemType Directory -Force (Split-Path $dll) | Out-Null\n\
+         Stop-Service FrameServer -Force -ErrorAction SilentlyContinue\n\
+         Copy-Item -Force {source} $dll\n\
+         New-Item -Force {key} | Out-Null\n\
+         Set-ItemProperty {key} '(default)' 'Dotlink Camera'\n\
+         New-Item -Force {key_inproc} | Out-Null\n\
+         Set-ItemProperty {key_inproc} '(default)' $dll\n\
+         Set-ItemProperty {key_inproc} 'ThreadingModel' 'Both'\n",
+        target = quote(&target.to_string_lossy()),
+        source = quote(&source.to_string_lossy()),
+        key = quote(&key),
+        key_inproc = quote(&format!(r"{key}\InprocServer32")),
+    );
+    run_elevated_powershell(&script).await.map_err(|_| anyhow::anyhow!("Dotlink Camera wasn't installed (administrator rights refused?)"))?;
+    super::camera::reload();
+    Ok(())
+}
+
+/// Runs `script` in an elevated PowerShell and waits for it (one UAC prompt).
+async fn run_elevated_powershell(script: &str) -> Result<()> {
+    // -EncodedCommand: UTF-16LE base64, so the script needs no quoting through two shells.
+    use base64::Engine;
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+    let outer = format!(
+        "$p = Start-Process powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','{encoded}' \
+         -Verb RunAs -Wait -WindowStyle Hidden -PassThru; exit $p.ExitCode"
+    );
+    let mut cmd = tokio::process::Command::new("powershell.exe");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &outer]).creation_flags(super::CREATE_NO_WINDOW);
+    let out = cmd.output().await?;
+    if !out.status.success() {
+        bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
     }
     Ok(())
 }

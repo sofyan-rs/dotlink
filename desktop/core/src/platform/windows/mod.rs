@@ -1,21 +1,21 @@
-//! Windows 10 and 11. Files, clipboard, notifications, pairing, Shell, Remote, start at login
-//! and the firewall check work; webcam and mic are stubs.
+//! Windows 10 and 11: everything Linux has. The webcam needs Windows 11 (a virtual camera whose
+//! media source is the `camera` crate's DLL); the mic needs the VB-CABLE driver.
 //!
-//! TODO(windows):
-//! - [ ] `CameraHub`: virtual camera. Windows 11 has MFCreateVirtualCamera (needs a COM media
-//!   source DLL registered by the installer). Windows 10 needs a DirectShow filter.
-//! - [ ] `MicSink`: virtual microphone needs an audio driver; simplest is asking the user to
-//!   install VB-CABLE and playing into its input with WASAPI (`cpal`).
+//! TODO(windows): a webcam on Windows 10 would need a DirectShow source filter instead.
 
 pub mod autostart;
+pub(crate) mod camera;
 mod input;
+mod media;
 pub mod setup;
 
 pub(crate) use super::polling_clipboard as clipboard;
+pub use camera::{CameraHub, find_camera};
 pub use input::Input;
+pub use media::MicSink;
 
 use super::Features;
-use anyhow::{Result, bail};
+use anyhow::Result;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -28,7 +28,7 @@ pub const APP_ID: &str = "dev.dotlink.Dotlink";
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn features() -> Features {
-    Features { clipboard: true, remote: true, camera: false, mic: false, shell: true }
+    Features { clipboard: true, remote: true, camera: true, mic: true, shell: true }
 }
 
 /// A command for a console program, without a console window.
@@ -217,27 +217,4 @@ impl Drop for ProcessTree {
     }
 }
 
-pub fn find_camera(_configured: &str) -> Result<PathBuf> {
-    bail!("the phone camera as a webcam is not supported on Windows yet")
-}
 
-#[derive(Clone)]
-pub struct CameraHub;
-
-impl CameraHub {
-    pub fn start(_configured_device: String, _size: (u32, u32)) -> Self {
-        Self
-    }
-
-    pub fn send(&self, _jpeg: axum::body::Bytes) {}
-}
-
-pub struct MicSink;
-
-impl MicSink {
-    pub fn start(_rate: u32, _channels: u32) -> Result<Self> {
-        bail!("the phone mic is not supported on Windows yet")
-    }
-
-    pub fn write(&mut self, _pcm: axum::body::Bytes) {}
-}

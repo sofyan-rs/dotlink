@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "app"]
+members = ["core", "app", "camera"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,3 +15,7 @@ tracing = "0.1.44"
 
 [profile.release]
 strip = true
+
+# The webcam decodes every phone frame (JPEG); unoptimized that's ~6 fps in a debug build.
+[profile.dev.package.zune-jpeg]
+opt-level = 3
