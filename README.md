@@ -1,184 +1,195 @@
 # Dotlink
 
-Link an Android phone with a Linux PC over your Wi-Fi, or a USB cable. No account, no cloud. Made on Hyprland, works on any desktop.
-On the PC it's one app: the service, a window and a tray icon. Windows is in progress, macOS is next (see [Platforms](#platforms)).
+Link your Android phone with your PC, over Wi-Fi or a USB cable. No account, no cloud.
+
+On the PC it's one app: a window, a tray icon and a background service. Linux is complete,
+Windows works (installer still to come), macOS is planned.
+
+## What it does
 
 | Feature | Phone → PC | PC → phone |
 |---|---|---|
-| Files | Share → Dotlink, or **Send** in the app. Saved to `~/Downloads/Dotlink`, SHA-256 checked | Drop files on the window, the tray's *Send files…*, or `dotlink send FILE…`. Saved to `Download/Dotlink` |
-| Clipboard | When you open the app, Share text → Dotlink, or the notification's *Send clipboard* | Automatic (password-manager entries are skipped) |
-| Remote | Touchpad + keyboard (uinput) | |
-| Shell | A real shell on the PC (xterm.js). The session survives reconnects | |
-| Webcam | Phone camera → **Dotlink Camera** (v4l2loopback) | |
-| Microphone | Phone mic → **Dotlink Mic** (PipeWire source) | |
-| Cast | | Phone screen in a window with mouse and keyboard ([scrcpy](https://github.com/Genymobile/scrcpy), USB or Wi-Fi) |
+| **Files** | Share → Dotlink, or **Send** in the app | Drop files on the window, the tray's *Send files…*, or `dotlink send` |
+| **Clipboard** | When you open the app, or the notification's *Send clipboard* | Automatic |
+| **Remote** | The phone as touchpad and keyboard | |
+| **Shell** | A terminal on the PC; the session survives reconnects | |
+| **Webcam** | The phone camera as **Dotlink Camera** in any app (calls, browsers, OBS) | |
+| **Microphone** | The phone mic as a microphone on the PC | |
+| **Cast** | | The phone's screen in a window, with mouse and keyboard ([scrcpy](https://github.com/Genymobile/scrcpy)) |
 
+Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on the phone.
+
+## Install
+
+### Phone
+
+```sh
+cd android && ./gradlew installDebug
 ```
-desktop/         Rust workspace for the PC app
-  core/          the service: pairing, HTTPS/WebSocket API, control socket (dotlink-core)
-    src/platform/  per-OS code: linux/ (complete), windows/ (no webcam/mic yet), macos/ (stubs + TODO)
-  app/           the `dotlink` binary: window (GPUI) + tray + CLI
-android/         Kotlin + Jetpack Compose app, Dotline UI kit from dotnote
-scripts/         install.sh
-```
 
-## Works on
+Or copy `android/app/build/outputs/apk/debug/app-debug.apk` to the phone.
 
-| | Hyprland, Sway, niri, river | KDE Plasma | GNOME | X11 (XFCE, Cinnamon, MATE, i3…) |
-|---|---|---|---|---|
-| Files, shell, notifications | ✅ | ✅ | ✅ | ✅ |
-| Remote (uinput) | ✅ | ✅ | ✅ | ✅ |
-| Mic (PipeWire) | ✅ | ✅ | ✅ | ✅ |
-| Webcam (v4l2loopback) | ✅ | ✅ | ✅ | ✅ |
-| Clipboard | ✅ wl-clipboard | ✅ wl-clipboard | ✅ via XWayland | ✅ X11 |
-
-Clipboard picks its backend by itself: `wl-paste --watch` where the compositor has the data-control
-protocol, otherwise the X11 clipboard (on GNOME, Mutter keeps XWayland's clipboard in sync with
-Wayland's), which Dotlink follows through XFixes change events. Force one with `DOTLINK_CLIPBOARD=x11`.
-
-## PC setup
-
-Needs: `ffmpeg`, PipeWire (`pw-cat`), `libnotify`, write access to `/dev/uinput`, `wl-clipboard` on
-wlroots/KDE, and `v4l2loopback` for the webcam. Building the window needs the usual GPUI libraries
-(`libxkbcommon(-x11)`, `wayland`, `libxcb`, `fontconfig`, `freetype` development packages);
-install.sh lists the exact packages for your distro.
+### Linux
 
 ```sh
 scripts/install.sh --camera
 ```
 
-It builds and installs `~/.local/bin/dotlink`, adds Dotlink to the app menu, adds an XDG autostart
-entry (GNOME, KDE, XFCE, Cinnamon, MATE, LXQt and Budgie start it at login, in the tray), and checks
-uinput access, the firewall (firewalld/ufw) and missing packages for dnf, apt, pacman and zypper.
-`--camera` creates "Dotlink Camera" and keeps it across reboots (sudo). `--headless` builds without
-the window and tray (service + CLI only).
+It builds and installs `dotlink`, adds it to the app menu and starts it at login. It also checks
+what's missing for your distro (dnf, apt, pacman, zypper). `--camera` sets up the webcam device
+(asks for sudo); `--headless` builds without the window.
 
-Then open **Dotlink**. Its **Setup** page shows what each feature still needs and fixes uinput access,
-the webcam device and the firewalld port with one click (it asks for your password through polkit;
-on Hyprland that needs a polkit agent such as `hyprpolkitagent`).
+Needs: `ffmpeg`, PipeWire, `libnotify`, `v4l2loopback` for the webcam, and `wl-clipboard` on
+wlroots/KDE. Works on Hyprland, Sway, niri, KDE, GNOME and X11 desktops. Setup's fixes ask for your
+password through polkit (on Hyprland, run an agent such as `hyprpolkitagent`).
 
-Window managers that ignore XDG autostart need one line:
+Window managers that ignore autostart need one line:
 
 ```
-Hyprland   exec-once = dotlink --background        (Lua config: hl.exec_cmd("dotlink --background"))
+Hyprland   exec-once = dotlink --background
 Sway/i3    exec dotlink --background
 niri       spawn-at-startup "dotlink" "--background"
 ```
 
-### The app
+### Windows
 
-- Closing the window keeps Dotlink running in the tray; the phone stays connected. Quit from the
-  tray or Settings. Opening Dotlink again brings the window back.
-- The tray works on KDE, Waybar (Hyprland, Sway) and GNOME with the AppIndicator extension. Without
-  a tray, Dotlink still runs in the background after you close the window.
-- `dotlink daemon` runs the same service without a window, for setups without a tray or a desktop.
-  Opening Dotlink while it runs gives you a window that controls it.
+No installer yet; build it (Rust, MSVC):
 
-Optional Hyprland keybinds:
-
-```lua
-hl.bind("SUPER + ALT + C", hl.dsp.exec_cmd("dotlink clip"))
-hl.bind("SUPER + ALT + S", hl.dsp.exec_cmd("zenity --file-selection --multiple --separator='\\n' | xargs -d '\\n' -r dotlink send"))
+```sh
+cd desktop && cargo build --release
 ```
+
+Run `desktop/target/release/dotlink.exe`, keeping `dotlink_camera.dll` next to it.
+
+- **Webcam:** Windows 11. Setup → *Fix* installs **Dotlink Camera** (asks for administrator rights
+  once).
+- **Microphone:** install [VB-CABLE](https://vb-audio.com/Cable/) (free). In your app, pick
+  **CABLE Output** as the microphone.
+
+### After installing
+
+Open **Dotlink** and check its **Setup** page. It lists what each feature still needs and fixes most
+of it in one click (firewall port, webcam, remote access, scrcpy).
 
 ## Pairing
 
-1. Install the app on the phone: `cd android && ./gradlew installDebug`. Or copy `app/build/outputs/apk/debug/app-debug.apk` to the phone.
-2. On the PC, open **Pair a phone** in Dotlink (or run `dotlink pair`) and scan the QR code with the app. You can paste the link instead.
+1. On the PC: **Pair a phone** in Dotlink (or `dotlink pair`).
+2. On the phone: scan the QR code (or paste the link).
 
-The phone can be paired with several PCs. When the app opens it asks which one to connect to; tap the
-PC's name at the top to switch (*Change PC*) or forget one. *Disconnect* keeps the phone offline until
-you tap *Reconnect*. The phone's name (Settings) is what the PC lists it as.
+That's it. The phone finds the PC again by itself when its address changes. One phone can be paired
+with several PCs: tap the PC's name at the top of the app to switch.
 
-The QR code holds the PC's addresses, its certificate fingerprint and a one-time secret (valid for 5 minutes). The phone pins that certificate and gets a token. Later connections use TLS to the pinned certificate, plus the token. If the PC's IP changes, the phone finds it again with mDNS (`_dotlink._tcp`).
+## Wi-Fi or USB
+
+Everything works over both:
+
+- **Wi-Fi:** phone and PC on the same network.
+- **USB cable:** turn on USB debugging on the phone (Developer options) and allow this PC once.
+  When the cable is in, Dotlink uses it automatically and goes back to Wi-Fi when it's unplugged.
+  No Wi-Fi or firewall rule needed, and it's faster.
+
+The app shows which one it's using ("USB cable" or the PC's address).
+
+**Cast** needs Developer options on the phone: USB debugging over the cable, or *Wireless
+debugging* (Android 11+) over Wi-Fi, paired once with the 6-digit code the phone shows (type it in
+Dotlink).
+
+## Using it
+
+- Closing the window keeps Dotlink in the tray, so the phone stays connected. Quit from the tray or
+  Settings.
+- The webcam and mic start from the phone, or from **Devices** on the PC (`dotlink camera on`). If
+  the phone app isn't open, the phone shows a notification: tap **Start**.
+- Phone → PC clipboard happens when you open the app: Android only lets the app in front read the
+  clipboard.
 
 ## CLI
 
 ```
-dotlink                             open the app (or bring its window up)
-dotlink --background                start in the tray, without the window (used at login)
-dotlink daemon                      run the service without a window
-dotlink pair                        show a pairing QR code
-dotlink send [--to PHONE] FILE...   send files to the phones (or one)
-dotlink clip [--to PHONE]           send the PC clipboard to the phones (or one)
-dotlink devices                     list paired phones
-dotlink unpair NAME|ID              forget a phone
-dotlink camera on|off [--to PHONE]  start/stop the phone camera as Dotlink Camera
-dotlink mic on|off [--to PHONE]     start/stop the phone mic as Dotlink Mic
-dotlink cast [stop] [--to PHONE]    show a phone's screen on the PC (scrcpy); stop alone ends every cast
-dotlink cast pair CODE [--to PHONE] pair with the phone's Wireless debugging once
-dotlink quit                        stop the running app or daemon
+dotlink                              open the app
+dotlink pair                         show a pairing QR code
+dotlink send [--to PHONE] FILE...    send files
+dotlink clip [--to PHONE]            send the PC clipboard
+dotlink devices                      list paired phones
+dotlink unpair PHONE                 forget a phone
+dotlink camera on|off [--to PHONE]   phone camera as Dotlink Camera
+dotlink mic on|off [--to PHONE]      phone mic as a microphone
+dotlink cast [stop] [--to PHONE]     show a phone's screen
+dotlink cast pair CODE               pair with the phone's Wireless debugging
+dotlink daemon                       run without a window
+dotlink quit                         stop Dotlink
 ```
 
-The commands talk to whichever is running (app or daemon) over a socket in `$XDG_RUNTIME_DIR`.
+## Settings
 
-## Config: `~/.config/dotlink/config.toml`
-
-The Settings page edits the same file.
+The **Settings** page, or `config.toml` in `~/.config/dotlink/` (Linux) or `%APPDATA%\dotlink\`
+(Windows):
 
 ```toml
-name = ""                # what the phones call this PC; default: the hostname
+name = ""                  # what the phones call this PC (default: the hostname)
 port = 47390
 download_dir = "~/Downloads/Dotlink"
 clipboard_sync = true
-terminal = true          # false disables the shell feature
-terminal_pin = ""        # if set, the app must send this PIN (Settings → Terminal PIN)
-shell = ""               # default: $SHELL
-camera_device = ""       # default: the v4l2loopback device named "Dotlink Camera"
-camera_size = "1920x1080" # fixed size of Dotlink Camera; phone frames are scaled into it
-cast_screen_off = false  # Cast: turn the phone's screen off while it's shown on the PC
-cast_audio = true        # Cast: play the phone's sound on the PC (Android 11+)
-cast_max_size = 0        # Cast: longest side in pixels; 0 keeps the phone's resolution
-usb_link = true          # link phones plugged in over USB (USB debugging on) through the cable
-theme = "system"         # the window's look: "system", "light" or "dark"
+terminal = true            # false turns the Shell off
+terminal_pin = ""          # require this PIN to open the Shell
+shell = ""                 # default: your login shell (Linux), pwsh or powershell (Windows)
+camera_size = "1920x1080"  # Dotlink Camera's fixed size
+cast_screen_off = false    # turn the phone screen off while casting
+cast_audio = true          # play the phone's sound on the PC while casting
+cast_max_size = 0          # longest side of the cast in pixels (0: full resolution)
+usb_link = true            # use the USB cable when plugged in
+theme = "system"           # "system", "light" or "dark"
 ```
 
-`state.json` (paired phones, token hashes) and `cert.pem`/`key.pem` are kept in the same folder.
+## Security
 
-## Notes
+The phone pins the PC's certificate when pairing, and every connection uses TLS plus a token.
+**A paired phone can open a shell on your PC**: turn the Shell off or set a PIN if that worries you.
+Forget a phone in **Devices** (or `dotlink unpair`) to cut it off right away.
 
-- **Keyboard layout:** remote typing maps characters with a US layout, so other layouts may type different characters. Special keys and shortcuts work on any layout.
-- **Clipboard on Android:** Android 10+ lets an app read the clipboard only while it is in front. That is why phone → PC happens when you open the app or tap the notification button.
-- **Cast:** uses the PC's `scrcpy` and `adb` when they're installed. Otherwise the first Cast (or Fix in Setup) downloads the official scrcpy release, which includes adb, into `~/.local/share/dotlink/scrcpy/` (18 MB, SHA-256 checked, no root). The phone needs Developer options. Over USB, allow USB debugging once and press Cast. Over Wi-Fi (Android 11+), turn on Wireless debugging, then pair once: on the phone choose *Pair device with pairing code* and type the code in Dotlink. After that Cast finds the phone by itself (mDNS); if Wireless debugging is off, the phone gets a notification that opens it. Several phones can cast at once, each in its own window (Cast per phone on the Devices page, or `--to`). Two phones of the same model can't be told apart over USB, so then they cast over Wi-Fi.
-- **Webcam and mic from the PC:** Start in Devices (or `dotlink camera on`) starts them right away while the Dotlink app is open on the phone. Otherwise Android doesn't let a background app turn on the camera or mic, so the phone shows a notification and one tap on **Start** does it.
-- **Webcam:** the phone sends MJPEG, and ffmpeg writes it to v4l2loopback. The device always has a picture ("phone camera off" when idle), so it stays listed in OBS and browsers. Its size never changes while apps read it. Only one phone streams the camera (or the mic) at a time.
-- **Latency:** frames and mic audio that arrive late are dropped instead of queued, so a Wi-Fi hiccup costs a stutter, not a growing delay. While linked, the phone holds a Wi-Fi lock so power saving doesn't add lag.
-- **Security:** anyone with a paired phone gets a shell on your PC. Turn the Shell off or set a PIN in Settings (`terminal = false` / `terminal_pin`) if that's a concern. Forget a phone in Devices (or `dotlink unpair`) to revoke it right away.
+## Limits
+
+- Remote typing uses a US keyboard layout on Linux; on Windows any layout works.
+- One phone at a time streams the webcam (or the mic).
+- Windows: the webcam needs Windows 11, the mic needs VB-CABLE.
 
 ## Platforms
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| App (window), pairing, files, shell | ✅ | built, not yet tested with a phone | written, not built yet |
-| Clipboard, notifications | ✅ | built (arboard, toasts with Open / Show in folder) | written (arboard, notify-rust) |
-| Tray | ✅ | built (`tray-icon`) | TODO |
-| Remote, start at login, Setup checks | ✅ | built (SendInput, Run key, firewall) | TODO |
-| Cast | ✅ | built (downloads scrcpy) | download only |
-| Webcam, microphone | ✅ | TODO (needs a driver) | TODO (needs a system extension) |
-| Installer | ✅ | TODO | TODO |
+| Files, clipboard, shell, remote, Cast | ✅ | ✅ | planned |
+| Webcam, microphone | ✅ | ✅ (Windows 11 / VB-CABLE) | planned |
+| Tray, start at login, Setup | ✅ | ✅ | planned |
+| Installer | ✅ .deb, .rpm, AppImage | not yet | planned |
 
-Everything OS-specific lives in `desktop/core/src/platform/`. `linux/` is the reference.
-`windows/` builds and runs; webcam and mic are still stubs. `macos/mod.rs` is a stub (not
-compiled yet: build it on a Mac first) that lists what to build in its TODO comments (CGEvent
-for the remote, login items, virtual camera and mic, the tray via `tray-icon`). Search for
-`TODO(windows)` and `TODO(macos)`, and see [docs/PORTING.md](docs/PORTING.md) for the plan and [docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEATURES.md) for how each feature is done per OS and what is tested.
+How each feature is built per OS and what has been tested:
+[docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEATURES.md). Plan for the rest:
+[docs/PORTING.md](docs/PORTING.md).
 
 ## Development
+
+```
+desktop/   Rust workspace: core/ (the service), app/ (window, tray, CLI), camera/ (Windows webcam DLL)
+android/   Kotlin + Jetpack Compose app
+scripts/   install.sh
+docs/      architecture, porting, platform features, contributing
+```
 
 ```sh
 cd desktop
 cargo run -p dotlink                          # the app
 cargo run -p dotlink -- daemon                # headless
-cargo build -p dotlink --no-default-features  # no GPUI at all
+cargo build -p dotlink --no-default-features  # without the window
 ```
 
-Packages (into `desktop/target/`):
+Linux packages (into `desktop/target/`):
 
 ```sh
 cargo install cargo-packager cargo-generate-rpm
-NO_STRIP=1 cargo packager --release -f deb,appimage   # packages/  (.deb, .AppImage)
-cargo generate-rpm -p app                            # generate-rpm/  (.rpm, after a release build)
+NO_STRIP=1 cargo packager --release -f deb,appimage
+cargo generate-rpm -p app
 ```
 
-They need the glibc of the system they were built on or newer, so build releases on the oldest
-distro you want to support (e.g. in a Debian stable or Ubuntu LTS container).
+Build releases on the oldest distro you want to support (they need its glibc or newer).
+
+More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/CONTRIBUTION.md](docs/CONTRIBUTION.md).
