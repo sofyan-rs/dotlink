@@ -25,9 +25,14 @@ const REGISTRY_KEY: &str = r"SOFTWARE\Classes\CLSID";
 pub const DLL_NAME: &str = "dotlink_camera.dll";
 
 /// Where Setup installs the DLL: readable by the frame server, unlike a user folder.
-pub fn installed_dll() -> PathBuf {
+/// Named after its content: a DLL that is loaded (by Dotlink itself, which activates the
+/// camera in-process, by the frame server, or by an app using the camera) can't be overwritten,
+/// so a new build is installed next to it under a new name and the registration moved over.
+pub fn installed_dll(bundled: &std::path::Path) -> std::io::Result<PathBuf> {
+    use sha2::{Digest, Sha256};
     let programs = std::env::var_os("ProgramFiles").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
-    programs.join("Dotlink").join(DLL_NAME)
+    let hash = hex::encode(Sha256::digest(std::fs::read(bundled)?));
+    Ok(programs.join("Dotlink").join(format!("dotlink_camera-{}.dll", &hash[..12])))
 }
 
 /// The DLL this build ships, next to dotlink.exe.
@@ -63,9 +68,10 @@ pub fn installed_ok() -> std::result::Result<(), String> {
     let Some(bundled) = bundled_dll() else {
         return Err(format!("{DLL_NAME} is missing next to dotlink.exe; reinstall Dotlink."));
     };
-    let installed = installed_dll();
-    let current = registered_dll().is_some_and(|p| p == installed)
-        && std::fs::read(&installed).ok().is_some_and(|a| std::fs::read(&bundled).ok().is_some_and(|b| a == b));
+    // The registered DLL has this build's content (whatever its name).
+    let current = registered_dll()
+        .and_then(|p| std::fs::read(p).ok())
+        .is_some_and(|a| std::fs::read(&bundled).ok().is_some_and(|b| a == b));
     if !current {
         return Err(
             "Installs the camera's driver part into Program Files, so apps see \"Dotlink Camera\". \

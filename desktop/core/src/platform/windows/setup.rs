@@ -171,34 +171,43 @@ pub async fn fix_many(ids: &[String], port: u16) -> Result<()> {
 /// loaded can be replaced; Windows starts it again on the next camera use.
 async fn install_camera() -> Result<()> {
     let source = super::camera::bundled_dll().ok_or_else(|| anyhow::anyhow!("dotlink_camera.dll is missing next to Dotlink"))?;
-    let target = super::camera::installed_dll();
+    let target = super::camera::installed_dll(&source)?;
     let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
     let key = format!(r"HKLM:\SOFTWARE\Classes\CLSID\{}", dotlink_camera::shared::CLSID_STR);
     let script = format!(
         "$ErrorActionPreference = 'Stop'\n\
          $dll = {target}\n\
          New-Item -ItemType Directory -Force (Split-Path $dll) | Out-Null\n\
-         Stop-Service FrameServer -Force -ErrorAction SilentlyContinue\n\
          Copy-Item -Force {source} $dll\n\
          New-Item -Force {key} | Out-Null\n\
          Set-ItemProperty {key} '(default)' 'Dotlink Camera'\n\
          New-Item -Force {key_inproc} | Out-Null\n\
          Set-ItemProperty {key_inproc} '(default)' $dll\n\
-         Set-ItemProperty {key_inproc} 'ThreadingModel' 'Both'\n",
+         Set-ItemProperty {key_inproc} 'ThreadingModel' 'Both'\n\
+         # Older builds: removed when nothing has them loaded any more.\n\
+         Get-ChildItem (Split-Path $dll) -Filter 'dotlink_camera*.dll' | Where-Object FullName -ne $dll | \
+         Remove-Item -Force -ErrorAction SilentlyContinue\n",
         target = quote(&target.to_string_lossy()),
         source = quote(&source.to_string_lossy()),
         key = quote(&key),
         key_inproc = quote(&format!(r"{key}\InprocServer32")),
     );
-    run_elevated_powershell(&script).await.map_err(|_| anyhow::anyhow!("Dotlink Camera wasn't installed (administrator rights refused?)"))?;
+    run_elevated_powershell(&script).await.map_err(|e| anyhow::anyhow!("Dotlink Camera wasn't installed: {e:#}"))?;
     super::camera::reload();
     Ok(())
 }
 
-/// Runs `script` in an elevated PowerShell and waits for it (one UAC prompt).
+/// Runs `script` in an elevated PowerShell and waits for it (one UAC prompt). Its error, if
+/// any, comes back through a file: the elevated process has no console to read.
 async fn run_elevated_powershell(script: &str) -> Result<()> {
     // -EncodedCommand: UTF-16LE base64, so the script needs no quoting through two shells.
     use base64::Engine;
+    let log = std::env::temp_dir().join(format!("dotlink-setup-{}.txt", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    let quoted_log = format!("'{}'", log.to_string_lossy().replace('\'', "''"));
+    let script = format!(
+        "try {{\n{script}\n}} catch {{ $_.Exception.Message | Out-File -Encoding utf8 {quoted_log}; exit 1 }}\n"
+    );
     let utf16: Vec<u8> = script.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
     let outer = format!(
@@ -209,7 +218,13 @@ async fn run_elevated_powershell(script: &str) -> Result<()> {
     cmd.args(["-NoProfile", "-NonInteractive", "-Command", &outer]).creation_flags(super::CREATE_NO_WINDOW);
     let out = cmd.output().await?;
     if !out.status.success() {
-        bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
+        let reason = std::fs::read_to_string(&log).map(|s| s.trim().trim_start_matches('\u{feff}').to_string());
+        let _ = std::fs::remove_file(&log);
+        match reason {
+            Ok(reason) if !reason.is_empty() => bail!("{reason}"),
+            // No message: the UAC prompt was declined (Start-Process failed before running it).
+            _ => bail!("administrator rights were refused"),
+        }
     }
     Ok(())
 }
