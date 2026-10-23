@@ -1,6 +1,6 @@
 # Dotlink
 
-Link an Android phone with a Linux PC over your Wi-Fi. No account, no cloud. Made on Hyprland, works on any desktop.
+Link an Android phone with a Linux PC over your Wi-Fi, or a USB cable. No account, no cloud. Made on Hyprland, works on any desktop.
 On the PC it's one app: the service, a window and a tray icon. Windows is in progress, macOS is next (see [Platforms](#platforms)).
 
 | Feature | Phone → PC | PC → phone |
@@ -129,6 +129,7 @@ camera_size = "1920x1080" # fixed size of Dotlink Camera; phone frames are scale
 cast_screen_off = false  # Cast: turn the phone's screen off while it's shown on the PC
 cast_audio = true        # Cast: play the phone's sound on the PC (Android 11+)
 cast_max_size = 0        # Cast: longest side in pixels; 0 keeps the phone's resolution
+usb_link = true          # link phones plugged in over USB (USB debugging on) through the cable
 theme = "system"         # the window's look: "system", "light" or "dark"
 ```
 
@@ -160,7 +161,7 @@ Everything OS-specific lives in `desktop/core/src/platform/`. `linux/` is the re
 `windows/` builds and runs; webcam and mic are still stubs. `macos/mod.rs` is a stub (not
 compiled yet: build it on a Mac first) that lists what to build in its TODO comments (CGEvent
 for the remote, login items, virtual camera and mic, the tray via `tray-icon`). Search for
-`TODO(windows)` and `TODO(macos)`, and see [docs/PORTING.md](docs/PORTING.md) for the plan.
+`TODO(windows)` and `TODO(macos)`, and see [docs/PORTING.md](docs/PORTING.md) for the plan and [docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEATURES.md) for how each feature is done per OS and what is tested.
 
 ## Development
 

@@ -27,6 +27,7 @@ desktop/                 Rust workspace
     src/ipc.rs           control socket for the CLI and the window
     src/events.rs        what the window follows live (devices, transfers, …)
     src/cast.rs          Cast: finding the phone over adb, running scrcpy
+    src/usb.rs           the link over a USB cable: `adb reverse` for each phone plugged in
     src/config.rs        config.toml, state.json (paired phones), paths
     src/tls.rs           self-signed certificate
     src/term.rs          shell sessions (PTY), kept across reconnects
@@ -169,7 +170,7 @@ request line in, one or more reply lines out.
 reference. `windows/` has everything but the webcam and mic. `macos/mod.rs` is a stub that
 compiles the rest of the app and says what to build (CGEvent, login items, virtual camera and
 mic drivers, tray).
-Search for `TODO(windows)` and `TODO(macos)`; [PORTING.md](PORTING.md) is the plan, step by step.
+Search for `TODO(windows)` and `TODO(macos)`; [PORTING.md](PORTING.md) is the plan, step by step, and [PLATFORM_FEATURES.md](PLATFORM_FEATURES.md) what each OS does today.
 
 Window decorations: GPUI asks for server-side decorations; where the compositor leaves them to
 the app (GNOME), the window draws gpui-component's `TitleBar` and a resizable border.
