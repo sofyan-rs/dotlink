@@ -1,0 +1,212 @@
+//! Local control socket for the `dotlink` CLI and the desktop window.
+//! One JSON request line in, one or more JSON reply lines out.
+//!
+//! Linux/macOS: a Unix socket in the user's runtime dir. Windows: a named pipe.
+
+use crate::config::{Config, runtime_dir};
+use crate::events::UiRequest;
+use crate::server::App;
+use anyhow::{Context, Result, bail};
+use interprocess::local_socket::tokio::{Stream, prelude::*};
+use interprocess::local_socket::{ListenerOptions, Name};
+use serde_json::{Value, json};
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+#[cfg(unix)]
+fn socket_name() -> std::io::Result<Name<'static>> {
+    use interprocess::local_socket::GenericFilePath;
+    // Inside $XDG_RUNTIME_DIR, which only this user can open.
+    runtime_dir().join("dotlink.sock").to_fs_name::<GenericFilePath>()
+}
+
+// TODO(windows): named pipes are reachable by other users by default. Create the listener
+// with a security descriptor that only allows the current user (interprocess's
+// `ListenerOptionsExt::security_descriptor`) before shipping.
+#[cfg(windows)]
+fn socket_name() -> std::io::Result<Name<'static>> {
+    use interprocess::local_socket::GenericNamespaced;
+    let user = std::env::var("USERNAME").unwrap_or_default();
+    format!("dotlink-{user}").to_ns_name::<GenericNamespaced>()
+}
+
+#[cfg(unix)]
+fn remove_stale_socket() {
+    let _ = std::fs::remove_file(runtime_dir().join("dotlink.sock"));
+}
+
+#[cfg(windows)]
+fn remove_stale_socket() {}
+
+/// Called when the service stops.
+pub fn cleanup() {
+    remove_stale_socket();
+}
+
+/// Whether a Dotlink service is already answering on the socket.
+pub async fn running() -> bool {
+    match socket_name() {
+        Ok(name) => Stream::connect(name).await.is_ok(),
+        Err(_) => false,
+    }
+}
+
+pub async fn serve(app: Arc<App>) -> Result<()> {
+    if running().await {
+        bail!("Dotlink is already running");
+    }
+    remove_stale_socket();
+    let listener = ListenerOptions::new().name(socket_name()?).create_tokio()?;
+    loop {
+        let stream = listener.accept().await?;
+        let app = app.clone();
+        tokio::spawn(async move {
+            if let Err(e) = handle(app, stream).await {
+                tracing::debug!("ipc: {e}");
+            }
+        });
+    }
+}
+
+async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
+    let mut line = String::new();
+    BufReader::new(&stream).read_line(&mut line).await?;
+    let req: Value = serde_json::from_str(&line)?;
+    let mut w = &stream;
+    let reply = |v: Value| {
+        let mut s = v.to_string();
+        s.push('\n');
+        s
+    };
+    let result = |r: Result<String>| match r {
+        Ok(ok) => json!({ "ok": ok }),
+        Err(e) => json!({ "error": format!("{e:#}") }),
+    };
+    match req["cmd"].as_str().unwrap_or("") {
+        "pair" => {
+            let (uri, done) = app.start_pairing();
+            w.write_all(reply(json!({ "uri": uri })).as_bytes()).await?;
+            let msg = match tokio::time::timeout(std::time::Duration::from_secs(300), done).await {
+                Ok(Ok(name)) => json!({ "paired": name }),
+                _ => json!({ "error": "pairing timed out" }),
+            };
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "send" => {
+            let paths: Vec<PathBuf> =
+                req["paths"].as_array().into_iter().flatten().filter_map(|p| p.as_str().map(PathBuf::from)).collect();
+            let msg = result(
+                app.offer_files(&paths).map(|n| format!("sending {n} file(s) to {}", app.online_devices().join(", "))),
+            );
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "clip" => {
+            let msg = result(app.send_clipboard().await.map(|()| "clipboard sent".into()));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "devices" => {
+            w.write_all(reply(json!({ "devices": app.devices_json() })).as_bytes()).await?;
+        }
+        "media" => {
+            let kind = req["kind"].as_str().unwrap_or("");
+            let on = req["on"].as_bool().unwrap_or(false);
+            let msg = result(app.request_stream(kind, on).map(|()| {
+                let what = if kind == "mic" { "microphone" } else { "webcam" };
+                format!(
+                    "asked {} to turn the {what} {}",
+                    app.online_devices().join(", "),
+                    if on { "on" } else { "off" }
+                )
+            }));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "cast" => {
+            let id = req["id"].as_str();
+            let msg = if req["on"].as_bool().unwrap_or(true) {
+                result(crate::cast::start(&app, id).await.map(|()| "casting".into()))
+            } else {
+                crate::cast::stop(&app);
+                json!({ "ok": "stopped" })
+            };
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "cast_pair" => {
+            let code = req["code"].as_str().unwrap_or("");
+            let msg = result(crate::cast::pair(&app, req["id"].as_str(), code).await.map(|()| "paired".into()));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "status" => {
+            w.write_all(reply(app.status()).as_bytes()).await?;
+        }
+        "unpair" => {
+            let msg = result(app.unpair(req["id"].as_str().unwrap_or("")).map(|name| format!("unpaired {name}")));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "set_config" => {
+            let msg = match serde_json::from_value::<Config>(req["config"].clone()) {
+                Ok(config) => match app.set_config(config) {
+                    Ok(restart) => json!({ "ok": "saved", "restart": restart }),
+                    Err(e) => json!({ "error": format!("{e:#}") }),
+                },
+                Err(e) => json!({ "error": format!("bad config: {e}") }),
+            };
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        // One line per event until the client hangs up.
+        "watch" => {
+            let mut events = app.events.subscribe();
+            loop {
+                match events.recv().await {
+                    Ok(ev) => w.write_all(reply(serde_json::to_value(ev)?).as_bytes()).await?,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        // Missed some: a full refresh covers it.
+                        w.write_all(reply(json!({ "t": "devices" })).as_bytes()).await?
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+        // A second launch of the app: show the running one's window.
+        "show" => {
+            let msg = if app.request_ui(UiRequest::Show) {
+                json!({ "ok": "shown" })
+            } else {
+                json!({ "error": "running without a window (dotlink daemon)" })
+            };
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "quit" => {
+            w.write_all(reply(json!({ "ok": "stopping" })).as_bytes()).await?;
+            app.shutdown.notify_waiters();
+        }
+        _ => w.write_all(reply(json!({ "error": "unknown command" })).as_bytes()).await?,
+    }
+    Ok(())
+}
+
+/// Sends `req` to the running service and calls `on_reply` for each reply line.
+pub async fn request(req: Value, mut on_reply: impl FnMut(Value) -> Result<()>) -> Result<()> {
+    let stream = Stream::connect(socket_name()?)
+        .await
+        .context("Dotlink is not running (open the Dotlink app, or run `dotlink daemon`)")?;
+    (&stream).write_all(format!("{req}\n").as_bytes()).await?;
+    let mut lines = BufReader::new(&stream).lines();
+    while let Some(line) = lines.next_line().await? {
+        on_reply(serde_json::from_str(&line)?)?;
+    }
+    Ok(())
+}
+
+/// One request, its first reply.
+pub async fn call(req: Value) -> Result<Value> {
+    let mut first = None;
+    request(req, |v| {
+        if first.is_none() {
+            first = Some(v);
+        }
+        Ok(())
+    })
+    .await?;
+    first.context("no reply from Dotlink")
+}

@@ -27,6 +27,12 @@ pub struct Config {
     /// Fixed size of "Dotlink Camera". Phone frames are scaled into it (portrait gets side
     /// bars); it never changes while running, because apps reading the device can't follow.
     pub camera_size: String,
+    /// Cast: turn the phone's screen off while its picture is on the PC.
+    pub cast_screen_off: bool,
+    /// Cast: play the phone's sound on the PC (Android 11+).
+    pub cast_audio: bool,
+    /// Cast: longest side of the picture in pixels; 0 keeps the phone's resolution.
+    pub cast_max_size: u32,
 }
 
 impl Default for Config {
@@ -40,19 +46,27 @@ impl Default for Config {
             shell: String::new(),
             camera_device: String::new(),
             camera_size: "1920x1080".into(),
+            cast_screen_off: false,
+            cast_audio: true,
+            cast_max_size: 0,
         }
     }
 }
 
 impl Config {
     pub fn load() -> Result<Self> {
-        let path = config_dir().join("config.toml");
+        let path = config_path();
         if !path.exists() {
-            std::fs::create_dir_all(config_dir())?;
-            std::fs::write(&path, toml::to_string_pretty(&Config::default())?)?;
+            Config::default().save()?;
         }
         let text = std::fs::read_to_string(&path)?;
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+    }
+
+    pub fn save(&self) -> Result<()> {
+        std::fs::create_dir_all(config_dir())?;
+        std::fs::write(config_path(), toml::to_string_pretty(self)?)?;
+        Ok(())
     }
 
     /// `camera_size` as (width, height); 1920×1080 if it doesn't parse.
@@ -120,12 +134,12 @@ pub fn config_dir() -> PathBuf {
     dirs::config_dir().unwrap_or_else(|| expand_home("~/.config")).join("dotlink")
 }
 
-pub fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir)
+pub fn config_path() -> PathBuf {
+    config_dir().join("config.toml")
 }
 
-pub fn socket_path() -> PathBuf {
-    runtime_dir().join("dotlink.sock")
+pub fn runtime_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir)
 }
 
 pub fn expand_home(p: &str) -> PathBuf {
@@ -140,11 +154,8 @@ pub fn sha256_hex(data: &[u8]) -> String {
 }
 
 pub fn random_hex(bytes: usize) -> String {
-    use std::io::Read;
     let mut buf = vec![0u8; bytes];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut buf))
-        .expect("read /dev/urandom");
+    getrandom::fill(&mut buf).expect("system random number generator");
     hex::encode(buf)
 }
 
@@ -155,7 +166,15 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// Makes a file readable by the current user only (secrets: key, tokens).
 pub fn set_private(path: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    // TODO(windows): files under %APPDATA% are already private to the user; nothing to do
+    // unless the config dir is moved somewhere shared.
+    #[cfg(not(unix))]
+    let _ = path;
 }

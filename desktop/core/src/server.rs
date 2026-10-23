@@ -1,14 +1,14 @@
 //! Shared daemon state and the HTTPS / WebSocket API the phone talks to.
 
 use crate::config::{now_secs, random_hex, sha256_hex, Config, Device, State};
-use crate::input::{Input, InputMsg};
-use crate::media::{find_camera, CameraHub, MicSink};
+use crate::events::{Event, Transfer, TransferState, UiRequest};
+use crate::input::InputMsg;
+use crate::platform::{self, clipboard, find_camera, notify, CameraHub, Input, MicSink};
 use crate::term::Session;
-use crate::{clipboard, notify};
 use anyhow::{anyhow, bail, Result};
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{DefaultBodyLimit, FromRequestParts, Path, Query, State as AxState};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts, Path, Query, State as AxState};
 use axum::http::request::Parts;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -18,20 +18,36 @@ use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, Notify};
 
 const PAIRING_TTL: Duration = Duration::from_secs(300);
 const OFFER_TTL: Duration = Duration::from_secs(3600);
+/// Transfers kept for the app's list.
+const TRANSFER_HISTORY: usize = 100;
 
 struct Pairing {
     secret: String,
     expires: Instant,
     done: Option<oneshot::Sender<String>>,
+}
+
+/// What a connected phone told us about itself (its `info` message), for casting.
+#[derive(Debug, Clone, Default)]
+pub struct PhoneInfo {
+    /// `Build.MODEL`, the same as `model:` in `adb devices -l` (spaces as `_`).
+    pub model: String,
+    /// Wireless debugging is on.
+    pub adb_wifi: bool,
+    /// Developer options are on.
+    pub dev_options: bool,
+    /// Where its control connection comes from.
+    pub ip: Option<IpAddr>,
 }
 
 struct Offer {
@@ -42,7 +58,9 @@ struct Offer {
 }
 
 pub struct App {
-    pub config: Config,
+    config: Mutex<Config>,
+    /// The port actually listened on (a changed `config.port` applies after a restart).
+    pub port: u16,
     pub fingerprint: String,
     pub hostname: String,
     pub state: Mutex<State>,
@@ -57,14 +75,30 @@ pub struct App {
     terms: Mutex<HashMap<String, BTreeMap<u32, Arc<Session>>>>,
     /// Feeds "Dotlink Camera" (phone frames or the "camera off" placeholder).
     pub camera: CameraHub,
+    /// For the desktop window and `dotlink watch`-style clients.
+    pub events: broadcast::Sender<Event>,
+    transfers: Mutex<VecDeque<Transfer>>,
+    /// Device id → what the phone told us about itself, and where it connects from.
+    pub phones: Mutex<HashMap<String, PhoneInfo>>,
+    /// Casting the phone screen with scrcpy.
+    pub cast: crate::cast::Cast,
+    /// "camera" / "mic" → the phone streaming it right now.
+    streams: Mutex<BTreeMap<&'static str, String>>,
+    /// The window of the app this runs in; None when headless (`dotlink daemon`).
+    ui: Mutex<Option<mpsc::UnboundedSender<UiRequest>>>,
+    /// Stops the service (`dotlink quit`, Quit in the tray).
+    pub shutdown: Notify,
 }
 
 impl App {
     pub fn new(config: Config, state: State, fingerprint: String) -> Arc<Self> {
-        let hostname = hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or_else(|_| "Linux".into());
+        let hostname = hostname::get()
+            .map(|h| h.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| std::env::consts::OS.into());
         let camera = CameraHub::start(config.camera_device.clone(), config.camera_size());
         Arc::new(Self {
-            config,
+            port: config.port,
+            config: Mutex::new(config),
             fingerprint,
             hostname,
             state: Mutex::new(state),
@@ -76,7 +110,143 @@ impl App {
             input: Mutex::new(None),
             terms: Mutex::new(HashMap::new()),
             camera,
+            events: broadcast::channel(256).0,
+            transfers: Mutex::new(VecDeque::new()),
+            streams: Mutex::new(BTreeMap::new()),
+            phones: Mutex::new(HashMap::new()),
+            cast: crate::cast::Cast::default(),
+            ui: Mutex::new(None),
+            shutdown: Notify::new(),
         })
+    }
+
+    pub fn config(&self) -> Config {
+        self.config.lock().unwrap().clone()
+    }
+
+    /// Saves and applies a new config. Returns true when some of it applies only after a
+    /// restart (port, camera).
+    pub fn set_config(&self, new: Config) -> Result<bool> {
+        new.save()?;
+        let mut config = self.config.lock().unwrap();
+        let restart = new.port != self.port
+            || new.camera_device != config.camera_device
+            || new.camera_size != config.camera_size;
+        *config = new;
+        drop(config);
+        self.emit(Event::Config);
+        Ok(restart)
+    }
+
+    pub fn emit(&self, event: Event) {
+        let _ = self.events.send(event);
+    }
+
+    /// Lets the service talk to the window it runs with.
+    pub fn attach_ui(&self, tx: mpsc::UnboundedSender<UiRequest>) {
+        *self.ui.lock().unwrap() = Some(tx);
+    }
+
+    /// False when there is no window (headless).
+    pub fn request_ui(&self, req: UiRequest) -> bool {
+        self.ui.lock().unwrap().as_ref().is_some_and(|tx| tx.send(req).is_ok())
+    }
+
+    /// Adds or updates a transfer in the history and tells the window.
+    fn put_transfer(&self, t: Transfer) {
+        let mut list = self.transfers.lock().unwrap();
+        match list.iter_mut().find(|x| x.id == t.id) {
+            Some(x) => *x = t.clone(),
+            None => {
+                list.push_front(t.clone());
+                list.truncate(TRANSFER_HISTORY);
+            }
+        }
+        drop(list);
+        self.emit(Event::Transfer(t));
+    }
+
+    pub fn devices_json(&self) -> Vec<Value> {
+        let online = self.online.lock().unwrap();
+        let state = self.state.lock().unwrap();
+        let phones = self.phones.lock().unwrap();
+        state
+            .devices
+            .iter()
+            .map(|d| {
+                json!({
+                    "id": d.id,
+                    "name": d.name,
+                    "online": online.get(&d.id).copied().unwrap_or(0) > 0,
+                    "paired_at": d.paired_at,
+                    "model": phones.get(&d.id).map(|p| p.model.clone()),
+                    "adb_wifi": phones.get(&d.id).map(|p| p.adb_wifi),
+                })
+            })
+            .collect()
+    }
+
+    /// Everything the window shows, in one reply.
+    pub fn status(&self) -> Value {
+        json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "hostname": self.hostname,
+            "port": self.port,
+            "fingerprint": self.fingerprint,
+            "addresses": local_ips(),
+            "devices": self.devices_json(),
+            "transfers": *self.transfers.lock().unwrap(),
+            "config": self.config(),
+            "camera": self.streams.lock().unwrap().get("camera"),
+            "mic": self.streams.lock().unwrap().get("mic"),
+            "has_ui": self.ui.lock().unwrap().is_some(),
+            "cast": self.cast.state(),
+        })
+    }
+
+    /// Text copied on this PC: send it to the phones (when clipboard sync is on).
+    pub fn clip_from_desktop(&self, text: String) {
+        if text.is_empty() || !self.config.lock().unwrap().clipboard_sync || !self.remember_clip(&text) {
+            return;
+        }
+        let online = self.online_devices();
+        if online.is_empty() {
+            return;
+        }
+        tracing::info!("clipboard to phone ({} chars)", text.chars().count());
+        let chars = text.chars().count();
+        self.send_control(json!({ "t": "clip", "text": text }));
+        self.emit(Event::Clipboard { to_phone: true, device: online.join(", "), chars });
+    }
+
+    /// Asks the phones to start or stop streaming the camera or mic (`kind`: "camera" | "mic").
+    /// Starting may need a tap on the phone when its app is in the background; the phone then
+    /// answers with a `media` message, which becomes [Event::MediaPrompt].
+    pub fn request_stream(&self, kind: &str, on: bool) -> Result<()> {
+        if !matches!(kind, "camera" | "mic") {
+            bail!("unknown stream \"{kind}\"");
+        }
+        if self.online_devices().is_empty() {
+            bail!("no phone connected");
+        }
+        self.send_control(json!({ "t": kind, "on": on }));
+        Ok(())
+    }
+
+    /// Sends the current PC clipboard now, whatever the sync setting says.
+    pub async fn send_clipboard(&self) -> Result<()> {
+        let online = self.online_devices();
+        let Some(text) = clipboard::get().await.filter(|t| !t.is_empty()) else {
+            bail!("clipboard is empty or not text");
+        };
+        if online.is_empty() {
+            bail!("no phone connected");
+        }
+        self.remember_clip(&text);
+        let chars = text.chars().count();
+        self.send_control(json!({ "t": "clip", "text": text }));
+        self.emit(Event::Clipboard { to_phone: true, device: online.join(", "), chars });
+        Ok(())
     }
 
     pub fn server_id(&self) -> String {
@@ -114,7 +284,7 @@ impl App {
         let hosts = local_ips().join(",");
         let uri = format!(
             "dotlink://pair?h={hosts}&p={}&fp={}&c={secret}&n={}&id={}",
-            self.config.port,
+            self.port,
             self.fingerprint,
             url_encode(&self.hostname),
             self.server_id()
@@ -138,6 +308,17 @@ impl App {
             let id = random_hex(12);
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
             self.send_control(json!({ "t": "file", "id": id, "name": name, "size": meta.len() }));
+            self.put_transfer(Transfer {
+                id: id.clone(),
+                outgoing: true,
+                device: String::new(),
+                name: name.clone(),
+                size: Some(meta.len()),
+                done: 0,
+                state: TransferState::Waiting,
+                path: path.to_string_lossy().into_owned(),
+                started_at: now_secs(),
+            });
             offers.insert(id, Offer { path: path.clone(), name, size: meta.len(), created: Instant::now() });
             count += 1;
         }
@@ -153,9 +334,11 @@ impl App {
             .ok_or_else(|| anyhow!("no paired device \"{key}\""))?;
         let dev = state.devices.remove(idx);
         state.save()?;
+        drop(state);
         for s in self.terms.lock().unwrap().remove(&dev.id).unwrap_or_default().into_values() {
             s.kill();
         }
+        self.emit(Event::Devices);
         Ok(dev.name)
     }
 }
@@ -233,30 +416,45 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
     if let Some(done) = done {
         let _ = done.send(name.clone());
     }
+    app.emit(Event::Paired { name: name.clone() });
+    app.emit(Event::Devices);
     notify("Phone paired", &format!("{name} can now connect to this PC"));
     Json(json!({ "token": token, "server_id": app.server_id(), "server_name": app.hostname })).into_response()
 }
 
 async fn ping(AxState(app): AxState<Arc<App>>, Authed(_): Authed) -> Json<Value> {
+    let config = app.config();
     Json(json!({
         "name": app.hostname,
-        "terminal": app.config.terminal,
-        "terminal_pin": !app.config.terminal_pin.is_empty(),
+        "terminal": config.terminal,
+        "terminal_pin": !config.terminal_pin.is_empty(),
     }))
 }
 
 // ---------- control: clipboard + file offers ----------
 
-async fn ws_control(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, Authed(dev): Authed) -> Response {
-    ws.on_upgrade(move |socket| control_session(app, dev, socket))
+async fn ws_control(
+    ws: WebSocketUpgrade,
+    AxState(app): AxState<Arc<App>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Authed(dev): Authed,
+) -> Response {
+    ws.on_upgrade(move |socket| control_session(app, dev, peer, socket))
 }
 
-async fn control_session(app: Arc<App>, dev: Device, socket: WebSocket) {
+async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: WebSocket) {
+    // IPv4-mapped IPv6 addresses show up as plain IPv4 elsewhere (mDNS, adb).
+    let ip = match peer.ip() {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(v6)),
+        v4 => v4,
+    };
+    app.phones.lock().unwrap().entry(dev.id.clone()).or_default().ip = Some(ip);
     *app.online.lock().unwrap().entry(dev.id.clone()).or_default() += 1;
+    app.emit(Event::Devices);
     tracing::info!("{} connected", dev.name);
     let (mut tx, mut rx) = socket.split();
     let mut events = app.control_tx.subscribe();
-    let hello = json!({ "t": "hello", "name": app.hostname, "terminal": app.config.terminal });
+    let hello = json!({ "t": "hello", "name": app.hostname, "terminal": app.config().terminal });
     let _ = tx.send(Message::Text(hello.to_string().into())).await;
     loop {
         tokio::select! {
@@ -268,12 +466,29 @@ async fn control_session(app: Arc<App>, dev: Device, socket: WebSocket) {
             msg = rx.next() => match msg {
                 Some(Ok(Message::Text(text))) => {
                     let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
+                    // The phone can't start the camera/mic from the background: it asks the
+                    // user with a notification and tells us so.
+                    if v["t"] == "info" {
+                        let mut phones = app.phones.lock().unwrap();
+                        let info = phones.entry(dev.id.clone()).or_default();
+                        info.model = v["model"].as_str().unwrap_or("").to_string();
+                        info.adb_wifi = v["adb_wifi"].as_bool().unwrap_or(false);
+                        info.dev_options = v["dev_options"].as_bool().unwrap_or(false);
+                        drop(phones);
+                        app.emit(Event::Devices);
+                    }
+                    if v["t"] == "media" && v["state"] == "needs_tap" {
+                        let kind = v["kind"].as_str().unwrap_or("camera").to_string();
+                        app.emit(Event::MediaPrompt { device: dev.name.clone(), kind });
+                    }
                     if v["t"] == "clip" {
                         if let Some(text) = v["text"].as_str() {
                             if app.remember_clip(text) {
-                                tracing::info!("clipboard from {} ({} chars)", dev.name, text.chars().count());
-                                if let Err(e) = clipboard::set(text).await {
-                                    tracing::warn!("wl-copy: {e}");
+                                let chars = text.chars().count();
+                                tracing::info!("clipboard from {} ({chars} chars)", dev.name);
+                                match clipboard::set(text).await {
+                                    Ok(()) => app.emit(Event::Clipboard { to_phone: false, device: dev.name.clone(), chars }),
+                                    Err(e) => tracing::warn!("clipboard: {e}"),
                                 }
                             }
                         }
@@ -284,10 +499,10 @@ async fn control_session(app: Arc<App>, dev: Device, socket: WebSocket) {
             }
         }
     }
-    let mut online = app.online.lock().unwrap();
-    if let Some(n) = online.get_mut(&dev.id) {
+    if let Some(n) = app.online.lock().unwrap().get_mut(&dev.id) {
         *n = n.saturating_sub(1);
     }
+    app.emit(Event::Devices);
     tracing::info!("{} disconnected", dev.name);
 }
 
@@ -329,12 +544,13 @@ struct TermQuery {
 
 /// Rejects the request when the terminal is disabled or the PIN is wrong.
 fn check_terminal(app: &App, headers: &HeaderMap) -> Option<Response> {
-    if !app.config.terminal {
-        return Some((StatusCode::FORBIDDEN, "terminal is disabled in config.toml").into_response());
+    let config = app.config();
+    if !config.terminal {
+        return Some((StatusCode::FORBIDDEN, "the shell is turned off in Dotlink's settings").into_response());
     }
-    if !app.config.terminal_pin.is_empty() {
+    if !config.terminal_pin.is_empty() {
         let pin = headers.get("x-terminal-pin").and_then(|v| v.to_str().ok()).unwrap_or("");
-        if !ct_eq(pin, &app.config.terminal_pin) {
+        if !ct_eq(pin, &config.terminal_pin) {
             return Some((StatusCode::FORBIDDEN, "wrong terminal PIN").into_response());
         }
     }
@@ -393,12 +609,10 @@ async fn ws_term(
         match existing {
             Some(found) => found,
             None => {
-                let shell = if app.config.shell.is_empty() {
-                    std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into())
-                } else {
-                    app.config.shell.clone()
-                };
-                match Session::spawn(&shell, cols, rows) {
+                let configured = app.config().shell;
+                let (shell, args) =
+                    if configured.is_empty() { platform::default_shell() } else { (configured, Vec::new()) };
+                match Session::spawn(&shell, &args, cols, rows) {
                     Ok(s) => {
                         let id = sessions.keys().next_back().map_or(1, |last| last + 1);
                         sessions.insert(id, s.clone());
@@ -469,12 +683,13 @@ async fn camera_session(app: Arc<App>, dev: &Device, mut socket: WebSocket) -> R
         }
         _ => return Ok(()),
     };
-    if let Err(e) = find_camera(&app.config.camera_device) {
+    if let Err(e) = find_camera(&app.config().camera_device) {
         socket.send(Message::Text(json!({ "error": format!("{e:#}") }).to_string().into())).await?;
         return Err(e);
     }
     socket.send(Message::Text(json!({ "ok": true }).to_string().into())).await?;
     tracing::info!("camera from {} started ({w}x{h})", dev.name);
+    let _streaming = Streaming::new(&app, "camera", &dev.name);
     while let Some(Ok(msg)) = socket.recv().await {
         if let Message::Binary(jpeg) = msg {
             app.camera.send(jpeg);
@@ -486,7 +701,7 @@ async fn camera_session(app: Arc<App>, dev: &Device, mut socket: WebSocket) -> R
 
 // ---------- microphone ----------
 
-async fn ws_mic(ws: WebSocketUpgrade, Authed(dev): Authed) -> Response {
+async fn ws_mic(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, Authed(dev): Authed) -> Response {
     ws.on_upgrade(move |mut socket| async move {
         let (rate, ch) = match socket.recv().await {
             Some(Ok(Message::Text(t))) => {
@@ -505,6 +720,7 @@ async fn ws_mic(ws: WebSocketUpgrade, Authed(dev): Authed) -> Response {
         };
         let _ = socket.send(Message::Text(json!({ "ok": true }).to_string().into())).await;
         tracing::info!("mic from {} started", dev.name);
+        let _streaming = Streaming::new(&app, "mic", &dev.name);
         while let Some(Ok(msg)) = socket.recv().await {
             if let Message::Binary(pcm) = msg {
                 sink.write(&pcm);
@@ -528,21 +744,45 @@ async fn upload(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
-    match save_upload(&app, &q.name, headers.get("x-sha256").and_then(|v| v.to_str().ok()), body).await {
+    let Some(name) = sanitize_name(&q.name) else {
+        return (StatusCode::BAD_REQUEST, "bad file name").into_response();
+    };
+    let size = headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
+    let mut progress = Progress::new(
+        &app,
+        Transfer {
+            id: random_hex(12),
+            outgoing: false,
+            device: dev.name.clone(),
+            name: name.clone(),
+            size,
+            done: 0,
+            state: TransferState::Active,
+            path: String::new(),
+            started_at: now_secs(),
+        },
+    );
+    let sha = headers.get("x-sha256").and_then(|v| v.to_str().ok());
+    match save_upload(&app, &name, sha, body, &mut progress).await {
         Ok(path) => {
             let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-            notify_file(&dev.name, &name, &path);
+            progress.transfer.name = name.clone();
+            progress.transfer.path = path.to_string_lossy().into_owned();
+            progress.finish(Ok(()));
+            platform::notify_file(&dev.name, &name, &path);
             Json(json!({ "ok": true, "name": name })).into_response()
         }
-        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+        Err(e) => {
+            progress.finish(Err(e.to_string()));
+            (StatusCode::BAD_REQUEST, e.to_string()).into_response()
+        }
     }
 }
 
-async fn save_upload(app: &App, name: &str, sha: Option<&str>, body: Body) -> Result<PathBuf> {
-    let name = sanitize_name(name).ok_or_else(|| anyhow!("bad file name"))?;
-    let dir = app.config.download_dir();
+async fn save_upload(app: &App, name: &str, sha: Option<&str>, body: Body, progress: &mut Progress) -> Result<PathBuf> {
+    let dir = app.config().download_dir();
     tokio::fs::create_dir_all(&dir).await?;
-    let dest = unique_path(&dir, &name);
+    let dest = unique_path(&dir, name);
     let part = dir.join(format!(".{name}.{}.part", random_hex(4)));
     let mut file = tokio::fs::File::create(&part).await?;
     let mut hasher = Sha256::new();
@@ -552,6 +792,7 @@ async fn save_upload(app: &App, name: &str, sha: Option<&str>, body: Body) -> Re
             let chunk = chunk?;
             hasher.update(&chunk);
             file.write_all(&chunk).await?;
+            progress.add(chunk.len() as u64);
         }
         file.flush().await?;
         if let Some(expected) = sha {
@@ -570,7 +811,7 @@ async fn save_upload(app: &App, name: &str, sha: Option<&str>, body: Body) -> Re
     Ok(dest)
 }
 
-async fn download(AxState(app): AxState<Arc<App>>, Authed(_): Authed, Path(id): Path<String>) -> Response {
+async fn download(AxState(app): AxState<Arc<App>>, Authed(dev): Authed, Path(id): Path<String>) -> Response {
     let (path, name, size) = {
         let offers = app.offers.lock().unwrap();
         match offers.get(&id) {
@@ -582,7 +823,45 @@ async fn download(AxState(app): AxState<Arc<App>>, Authed(_): Authed, Path(id): 
         Ok(f) => f,
         Err(_) => return StatusCode::GONE.into_response(),
     };
-    let body = Body::from_stream(tokio_util::io::ReaderStream::with_capacity(file, 256 * 1024));
+    let mut transfer = app.transfers.lock().unwrap().iter().find(|t| t.id == id).cloned().unwrap_or(Transfer {
+        id: id.clone(),
+        outgoing: true,
+        device: String::new(),
+        name: name.clone(),
+        size: Some(size),
+        done: 0,
+        state: TransferState::Active,
+        path: path.to_string_lossy().into_owned(),
+        started_at: now_secs(),
+    });
+    transfer.device = dev.name;
+    transfer.done = 0;
+    transfer.state = TransferState::Active;
+    // Counts what the phone has read; the progress is dropped (→ failed) if it hangs up early.
+    let progress = Progress::new(&app, transfer);
+    let chunks = tokio_util::io::ReaderStream::with_capacity(file, 256 * 1024);
+    let stream = futures::stream::unfold((chunks, progress), |(mut chunks, mut progress)| async move {
+        match chunks.next().await {
+            Some(Ok(chunk)) => {
+                progress.add(chunk.len() as u64);
+                // hyper stops reading once Content-Length bytes went out, so the end of the
+                // stream is never seen: the last byte is the end.
+                if progress.transfer.size.is_some_and(|size| progress.transfer.done >= size) {
+                    progress.finish(Ok(()));
+                }
+                Some((Ok(chunk), (chunks, progress)))
+            }
+            Some(Err(e)) => {
+                progress.finish(Err(e.to_string()));
+                Some((Err(e), (chunks, progress)))
+            }
+            None => {
+                progress.finish(Ok(()));
+                None
+            }
+        }
+    });
+    let body = Body::from_stream(stream);
     (
         [
             (header::CONTENT_TYPE, "application/octet-stream".to_string()),
@@ -618,23 +897,67 @@ fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
         .unwrap()
 }
 
-fn notify_file(from: &str, name: &str, path: &std::path::Path) {
-    let path = path.to_path_buf();
-    let (from, name) = (from.to_string(), name.to_string());
-    tokio::spawn(async move {
-        let out = tokio::process::Command::new("notify-send")
-            .args(["-a", "Dotlink", "-i", "document-save", "--action=open=Open", "--action=folder=Show in folder"])
-            .arg(format!("Received from {from}"))
-            .arg(&name)
-            .output()
-            .await;
-        let target = match out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).as_deref() {
-            Ok("open") => path,
-            Ok("folder") => path.parent().map(|p| p.to_path_buf()).unwrap_or(path),
-            _ => return,
+/// Marks a camera/mic stream as running for the window while it lives.
+struct Streaming {
+    app: Arc<App>,
+    kind: &'static str,
+}
+
+impl Streaming {
+    fn new(app: &Arc<App>, kind: &'static str, device: &str) -> Self {
+        app.streams.lock().unwrap().insert(kind, device.to_string());
+        app.emit(Event::Streams);
+        Self { app: app.clone(), kind }
+    }
+}
+
+impl Drop for Streaming {
+    fn drop(&mut self) {
+        self.app.streams.lock().unwrap().remove(self.kind);
+        self.app.emit(Event::Streams);
+    }
+}
+
+/// A transfer in progress. Reports to the window at most 4 times a second; dropping it
+/// before `finish` marks the transfer failed (the phone went away).
+struct Progress {
+    app: Arc<App>,
+    transfer: Transfer,
+    last_report: Instant,
+    finished: bool,
+}
+
+impl Progress {
+    fn new(app: &Arc<App>, transfer: Transfer) -> Self {
+        app.put_transfer(transfer.clone());
+        Self { app: app.clone(), transfer, last_report: Instant::now(), finished: false }
+    }
+
+    fn add(&mut self, bytes: u64) {
+        self.transfer.done += bytes;
+        if self.last_report.elapsed() >= Duration::from_millis(250) {
+            self.last_report = Instant::now();
+            self.app.put_transfer(self.transfer.clone());
+        }
+    }
+
+    fn finish(&mut self, result: std::result::Result<(), String>) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
+        self.transfer.state = match result {
+            Ok(()) => TransferState::Done,
+            Err(e) => TransferState::Failed(e),
         };
-        let _ = tokio::process::Command::new("xdg-open").arg(target).spawn();
-    });
+        self.app.put_transfer(self.transfer.clone());
+    }
+}
+
+impl Drop for Progress {
+    fn drop(&mut self) {
+        self.finish(Err("interrupted".into()));
+    }
 }
 
 /// Constant-time string comparison for secrets.

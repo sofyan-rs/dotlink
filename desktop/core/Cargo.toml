@@ -1,0 +1,41 @@
+[package]
+name = "dotlink-core"
+description = "Dotlink service: pairing, the HTTPS/WebSocket API for the phone, local control socket"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+arboard = { version = "3.7.0", default-features = false }
+axum = { version = "0.8.9", features = ["ws", "macros"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+base64 = "0.23.1"
+dirs = "7.0.0"
+futures = "0.3.34"
+getrandom = "0.4"
+hex = "0.4.3"
+hostname = "0.4.2"
+if-addrs = "0.15.0"
+interprocess = { version = "2.4.6", features = ["tokio"] }
+mdns-sd = "0.21.6"
+portable-pty = "0.9.0"
+rcgen = "0.14.10"
+rustls = "0.23.46"
+sha2 = "0.11.1"
+tokio-util = { version = "0.7.20", features = ["io"] }
+# Downloading scrcpy for Cast when it isn't installed.
+flate2 = "1.1.10"
+tar = "0.4.46"
+ureq = "3.5.0"
+toml = "1.1.8"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = "0.13.2"
+
+# TODO(windows, macos): native notifications. notify-rust covers both.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+notify-rust = "4.18.2"

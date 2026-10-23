@@ -21,10 +21,10 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn spawn(shell: &str, cols: u16, rows: u16) -> Result<Arc<Self>> {
+    pub fn spawn(shell: &str, args: &[String], cols: u16, rows: u16) -> Result<Arc<Self>> {
         let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
         let mut cmd = CommandBuilder::new(shell);
-        cmd.arg("-l");
+        cmd.args(args);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         if let Some(home) = dirs::home_dir() {
@@ -91,10 +91,11 @@ impl Session {
 
     /// Name of the program in the foreground ("zsh", "htop", "nvim"…), for the tab title.
     pub fn title(&self) -> String {
-        let pid = self.master.lock().unwrap().process_group_leader();
-        pid.and_then(|p| std::fs::read_to_string(format!("/proc/{p}/comm")).ok())
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|| "shell".into())
+        #[cfg(unix)]
+        let pid = self.master.lock().unwrap().process_group_leader().map(|p| p as u32);
+        #[cfg(not(unix))]
+        let pid = self.child.lock().unwrap().process_id();
+        pid.and_then(crate::platform::process_name).unwrap_or_else(|| "shell".into())
     }
 
     pub fn kill(&self) {

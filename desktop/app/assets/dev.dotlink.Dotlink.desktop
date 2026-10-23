@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dotlink
+GenericName=Phone link
+Comment=Link your Android phone: files, clipboard, remote, shell, webcam, mic
+Exec=dotlink
+Icon=dotlink
+Terminal=false
+Categories=Network;Utility;
+Keywords=phone;android;share;clipboard;webcam;
+StartupWMClass=dev.dotlink.Dotlink
+SingleMainWindow=true

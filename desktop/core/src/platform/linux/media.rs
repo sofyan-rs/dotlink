@@ -20,7 +20,7 @@ pub fn find_camera(configured: &str) -> Result<PathBuf> {
             return Ok(PathBuf::from("/dev").join(entry.file_name()));
         }
     }
-    bail!("no v4l2loopback device named \"{CAMERA_LABEL}\"; run scripts/install.sh --camera")
+    bail!("no v4l2loopback device named \"{CAMERA_LABEL}\"; set it up in Dotlink → Setup")
 }
 
 /// An ffmpeg process that decodes MJPEG frames from stdin into the loopback device.
