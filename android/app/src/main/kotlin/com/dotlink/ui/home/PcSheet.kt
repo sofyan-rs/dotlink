@@ -49,7 +49,7 @@ fun PcSheet(
             color = Dotline.colors.ink,
             modifier = Modifier.padding(start = Dotline.space.s1),
         )
-        ListGroup {
+        ListGroup(inSheet = true) {
             pcs.forEachIndexed { i, pc ->
                 if (i > 0) ListDivider()
                 val active = pc.id == activeId
