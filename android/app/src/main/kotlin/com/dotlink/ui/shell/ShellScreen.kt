@@ -109,6 +109,9 @@ class TermController(
     private var ready = false
 
     var status by mutableStateOf("Not connected")
+
+    /** [status] is an error (wrong PIN, shell turned off): shown in red. */
+    var statusError by mutableStateOf(false)
     var ctrl by mutableStateOf(false)
     var alt by mutableStateOf(false)
     var sessions by mutableStateOf(emptyList<TermTab>())
@@ -165,6 +168,7 @@ class TermController(
         ws = null
         js("termReset()") // the PC replays the session's screen
         status = "Connecting…"
+        statusError = false
         val query = "/ws/term?cols=$cols&rows=$rows" + (if (fresh) "&new=true" else id?.let { "&id=$it" }.orEmpty())
         val socket =
             link.openSocket(
@@ -214,7 +218,12 @@ class TermController(
                             } else {
                                 t.message ?: "Disconnected"
                             }
-                        main.post { if (current(webSocket)) status = reason }
+                        main.post {
+                            if (current(webSocket)) {
+                                status = reason
+                                statusError = true
+                            }
+                        }
                     }
                 },
                 headers = pinHeaders,
@@ -322,13 +331,14 @@ fun ShellScreen() {
         ScreenTitle(
             title = "Shell",
             subline = controller.status,
+            sublineError = controller.statusError,
             actions = {
                 ScreenTitleAction(DotlineIcons.Keyboard, "Show keyboard", onClick = controller::showKeyboard)
             },
         )
         Spacer(Modifier.height(Dotline.space.s2))
         SessionTabs(controller)
-        Spacer(Modifier.height(Dotline.space.s2))
+        Spacer(Modifier.height(Dotline.space.s3))
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
@@ -351,11 +361,12 @@ fun ShellScreen() {
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = Dotline.space.s2)
+                    // The screen margin, like the tabs and keys around it.
+                    .padding(horizontal = Dotline.space.s4)
                     .clip(Dotline.radius.m)
                     .background(androidx.compose.ui.graphics.Color.Black),
         )
-        Spacer(Modifier.height(Dotline.space.s2))
+        Spacer(Modifier.height(Dotline.space.s3))
         ExtraKeys(controller)
         Spacer(Modifier.height(if (WindowInsets.isImeVisible) Dotline.space.s2 else bottomNavHeight()))
     }
@@ -380,7 +391,29 @@ private fun SessionTabs(controller: TermController) {
                 onClose = { controller.closeSession(tab.id) },
             )
         }
-        Key("+") { controller.open(null, fresh = true) }
+        NewSessionButton { controller.open(null, fresh = true) }
+    }
+}
+
+/** + at the end of the session tabs: a 40 dp circle like the tabs, with a real icon. */
+@Composable
+private fun NewSessionButton(onClick: () -> Unit) {
+    val colors = Dotline.colors
+    Box(
+        modifier =
+            Modifier
+                .size(40.dp)
+                .clip(Dotline.radius.pill)
+                .border(Dotline.size.stroke, colors.lineStrong, Dotline.radius.pill)
+                .pointerInput(onClick) {
+                    awaitEachGesture {
+                        awaitFirstDown()
+                        if (waitForUpOrCancellation() != null) onClick()
+                    }
+                },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(DotlineIcons.Plus, contentDescription = "New session", tint = colors.ink, modifier = Modifier.size(20.dp))
     }
 }
 

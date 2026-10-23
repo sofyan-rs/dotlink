@@ -9,7 +9,8 @@
   /* Icons used by prompts, fastfetch, eza… Fallback only: Geist Mono draws the letters. */
   @font-face { font-family: "Symbols Nerd Font Mono"; src: url("symbols-nerd-mono.ttf"); }
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  #term { position: absolute; inset: 0 4px 0 8px; }
+  /* Room around the text, so it doesn't touch the rounded corners. */
+  #term { position: absolute; inset: 14px 8px 14px 12px; }
   .xterm-viewport { background: #000 !important; }
 </style>
 </head>

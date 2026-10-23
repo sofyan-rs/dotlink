@@ -2,43 +2,126 @@ package com.dotlink.link
 
 import android.content.Context
 import androidx.core.content.edit
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
 
-/** Pairing data and user settings, in private SharedPreferences. */
+/** A paired PC. [id] is its server id, or its fingerprint for PCs that don't send one. */
+data class Pc(
+    val id: String,
+    val name: String,
+    val serverId: String,
+    val hosts: List<String>,
+    val lastHost: String?,
+    val port: Int,
+    val fingerprint: String,
+    val token: String,
+    /** The PC's OS from its hello ("linux", "windows", "macos"); empty until it says. */
+    val os: String = "",
+) {
+    fun toJson(): JSONObject =
+        JSONObject()
+            .put("id", id)
+            .put("name", name)
+            .put("server_id", serverId)
+            .put("hosts", JSONArray(hosts))
+            .put("last_host", lastHost)
+            .put("port", port)
+            .put("fingerprint", fingerprint)
+            .put("token", token)
+            .put("os", os)
+
+    companion object {
+        fun fromJson(o: JSONObject) =
+            Pc(
+                id = o.getString("id"),
+                name = o.optString("name", "PC"),
+                serverId = o.optString("server_id"),
+                hosts = o.optJSONArray("hosts")?.let { a -> List(a.length()) { a.getString(it) } }.orEmpty(),
+                lastHost = o.optString("last_host").ifEmpty { null },
+                port = o.optInt("port", 47390),
+                fingerprint = o.getString("fingerprint"),
+                token = o.getString("token"),
+                os = o.optString("os"),
+            )
+    }
+}
+
+/**
+ * Pairing data and user settings, in private SharedPreferences. Several PCs can be paired;
+ * one is active at a time, and the pairing properties ([token], [hosts]…) are the active one's.
+ */
 class Prefs(
     context: Context,
 ) {
     private val sp = context.getSharedPreferences("dotlink", Context.MODE_PRIVATE)
 
+    /**
+     * [pcs], parsed. Every pairing property ([token], [lastHost], [serverName]…) reads it, on
+     * each request and in screens, so the JSON is parsed only when it changes.
+     */
+    @Volatile private var pcsCache: List<Pc>? = null
+
+    init {
+        migrateSinglePc()
+    }
+
     /** Random id for this phone; the PC uses it to replace the old token when re-pairing. */
     val deviceId: String =
         sp.getString("device_id", null) ?: UUID.randomUUID().toString().also { sp.edit { putString("device_id", it) } }
 
-    val paired: Boolean get() = token != null && fingerprint != null
+    /** Every paired PC, in pairing order. */
+    var pcs: List<Pc>
+        get() =
+            pcsCache ?: runCatching {
+                val a = JSONArray(sp.getString("pcs", "[]"))
+                List(a.length()) { Pc.fromJson(a.getJSONObject(it)) }
+            }.getOrDefault(emptyList()).also { pcsCache = it }
+        private set(v) {
+            pcsCache = v
+            sp.edit { putString("pcs", JSONArray(v.map { it.toJson() }).toString()) }
+        }
 
-    var hosts: List<String>
-        get() = sp.getString("hosts", "")!!.split(',').filter { it.isNotBlank() }
-        set(v) = sp.edit { putString("hosts", v.joinToString(",")) }
+    var activeId: String?
+        get() = sp.getString("active_pc", null)
+        set(v) = sp.edit { putString("active_pc", v) }
+
+    val active: Pc? get() = pcs.let { all -> all.find { it.id == activeId } ?: all.firstOrNull() }
+
+    val paired: Boolean get() = active != null
+
+    /** Adds [pc] (replacing an older pairing with the same PC) and makes it the active one. */
+    fun addPc(pc: Pc) {
+        pcs = pcs.filter { it.id != pc.id } + pc
+        activeId = pc.id
+    }
+
+    private fun updateActive(change: (Pc) -> Pc) {
+        val current = active ?: return
+        val changed = change(current)
+        if (changed != current) pcs = pcs.map { if (it.id == current.id) changed else it }
+    }
+
+    val hosts: List<String> get() = active?.hosts.orEmpty()
     var lastHost: String?
-        get() = sp.getString("last_host", null)
-        set(v) = sp.edit { putString("last_host", v) }
-    var port: Int
-        get() = sp.getInt("port", 47390)
-        set(v) = sp.edit { putInt("port", v) }
-    var fingerprint: String?
-        get() = sp.getString("fingerprint", null)
-        set(v) = sp.edit { putString("fingerprint", v) }
-    var token: String?
-        get() = sp.getString("token", null)
-        set(v) = sp.edit { putString("token", v) }
+        get() = active?.lastHost
+        set(v) = updateActive { it.copy(lastHost = v) }
+    val port: Int get() = active?.port ?: 47390
+    val fingerprint: String? get() = active?.fingerprint
+    val token: String? get() = active?.token
     var serverName: String
-        get() = sp.getString("server_name", "PC")!!
-        set(v) = sp.edit { putString("server_name", v) }
-    var serverId: String
-        get() = sp.getString("server_id", "")!!
-        set(v) = sp.edit { putString("server_id", v) }
+        get() = active?.name ?: "PC"
+        set(v) = updateActive { it.copy(name = v) }
+    val serverId: String get() = active?.serverId.orEmpty()
+    var pcOs: String
+        get() = active?.os.orEmpty()
+        set(v) = updateActive { it.copy(os = v) }
 
     // Settings
+    /** What the PCs call this phone; empty means the system device name. */
+    var phoneName: String
+        get() = sp.getString("phone_name", "")!!
+        set(v) = sp.edit { putString("phone_name", v) }
     var frontCamera: Boolean
         get() = sp.getBoolean("front_camera", false)
         set(v) = sp.edit { putBoolean("front_camera", v) }
@@ -74,13 +157,40 @@ class Prefs(
         get() = sp.getFloat("pointer_speed", 1.4f)
         set(v) = sp.edit { putFloat("pointer_speed", v) }
 
-    fun clearPairing() =
-        sp.edit {
-            remove("hosts")
-            remove("last_host")
-            remove("fingerprint")
-            remove("token")
-            remove("server_name")
-            remove("server_id")
+    /** Forgets a PC that isn't the active one. */
+    fun removePc(id: String) {
+        pcs = pcs.filter { it.id != id }
+    }
+
+    /** Forgets the active PC; the first of the others (if any) becomes active. */
+    fun clearPairing() {
+        val id = active?.id ?: return
+        pcs = pcs.filter { it.id != id }
+        activeId = pcs.firstOrNull()?.id
+    }
+
+    /** Older versions kept one PC in separate keys. */
+    private fun migrateSinglePc() {
+        if (sp.contains("pcs")) return
+        val token = sp.getString("token", null)
+        val fingerprint = sp.getString("fingerprint", null)
+        if (token != null && fingerprint != null) {
+            val serverId = sp.getString("server_id", "")!!
+            addPc(
+                Pc(
+                    id = serverId.ifEmpty { fingerprint },
+                    name = sp.getString("server_name", "PC")!!,
+                    serverId = serverId,
+                    hosts = sp.getString("hosts", "")!!.split(',').filter { it.isNotBlank() },
+                    lastHost = sp.getString("last_host", null),
+                    port = sp.getInt("port", 47390),
+                    fingerprint = fingerprint,
+                    token = token,
+                ),
+            )
+        } else {
+            pcs = emptyList()
         }
+        sp.edit { listOf("hosts", "last_host", "port", "fingerprint", "token", "server_name", "server_id").forEach(::remove) }
+    }
 }

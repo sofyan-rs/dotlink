@@ -10,6 +10,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -40,7 +43,10 @@ import com.dotlink.ui.theme.Dotline
 import kotlinx.coroutines.launch
 
 @Composable
-fun LinkScreen(onOpenTab: (MainTab) -> Unit) {
+fun LinkScreen(
+    onOpenTab: (MainTab) -> Unit,
+    onAddPc: () -> Unit,
+) {
     val link = DotlinkApp.link
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -49,6 +55,7 @@ fun LinkScreen(onOpenTab: (MainTab) -> Unit) {
     val cameraOn by link.cameraOn.collectAsStateWithLifecycle()
     val micOn by link.micOn.collectAsStateWithLifecycle()
     val online = state is LinkState.Online
+    var pcSheet by remember { mutableStateOf(false) }
 
     val pickFiles =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -82,15 +89,18 @@ fun LinkScreen(onOpenTab: (MainTab) -> Unit) {
     TabScreen {
         ScreenTitle(
             title = link.prefs.serverName,
+            onTitleClick = { pcSheet = true },
+            titleClickLabel = "Change PC",
             subline =
                 when (state) {
                     is LinkState.Online -> "${link.host}:${link.prefs.port}"
                     LinkState.Connecting -> "Connecting…"
+                    LinkState.Disconnected -> "Disconnected · tap ↻ to reconnect"
                     else -> "Offline · retrying"
                 },
             status = if (online) "Connected" else null,
             actions = {
-                ScreenTitleAction(DotlineIcons.Sync, contentDescription = "Reconnect", onClick = { link.kick() })
+                ScreenTitleAction(DotlineIcons.Sync, contentDescription = "Reconnect", onClick = { LinkService.send(context) })
             },
         )
         QuickActionRow(
@@ -166,6 +176,7 @@ fun LinkScreen(onOpenTab: (MainTab) -> Unit) {
             }
         }
     }
+    if (pcSheet) PcSheet(state = state, onAddPc = onAddPc, onDismissRequest = { pcSheet = false })
 }
 
 @Composable

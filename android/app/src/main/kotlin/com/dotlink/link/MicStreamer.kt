@@ -62,7 +62,7 @@ class MicStreamer(
     private fun record(ws: WebSocket) {
         thread =
             Thread {
-                val chunk = RATE / 50 * 2 // 20 ms of 16-bit mono
+                val chunk = RATE / 100 * 2 // 10 ms of 16-bit mono: each chunk waits that long to fill
                 val minBuf = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                 val rec =
                     try {
@@ -72,7 +72,7 @@ class MicStreamer(
                             RATE,
                             AudioFormat.CHANNEL_IN_MONO,
                             AudioFormat.ENCODING_PCM_16BIT,
-                            maxOf(minBuf, chunk * 4),
+                            maxOf(minBuf, chunk * 8),
                         )
                     } catch (e: Exception) {
                         stop(e.message ?: "microphone unavailable")
@@ -83,7 +83,8 @@ class MicStreamer(
                     rec.startRecording()
                     while (!stopped) {
                         val n = rec.read(buf, 0, buf.size)
-                        if (n > 0 && ws.queueSize() < 64_000) ws.send(buf.toByteString(0, n))
+                        // A backlog (Wi-Fi stall) is dropped rather than played late forever.
+                        if (n > 0 && ws.queueSize() < chunk * 4) ws.send(buf.toByteString(0, n))
                     }
                 } finally {
                     rec.stop()

@@ -8,6 +8,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Intent
+import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -43,12 +44,15 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.BufferedSink
 import org.json.JSONObject
+import java.net.InetAddress
+import java.net.Socket
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import javax.net.SocketFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 
@@ -56,6 +60,9 @@ sealed interface LinkState {
     data object Unpaired : LinkState
 
     data object Offline : LinkState
+
+    /** "Disconnect for now": no retrying, and opening the app doesn't reconnect. */
+    data object Disconnected : LinkState
 
     data object Connecting : LinkState
 
@@ -87,6 +94,9 @@ class Link(
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val state = MutableStateFlow<LinkState>(if (prefs.paired) LinkState.Offline else LinkState.Unpaired)
+
+    /** Several PCs are paired and none was picked since the app started: ask which one. */
+    val choosePc = MutableStateFlow(prefs.pcs.size > 1)
     val transfers = MutableStateFlow<List<Transfer>>(emptyList())
     val cameraOn = MutableStateFlow(false)
 
@@ -105,6 +115,12 @@ class Link(
 
     /** [Prefs.themeMode], observable so every open screen re-themes at once. */
     val themeMode = MutableStateFlow(prefs.themeMode)
+
+    /** The PC wants to cast this screen but Wireless debugging is off; LinkService asks the user. */
+    val adbWifiRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 2)
+
+    /** The PC asked to turn the camera ("camera") or mic ("mic") on or off; LinkService acts on it. */
+    val streamRequests = MutableSharedFlow<Pair<String, Boolean>>(extraBufferCapacity = 8)
 
     /** One-off messages for the UI (errors, "Clipboard sent"). */
     val notices = MutableSharedFlow<String>(extraBufferCapacity = 16)
@@ -171,13 +187,19 @@ class Link(
                             val text = res.body?.string().orEmpty()
                             if (!res.isSuccessful) error(text.ifBlank { "PC answered ${res.code}" })
                             val json = JSONObject(text)
-                            prefs.hosts = hosts
-                            prefs.lastHost = host
-                            prefs.port = port
-                            prefs.fingerprint = fp
-                            prefs.token = json.getString("token")
-                            prefs.serverId = json.optString("server_id")
-                            prefs.serverName = json.optString("server_name", uri.getQueryParameter("n") ?: "PC")
+                            val serverId = json.optString("server_id")
+                            prefs.addPc(
+                                Pc(
+                                    id = serverId.ifEmpty { fp },
+                                    name = json.optString("server_name", uri.getQueryParameter("n") ?: "PC"),
+                                    serverId = serverId,
+                                    hosts = hosts,
+                                    lastHost = host,
+                                    port = port,
+                                    fingerprint = fp,
+                                    token = json.getString("token"),
+                                ),
+                            )
                             client = null
                             state.value = LinkState.Offline
                             return@runCatching prefs.serverName
@@ -190,18 +212,73 @@ class Link(
             }
         }
 
+    /** Forgets the active PC. Another paired PC, if any, becomes active (not connected yet). */
     fun unpair() {
         stop()
         prefs.clearPairing()
         client = null
-        state.value = LinkState.Unpaired
+        state.value = if (prefs.paired) LinkState.Offline else LinkState.Unpaired
+    }
+
+    /**
+     * Forgets the PC [id]. Forgetting the active one moves to another paired PC, or back to
+     * pairing when it was the last. Call from the foreground (it may start [LinkService]).
+     */
+    fun forget(id: String) {
+        if (id != prefs.active?.id) {
+            prefs.removePc(id)
+        } else if (prefs.pcs.size > 1) {
+            unpair()
+            LinkService.send(app, LinkService.ACTION_SWITCH)
+        } else {
+            LinkService.send(app, LinkService.ACTION_DISCONNECT)
+            unpair()
+        }
+    }
+
+    /** Makes [id] the active PC. Call with the link stopped; [start] connects to it. */
+    fun switchTo(id: String) {
+        prefs.activeId = id
+        client = null
+        state.value = LinkState.Offline
     }
 
     // ---------- control connection ----------
 
     fun start() {
         if (!prefs.paired || controlJob?.isActive == true) return
+        choosePc.value = false
         controlJob = scope.launch { controlLoop() }
+        watchDebugSettings()
+    }
+
+    private var debugObserver: ContentObserver? = null
+
+    /** Tells the PC when Developer options or Wireless debugging are turned on or off. */
+    private fun watchDebugSettings() {
+        if (debugObserver != null) return
+        val observer =
+            object : ContentObserver(null) {
+                override fun onChange(selfChange: Boolean) = sendInfo()
+            }
+        val resolver = app.contentResolver
+        resolver.registerContentObserver(Settings.Global.getUriFor(ADB_WIFI_ENABLED), false, observer)
+        resolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.DEVELOPMENT_SETTINGS_ENABLED), false, observer)
+        debugObserver = observer
+    }
+
+    private fun globalFlag(name: String) = runCatching { Settings.Global.getInt(app.contentResolver, name, 0) == 1 }.getOrDefault(false)
+
+    /** For casting: the model (to find this phone in `adb devices`) and the debugging switches. */
+    private fun sendInfo() {
+        val msg =
+            JSONObject()
+                .put("t", "info")
+                .put("model", Build.MODEL)
+                .put("adb_wifi", globalFlag(ADB_WIFI_ENABLED))
+                .put("dev_options", globalFlag(Settings.Global.DEVELOPMENT_SETTINGS_ENABLED))
+                .put("name", deviceName())
+        control?.send(msg.toString())
     }
 
     fun stop() {
@@ -210,6 +287,12 @@ class Link(
         control?.close(1000, null)
         control = null
         if (prefs.paired) state.value = LinkState.Offline
+    }
+
+    /** Stops the link until the user reconnects (see [LinkState.Disconnected]). */
+    fun disconnect() {
+        stop()
+        if (prefs.paired) state.value = LinkState.Disconnected
     }
 
     /** Retry right away (network changed, app opened). */
@@ -233,6 +316,8 @@ class Link(
                                 text: String,
                             ) {
                                 backoff = 1_000L
+                                // Set here too: "hello" (which we answer) can beat the assignment below.
+                                control = webSocket
                                 onControl(text)
                             }
 
@@ -293,10 +378,11 @@ class Link(
 
     /** The PC forgot this phone (`dotlink unpair`). */
     private fun revoked() {
+        val name = prefs.serverName
         prefs.clearPairing()
         client = null
-        state.value = LinkState.Unpaired
-        notices.tryEmit("The PC unpaired this phone")
+        state.value = if (prefs.paired) LinkState.Offline else LinkState.Unpaired
+        notices.tryEmit("$name forgot this phone")
     }
 
     private fun onControl(text: String) {
@@ -305,9 +391,13 @@ class Link(
             "hello" -> {
                 val name = msg.optString("name", prefs.serverName)
                 prefs.serverName = name
+                msg.optString("os").takeIf { it.isNotEmpty() }?.let { prefs.pcOs = it }
                 state.value = LinkState.Online(name)
+                sendInfo()
             }
+            "adb_wifi" -> adbWifiRequests.tryEmit(Unit)
             "clip" -> setPhoneClipboard(msg.optString("text"))
+            "camera", "mic" -> streamRequests.tryEmit(msg.optString("t") to msg.optBoolean("on"))
             "file" ->
                 scope.launch {
                     download(msg.getString("id"), msg.optString("name", "file"), msg.optLong("size", -1))
@@ -325,6 +415,11 @@ class Link(
             val cm = app.getSystemService(ClipboardManager::class.java)
             cm.setPrimaryClip(ClipData.newPlainText("Dotlink", text))
         }
+    }
+
+    /** Tells the PC that starting [kind] ("camera" | "mic") waits for a tap on our notification. */
+    fun sendStreamNeedsTap(kind: String) {
+        control?.send(JSONObject().put("t", "media").put("kind", kind).put("state", "needs_tap").toString())
     }
 
     /** Sends [text] to the PC clipboard. False when not connected. */
@@ -553,12 +648,24 @@ class Link(
         return md.digest().toHex()
     }
 
-    private fun deviceName(): String =
+    /** What the PCs call this phone: the name set in Settings, or the system one. */
+    fun deviceName(): String = prefs.phoneName.trim().ifEmpty { systemDeviceName() }
+
+    fun systemDeviceName(): String =
         Settings.Global.getString(app.contentResolver, Settings.Global.DEVICE_NAME)
             ?: "${Build.MANUFACTURER} ${Build.MODEL}"
 
+    /** Saves this phone's name and tells the connected PC (`info`). */
+    fun renamePhone(name: String) {
+        prefs.phoneName = name
+        sendInfo()
+    }
+
     companion object {
         private const val TAG = "Dotlink"
+
+        /** Settings.Global.ADB_WIFI_ENABLED, hidden from the public SDK. */
+        private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
 
         /** Trusts only the certificate whose SHA-256 is [fingerprint]; host names are ignored. */
         fun pinnedClient(
@@ -591,6 +698,7 @@ class Link(
                 .Builder()
                 .sslSocketFactory(ssl.socketFactory, tm)
                 .hostnameVerifier { _, _ -> true } // Safe: the certificate itself is pinned.
+                .socketFactory(NoDelaySocketFactory)
                 .connectTimeout(timeoutSec, TimeUnit.SECONDS)
                 .readTimeout(readTimeoutSec, TimeUnit.SECONDS)
                 .pingInterval(15, TimeUnit.SECONDS)
@@ -600,3 +708,39 @@ class Link(
 }
 
 fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+/**
+ * Sockets with TCP_NODELAY. Remote moves, Shell keystrokes and control messages are tiny;
+ * Nagle's algorithm would hold each one back until the previous was acknowledged.
+ */
+private object NoDelaySocketFactory : SocketFactory() {
+    private val system = getDefault()
+
+    private fun Socket.noDelay() = apply { tcpNoDelay = true }
+
+    override fun createSocket(): Socket = system.createSocket().noDelay()
+
+    override fun createSocket(
+        host: String,
+        port: Int,
+    ): Socket = system.createSocket(host, port).noDelay()
+
+    override fun createSocket(
+        host: String,
+        port: Int,
+        localHost: InetAddress,
+        localPort: Int,
+    ): Socket = system.createSocket(host, port, localHost, localPort).noDelay()
+
+    override fun createSocket(
+        host: InetAddress,
+        port: Int,
+    ): Socket = system.createSocket(host, port).noDelay()
+
+    override fun createSocket(
+        address: InetAddress,
+        port: Int,
+        localAddress: InetAddress,
+        localPort: Int,
+    ): Socket = system.createSocket(address, port, localAddress, localPort).noDelay()
+}

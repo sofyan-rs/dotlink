@@ -1,10 +1,12 @@
 /**
- * Shown while no PC is paired: scan the QR code from `dotlink pair`, or paste its link.
+ * Shown while no PC is paired, or to add another PC: scan the QR code from `dotlink pair`, or
+ * paste its link.
  */
 package com.dotlink.ui.pair
 
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
@@ -71,7 +73,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 
 /** Two linked devices, drawn in dots. */
-private val LinkArt =
+internal val LinkArt =
     listOf(
         "XXXXX.........XXX",
         "X...X.........X.X",
@@ -86,6 +88,8 @@ private val LinkArt =
 fun PairScreen(
     initialLink: String? = null,
     onPaired: () -> Unit,
+    /** Set when adding another PC: back and the Cancel button leave without pairing. */
+    onCancel: (() -> Unit)? = null,
 ) {
     val link = DotlinkApp.link
     val context = LocalContext.current
@@ -115,6 +119,9 @@ fun PairScreen(
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) scanning = true else error = "Camera permission is needed to scan. Paste the link instead."
         }
+    BackHandler(enabled = scanning || onCancel != null) {
+        if (scanning) scanning = false else onCancel?.invoke()
+    }
 
     Column(
         Modifier
@@ -143,16 +150,16 @@ fun PairScreen(
         Text("DOTLINK", style = Dotline.type.dotL, color = Dotline.colors.ink)
         Spacer(Modifier.height(Dotline.space.s2))
         Text(
-            "Files, clipboard, remote, shell, webcam and mic between this phone and your Hyprland PC.",
+            "Files, clipboard, remote, shell, webcam and mic between this phone and your PC.",
             style = Dotline.type.body,
             color = Dotline.colors.inkMuted,
         )
         Spacer(Modifier.height(Dotline.space.s5))
-        SectionLabel("On the PC", Modifier.padding(start = Dotline.space.s4, bottom = Dotline.space.s2))
+        SectionLabel("On the PC", Modifier.padding(bottom = Dotline.space.s2))
         ListGroup {
-            ListRow(title = "dotlink daemon", subtitle = "Runs in the background (exec-once)", subtitleIsData = false, leadingIcon = DotlineIcons.Terminal)
+            ListRow(title = "Open Dotlink", subtitle = "Or run dotlink daemon in the background", leadingIcon = DotlineIcons.Monitor)
             ListDivider()
-            ListRow(title = "dotlink pair", subtitle = "Shows a QR code for 5 minutes", leadingIcon = DotlineIcons.Scan)
+            ListRow(title = "Pair a phone", subtitle = "Or run dotlink pair · the code lasts 5 minutes", leadingIcon = DotlineIcons.Scan)
         }
         Spacer(Modifier.height(Dotline.space.s5))
         PrimaryButton(
@@ -182,6 +189,10 @@ fun PairScreen(
             onClick = { pair(pasted.text.toString()) },
             modifier = Modifier.fillMaxWidth(),
         )
+        if (onCancel != null) {
+            Spacer(Modifier.height(Dotline.space.s2))
+            SecondaryButton(text = "Cancel", onClick = onCancel, modifier = Modifier.fillMaxWidth())
+        }
         Spacer(Modifier.height(Dotline.space.s6))
     }
 }

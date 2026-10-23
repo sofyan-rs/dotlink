@@ -2,13 +2,14 @@ package com.dotlink.link
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Matrix
+import android.graphics.Canvas
 import android.util.Size
 import android.view.Surface
 import android.util.Log
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
@@ -18,6 +19,7 @@ import androidx.lifecycle.LifecycleOwner
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,8 +53,14 @@ class CameraStreamer(
     @Volatile private var ready = false
 
     @Volatile private var stopped = false
-    private var lastFrame = 0L
-    private val jpeg = ByteArrayOutputStream(512 * 1024)
+    /** When the next frame is due (ms). */
+    private var nextFrame = 0L
+    private val jpeg = JpegBuffer(512 * 1024)
+
+    // Reused for every frame (analyzer thread only): a 1080p frame is 8 MB of pixels, and a
+    // new bitmap per frame kept the GC busy at 30 fps.
+    private var pixels: Bitmap? = null
+    private var mirrored: Bitmap? = null
 
     fun start() {
         val prefs = link.prefs
@@ -131,32 +139,28 @@ class CameraStreamer(
             image.use {
                 val ws = socket ?: return@use
                 val now = System.currentTimeMillis()
-                // Skip when too soon or when the network is behind (keeps latency low).
-                if (!ready || now - lastFrame < minInterval || ws.queueSize() > 1_500_000) return@use
-                lastFrame = now
-                val raw = it.toBitmap()
-                val bmp =
-                    if (link.cameraMirror.value) {
-                        val flip = Matrix().apply { preScale(-1f, 1f) }
-                        Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, flip, false).also { raw.recycle() }
-                    } else {
-                        raw
-                    }
+                // Skip when too soon, or while the last frame is still waiting to go out: frames
+                // that queue up behind it would only reach the PC later and later. "Too soon" goes
+                // by a schedule with some slack: with a plain minimum gap, a 30 fps camera's
+                // frames that came a millisecond early were dropped, and 30 fps became ~20.
+                if (!ready || nextFrame - now > minInterval / 4 || ws.queueSize() > 0) return@use
+                nextFrame = maxOf(nextFrame, now - minInterval) + minInterval
+                val raw = pixelsOf(it)
+                val bmp = if (link.cameraMirror.value) mirror(raw) else raw
                 jpeg.reset()
                 bmp.compress(Bitmap.CompressFormat.JPEG, 75, jpeg)
-                ws.send(jpeg.toByteArray().toByteString())
+                ws.send(jpeg.bytes())
                 if (now - lastLog > 2000) {
                     lastLog = now
                     Log.d("Dotlink", "camera frame ${bmp.width}x${bmp.height} jpeg=${jpeg.size()}B")
                 }
-                // The preview shows exactly this frame (~12 fps is plenty for framing the shot).
-                // Published bitmaps are left to the GC: the UI may still be drawing the last one.
+                // The preview shows exactly this frame (~12 fps is plenty for framing the shot), as
+                // a small copy of its own: the reused bitmaps change under the UI otherwise.
                 if (link.cameraPreviewActive.value && now - lastPreview > 80) {
                     lastPreview = now
-                    link.cameraFrame.value = bmp
-                } else {
-                    bmp.recycle()
+                    link.cameraFrame.value = previewOf(bmp)
                 }
+                if (raw !== pixels) raw.recycle()
             }
         }
         analysis = a
@@ -179,6 +183,35 @@ class CameraStreamer(
                 c.cameraControl.setZoomRatio(ratio.coerceIn(zoom?.minZoomRatio ?: 1f, zoom?.maxZoomRatio ?: 1f))
             }
         }
+    }
+
+    /** The frame's RGBA pixels, in a bitmap reused from frame to frame when the rows are unpadded. */
+    private fun pixelsOf(image: ImageProxy): Bitmap {
+        val plane = image.planes[0]
+        val (w, h) = image.width to image.height
+        if (plane.pixelStride != 4 || plane.rowStride != w * 4) return image.toBitmap()
+        val bmp = pixels?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { pixels = it }
+        plane.buffer.rewind()
+        bmp.copyPixelsFromBuffer(plane.buffer)
+        return bmp
+    }
+
+    /** [src] flipped left-right, into a reused bitmap. */
+    private fun mirror(src: Bitmap): Bitmap {
+        val out =
+            mirrored?.takeIf { it.width == src.width && it.height == src.height }
+                ?: Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888).also { mirrored = it }
+        Canvas(out).apply {
+            scale(-1f, 1f, src.width / 2f, 0f)
+            drawBitmap(src, 0f, 0f, null)
+        }
+        return out
+    }
+
+    private fun previewOf(bmp: Bitmap): Bitmap {
+        val scale = PREVIEW_SIZE / maxOf(bmp.width, bmp.height)
+        if (scale >= 1f) return bmp.copy(Bitmap.Config.ARGB_8888, false)
+        return Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true)
     }
 
     /** Re-binds with the current settings (e.g. after switching front/back). */
@@ -206,6 +239,16 @@ class CameraStreamer(
             onStopped(error)
         }
     }
+}
+
+/** Longest side of the preview bitmaps; the Camera tab's box is smaller than that anyway. */
+private const val PREVIEW_SIZE = 960f
+
+/** A JPEG buffer that hands out its bytes with one copy (not two, as toByteArray would). */
+private class JpegBuffer(
+    size: Int,
+) : ByteArrayOutputStream(size) {
+    fun bytes(): ByteString = buf.toByteString(0, count)
 }
 
 /** Picture rotation in degrees → the CameraX target rotation that produces it. */

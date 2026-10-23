@@ -1,4 +1,4 @@
-//! Desktop clipboard, on any Linux desktop.
+//! Clipboard on any Linux desktop.
 //!
 //! - Wayland compositors with the data-control protocol (Hyprland, Sway, niri, KDE, COSMIC…):
 //!   `wl-paste --watch` / `wl-copy`, event driven.
@@ -6,10 +6,11 @@
 //!   polled twice a second. On GNOME this goes through XWayland, which Mutter keeps in sync
 //!   with the Wayland clipboard.
 
+use super::super::polling_clipboard::shared as x11;
 use crate::server::App;
 use base64::Engine;
 use std::process::Stdio;
-use std::sync::{mpsc, Arc, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -21,7 +22,6 @@ enum Backend {
 }
 
 static BACKEND: OnceLock<Backend> = OnceLock::new();
-static X11: OnceLock<X11Clipboard> = OnceLock::new();
 
 /// Watches the desktop clipboard and pushes text changes to the phone.
 pub async fn watch(app: Arc<App>) {
@@ -39,7 +39,7 @@ pub async fn watch(app: Arc<App>) {
     tracing::info!("clipboard: using the X11 clipboard");
     let mut changes = x11().subscribe();
     while let Some(text) = changes.recv().await {
-        push_to_phone(&app, text);
+        app.clip_from_desktop(text);
     }
 }
 
@@ -75,14 +75,6 @@ fn backend() -> Backend {
     )
 }
 
-fn push_to_phone(app: &App, text: String) {
-    if text.is_empty() || !app.remember_clip(&text) {
-        return;
-    }
-    tracing::info!("clipboard to phone ({} chars)", text.chars().count());
-    app.send_control(serde_json::json!({ "t": "clip", "text": text }));
-}
-
 // ---------- Wayland (wl-clipboard) ----------
 
 /// Runs while wl-clipboard works (restarting it if it dies). Returns only when it can't work
@@ -112,7 +104,7 @@ async fn watch_wayland(app: &Arc<App>) -> String {
                 continue;
             }
             let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(line.trim()) else { continue };
-            push_to_phone(app, String::from_utf8_lossy(&bytes).into_owned());
+            app.clip_from_desktop(String::from_utf8_lossy(&bytes).into_owned());
         }
         let _ = child.wait().await;
         // Exiting right away without ever reporting means it can't work here (no data-control).
@@ -126,101 +118,7 @@ async fn watch_wayland(app: &Arc<App>) -> String {
     }
 }
 
-// ---------- X11 / XWayland (arboard) ----------
-
-enum X11Cmd {
-    Get(mpsc::Sender<Option<String>>),
-    Set(String, mpsc::Sender<anyhow::Result<()>>),
-}
-
-/// One thread owns the X11 clipboard: X11 serves pasted data from the owning process, so the
-/// handle must live as long as the daemon. It also polls for changes made by other apps.
-struct X11Clipboard {
-    cmds: mpsc::Sender<X11Cmd>,
-    subscribers: std::sync::Mutex<Vec<tokio::sync::mpsc::UnboundedSender<String>>>,
-}
-
-fn x11() -> &'static X11Clipboard {
-    X11.get_or_init(|| {
-        let (cmds, rx) = mpsc::channel::<X11Cmd>();
-        std::thread::Builder::new()
-            .name("dotlink-clipboard".into())
-            .spawn(move || x11_thread(rx))
-            .expect("spawn clipboard thread");
-        X11Clipboard { cmds, subscribers: std::sync::Mutex::new(Vec::new()) }
-    })
-}
-
-impl X11Clipboard {
-    fn subscribe(&self) -> tokio::sync::mpsc::UnboundedReceiver<String> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        self.subscribers.lock().unwrap().push(tx);
-        rx
-    }
-
-    fn get(&self) -> Option<String> {
-        let (tx, rx) = mpsc::channel();
-        self.cmds.send(X11Cmd::Get(tx)).ok()?;
-        rx.recv_timeout(Duration::from_secs(2)).ok().flatten()
-    }
-
-    fn set(&self, text: String) -> anyhow::Result<()> {
-        let (tx, rx) = mpsc::channel();
-        self.cmds.send(X11Cmd::Set(text, tx))?;
-        rx.recv_timeout(Duration::from_secs(2))?
-    }
-}
-
-fn x11_thread(cmds: mpsc::Receiver<X11Cmd>) {
-    let mut clipboard = None;
-    let mut last: Option<String> = None;
-    loop {
-        if clipboard.is_none() {
-            match arboard::Clipboard::new() {
-                Ok(c) => clipboard = Some(c),
-                Err(e) => {
-                    tracing::debug!("clipboard: X11 not ready: {e}");
-                    // Still answer requests while waiting for the display.
-                    if let Ok(cmd) = cmds.recv_timeout(Duration::from_secs(2)) {
-                        match cmd {
-                            X11Cmd::Get(reply) => drop(reply.send(None)),
-                            X11Cmd::Set(_, reply) => drop(reply.send(Err(anyhow::anyhow!("X11 clipboard unavailable: {e}")))),
-                        }
-                    }
-                    continue;
-                }
-            }
-        }
-        let cb = clipboard.as_mut().unwrap();
-        match cmds.recv_timeout(Duration::from_millis(500)) {
-            Ok(X11Cmd::Get(reply)) => drop(reply.send(cb.get_text().ok())),
-            Ok(X11Cmd::Set(text, reply)) => {
-                let result = cb.set_text(text.clone()).map_err(anyhow::Error::from);
-                if result.is_ok() {
-                    last = Some(text); // our own write is not a change to report
-                }
-                drop(reply.send(result));
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Poll: other apps changed the clipboard?
-                if let Ok(text) = cb.get_text() {
-                    if last.as_deref() != Some(text.as_str()) {
-                        let first = last.is_none();
-                        last = Some(text.clone());
-                        if !first {
-                            if let Some(me) = X11.get() {
-                                me.subscribers.lock().unwrap().retain(|s| s.send(text.clone()).is_ok());
-                            }
-                        }
-                    }
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => return,
-        }
-    }
-}
-
-fn which(bin: &str) -> bool {
+pub(super) fn which(bin: &str) -> bool {
     std::env::var_os("PATH")
         .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
         .unwrap_or(false)

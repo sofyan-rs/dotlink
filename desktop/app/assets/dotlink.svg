@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<!-- 416px tile with a 48px margin, like other GNOME app icons -->
+<g transform="translate(48 48) scale(0.8125)">
+<rect width="512" height="512" rx="112" fill="#000000"/>
+<circle cx="144" cy="144" r="21" fill="#FFFFFF"/>
+<circle cx="200" cy="144" r="21" fill="#FFFFFF"/>
+<circle cx="256" cy="144" r="21" fill="#FFFFFF"/>
+<circle cx="144" cy="200" r="21" fill="#FFFFFF"/>
+<circle cx="256" cy="200" r="21" fill="#FFFFFF"/>
+<circle cx="144" cy="256" r="21" fill="#FFFFFF"/>
+<circle cx="200" cy="256" r="21" fill="#FFFFFF"/>
+<circle cx="256" cy="256" r="21" fill="#E5211C"/>
+<circle cx="312" cy="256" r="21" fill="#FFFFFF"/>
+<circle cx="368" cy="256" r="21" fill="#FFFFFF"/>
+<circle cx="256" cy="312" r="21" fill="#FFFFFF"/>
+<circle cx="368" cy="312" r="21" fill="#FFFFFF"/>
+<circle cx="256" cy="368" r="21" fill="#FFFFFF"/>
+<circle cx="312" cy="368" r="21" fill="#FFFFFF"/>
+<circle cx="368" cy="368" r="21" fill="#FFFFFF"/>
+</g>
+</svg>

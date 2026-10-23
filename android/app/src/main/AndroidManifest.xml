@@ -6,6 +6,8 @@
     <!-- mDNS: find the PC again when its address changes. Also qualifies the connectedDevice service type. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Wi-Fi locks: no Wi-Fi power saving while the app is used or streams (see LinkService). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -63,6 +65,15 @@
 
         <activity
             android:name=".ui.ClipboardActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Dotlink.Translucent" />
+
+        <!-- Behind the "Start" button when the PC asks for the webcam or mic. -->
+        <activity
+            android:name=".ui.StreamActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:noHistory="true"

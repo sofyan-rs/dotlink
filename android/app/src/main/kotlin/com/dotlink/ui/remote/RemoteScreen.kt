@@ -115,15 +115,21 @@ private class InputChannel(
         ws?.send(msg.toString())
     }
 
+    // Moves and scrolls come with every touch event (up to 120 a second): plain strings, no
+    // JSONObject per event.
     fun move(
         x: Float,
         y: Float,
-    ) = send(JSONObject().put("t", "move").put("x", x.toDouble()).put("y", y.toDouble()))
+    ) {
+        ws?.send("{\"t\":\"move\",\"x\":$x,\"y\":$y}")
+    }
 
     fun scroll(
         x: Float,
         y: Float,
-    ) = send(JSONObject().put("t", "scroll").put("x", x.toDouble()).put("y", y.toDouble()))
+    ) {
+        ws?.send("{\"t\":\"scroll\",\"x\":$x,\"y\":$y}")
+    }
 
     fun button(
         b: String,
@@ -207,6 +213,8 @@ fun RemoteScreen() {
         }
         Spacer(Modifier.height(Dotline.space.s2))
         KeyStrip(
+            // Labels follow the PC's OS; read again whenever the link state changes (hello).
+            modifiers = remember(state) { modifiers(link.prefs.pcOs) },
             mods = mods,
             onMod = { m -> if (m in mods) mods.remove(m) else mods.add(m) },
             onKey = ::sendKey,
@@ -317,7 +325,16 @@ private fun MouseButton(
     }
 }
 
-private val MODIFIERS = listOf("CTRL", "ALT", "SHIFT", "SUPER")
+/**
+ * The modifier chips for the PC's OS as (label, key). The keys are the same everywhere (the PC
+ * maps SUPER to the Windows / Command key and ALT to Option); only the labels change.
+ */
+private fun modifiers(os: String): List<Pair<String, String>> =
+    when (os) {
+        "macos" -> listOf("⌘ CMD" to "SUPER", "⌥ OPT" to "ALT", "⌃ CTRL" to "CTRL", "⇧ SHIFT" to "SHIFT")
+        "windows" -> listOf("CTRL" to "CTRL", "ALT" to "ALT", "SHIFT" to "SHIFT", "WIN" to "SUPER")
+        else -> listOf("CTRL" to "CTRL", "ALT" to "ALT", "SHIFT" to "SHIFT", "SUPER" to "SUPER")
+    }
 private val KEYS =
     listOf(
         "ESC" to "ESC",
@@ -338,6 +355,7 @@ private val KEYS =
 
 @Composable
 private fun KeyStrip(
+    modifiers: List<Pair<String, String>>,
     mods: List<String>,
     onMod: (String) -> Unit,
     onKey: (String) -> Unit,
@@ -352,7 +370,7 @@ private fun KeyStrip(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         keyboardField()
-        MODIFIERS.forEach { m -> KeyChip(m, active = m in mods) { onMod(m) } }
+        modifiers.forEach { (label, key) -> KeyChip(label, active = key in mods) { onMod(key) } }
         KEYS.forEach { (label, key) -> KeyChip(label) { onKey(key) } }
     }
 }

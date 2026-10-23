@@ -183,6 +183,11 @@ object DotlineIcons {
     /** VAULTS tab. Lucide: sliders-horizontal. */
     val Sliders: ImageVector by lazy { lineIcon("Sliders", "M10 5H3M12 19H3M14 3v4M16 17v4M21 12h-9M21 19h-5M21 5h-7M8 10v4M8 12H3") }
 
+    /** Settings tab. Lucide: settings-2. */
+    val Settings: ImageVector by lazy {
+        lineIcon("Settings", "M14 17H5M19 7h-9M14 17a3 3 0 1 0 6 0a3 3 0 1 0 -6 0zM4 7a3 3 0 1 0 6 0a3 3 0 1 0 -6 0z")
+    }
+
     /** Lucide: file-plus. */
     val NewNote: ImageVector by lazy {
         lineIcon(
@@ -249,7 +254,7 @@ object DotlineIcons {
     val Terminal: ImageVector by lazy { lineIcon("Terminal", "M4 17l6-6-6-6M12 19h8") }
 
     /** Phone camera. Lucide: camera. */
-    val Camera: ImageVector by lazy { lineIcon("Camera", "M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3zM9 13a3 3 0 1 0 6 0a3 3 0 1 0 -6 0z") }
+    val Camera: ImageVector by lazy { lineIcon("Camera", "M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4zM9 13a3 3 0 1 0 6 0a3 3 0 1 0 -6 0z") }
 
     /** Phone microphone. Lucide: mic. */
     val Mic: ImageVector by lazy { lineIcon("Mic", "M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2M12 19v3") }
@@ -261,7 +266,7 @@ object DotlineIcons {
     val Mouse: ImageVector by lazy { lineIcon("Mouse", "M5 9a7 7 0 0 1 14 0v6a7 7 0 0 1-14 0zM12 6v4") }
 
     /** Keyboard. Lucide: keyboard. */
-    val Keyboard: ImageVector by lazy { lineIcon("Keyboard", "M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8") }
+    val Keyboard: ImageVector by lazy { lineIcon("Keyboard", "M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10") }
 
     /** Send to the PC. Lucide: upload. */
     val Upload: ImageVector by lazy { lineIcon("Upload", "M12 15V3M7 8l5-5 5 5M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4") }
@@ -278,21 +283,39 @@ object DotlineIcons {
     /** Rotate the picture. Lucide: rotate-cw. */
     val Rotate: ImageVector by lazy { lineIcon("Rotate", "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5") }
 
-    /** Mirror the picture. Lucide: flip-horizontal-2. */
+    /** Mirror the picture. Lucide: flip-vertical-2 (since Lucide 1.0 the left/right mirror has this name). */
     val FlipHorizontal: ImageVector by lazy {
-        lineIcon("FlipHorizontal", "M3 7l5 5-5 5zM21 7l-5 5 5 5zM12 20v2M12 14v2M12 8v2M12 2v2")
+        lineIcon("FlipHorizontal", "M20.288 16.703A1 1 0 0 0 22 16V8a1 1 0 0 0-1.712-.703l-3.99 3.991a1 1 0 0 0-.001 1.424zM3.712 16.703A1 1 0 0 1 2 16V8a1 1 0 0 1 1.712-.703l3.99 3.991a1 1 0 0 1 .001 1.424zM12 2v2M12 8v2M12 14v2M12 20v2")
     }
 
     /** Camera torch. Lucide: flashlight. */
     val Flashlight: ImageVector by lazy {
-        lineIcon("Flashlight", "M18 6c0 2-2 2-2 4v10a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V10c0-2-2-2-2-4V2h12zM6 6h12M12 12v.01")
+        lineIcon("Flashlight", "M17 2a1 1 0 0 1 1 1v4a3 3 0 0 1-.6 1.8l-.6.8A4 4 0 0 0 16 12v8a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-8a4 4 0 0 0-.8-2.4l-.6-.8A3 3 0 0 1 6 7V3a1 1 0 0 1 1-1zM6 6h12M12 13v1")
     }
 
     /** Camera zoom. Lucide: zoom-in. */
     val ZoomIn: ImageVector by lazy { lineIcon("ZoomIn", "M21 21l-4.34-4.34M3 11a8 8 0 1 0 16 0a8 8 0 1 0 -16 0zM11 8v6M8 11h6") }
 
     /** Front / back camera. Lucide: switch-camera. */
-    val SwitchCamera: ImageVector by lazy { lineIcon("SwitchCamera", "M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5M15 15l-3 3 3 3M9 3l3 3-3 3") }
+    val SwitchCamera: ImageVector by lazy { lineIcon("SwitchCamera", "M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5M9 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0zM18 22l-3-3 3-3M6 2l3 3-3 3") }
+
+    /** Check for updates. Lucide: refresh-cw. */
+    val Refresh: ImageVector by lazy {
+        lineIcon("Refresh", "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5")
+    }
+
+    /** Report a bug. Lucide: bug. */
+    val Bug: ImageVector by lazy {
+        lineIcon("Bug", "M12 20v-9M14 7a4 4 0 0 1 4 4v3a6 6 0 0 1-12 0v-3a4 4 0 0 1 4-4zM14.12 3.88 16 2M21 21a4 4 0 0 0-3.81-4M21 5a4 4 0 0 1-3.55 3.97M22 13h-4M3 21a4 4 0 0 1 3.81-4M3 5a4 4 0 0 0 3.55 3.97M6 13H2M8 2l1.88 1.88M9 7.13V6a3 3 0 1 1 6 0v1.13")
+    }
+
+    /** About the app. Lucide: info. */
+    val Info: ImageVector by lazy { lineIcon("Info", "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0zM12 16v-4M12 8h.01") }
+
+    /** A website. Lucide: globe. */
+    val Globe: ImageVector by lazy {
+        lineIcon("Globe", "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0zM12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20")
+    }
 }
 
 /**

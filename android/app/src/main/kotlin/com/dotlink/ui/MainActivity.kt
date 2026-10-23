@@ -1,5 +1,5 @@
 /**
- * The main Activity: pairing when no PC is paired, else the four tabs.
+ * The main Activity: pairing when no PC is paired (or another PC is being added), else the tabs.
  */
 package com.dotlink.ui
 
@@ -43,6 +43,7 @@ import com.dotlink.ui.dotline.bottomNavHeight
 import com.dotlink.ui.dotline.showDotlineSnackbar
 import com.dotlink.ui.camera.CameraScreen
 import com.dotlink.ui.home.LinkScreen
+import com.dotlink.ui.pair.ChoosePcScreen
 import com.dotlink.ui.pair.PairScreen
 import com.dotlink.ui.remote.RemoteScreen
 import com.dotlink.ui.settings.SettingsScreen
@@ -75,7 +76,7 @@ class MainActivity : ComponentActivity() {
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
             }
             DotlinkTheme(dark = dark) {
-                DotlinkRoot(pairLink.value)
+                DotlinkRoot(pairLink.value, onPairLinkUsed = { pairLink.value = null })
             }
         }
     }
@@ -87,16 +88,15 @@ class MainActivity : ComponentActivity() {
 
     private fun handleLink(intent: Intent?) {
         val data = intent?.data?.takeIf { it.scheme == "dotlink" } ?: return
-        if (link.prefs.paired) {
-            link.notices.tryEmit("Already paired with ${link.prefs.serverName}. Unpair in Settings first.")
-        } else {
-            pairLink.value = data.toString()
-        }
+        // Already paired: this adds another PC.
+        pairLink.value = data.toString()
     }
 
     override fun onResume() {
         super.onResume()
-        if (link.prefs.paired) LinkService.send(this)
+        // After "Disconnect for now" only Reconnect brings the link back.
+        // Nor before a PC is picked (several paired).
+        if (link.prefs.paired && link.state.value !is LinkState.Disconnected && !link.choosePc.value) LinkService.send(this)
     }
 
     // Android only lets the focused app read the clipboard, so we send it when we gain focus.
@@ -108,21 +108,55 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DotlinkRoot(pairLink: String?) {
+private fun DotlinkRoot(
+    pairLink: String?,
+    onPairLinkUsed: () -> Unit,
+) {
     val link = DotlinkApp.link
     val context = LocalContext.current
     val state by link.state.collectAsStateWithLifecycle()
+    val choosePc by link.choosePc.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(Unit) {
         link.notices.collect { snackbar.showDotlineSnackbar(it, actionLabel = null) }
     }
+    // Pairing another PC while one is paired already.
+    var addingPc by rememberSaveable { mutableStateOf(false) }
+    // Pairing or choosing a PC: no tabs (and no tab bar under the snackbar).
+    val fullScreen = state is LinkState.Unpaired || addingPc || pairLink != null || choosePc
     Box(Modifier.fillMaxSize().background(Dotline.colors.bg)) {
         if (state is LinkState.Unpaired) {
-            PairScreen(initialLink = pairLink, onPaired = { LinkService.send(context) })
+            PairScreen(initialLink = pairLink, onPaired = {
+                onPairLinkUsed()
+                LinkService.send(context)
+            })
+        } else if (addingPc || pairLink != null) {
+            fun close() {
+                addingPc = false
+                onPairLinkUsed()
+            }
+            PairScreen(
+                initialLink = pairLink,
+                onPaired = {
+                    close()
+                    // The new PC is the active one now: leave the old one.
+                    LinkService.send(context, LinkService.ACTION_SWITCH)
+                },
+                onCancel = ::close,
+            )
+        } else if (choosePc) {
+            ChoosePcScreen(
+                onChoose = { id ->
+                    // Active first, so the service connects straight to it.
+                    link.switchTo(id)
+                    LinkService.send(context)
+                },
+                onAddPc = { addingPc = true },
+            )
         } else {
             var tab by rememberSaveable { mutableStateOf(MainTab.Link) }
             when (tab) {
-                MainTab.Link -> LinkScreen(onOpenTab = { tab = it })
+                MainTab.Link -> LinkScreen(onOpenTab = { tab = it }, onAddPc = { addingPc = true })
                 MainTab.Remote -> RemoteScreen()
                 MainTab.Shell -> ShellScreen()
                 MainTab.Camera -> CameraScreen()
@@ -144,7 +178,7 @@ private fun DotlinkRoot(pairLink: String?) {
             modifier =
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = if (state is LinkState.Unpaired) Dotline.space.s4 else bottomNavHeight()),
+                    .padding(bottom = if (fullScreen) Dotline.space.s4 else bottomNavHeight()),
         )
     }
 }
