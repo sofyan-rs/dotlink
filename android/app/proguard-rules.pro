@@ -1,0 +1,4 @@
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-keepclassmembers class com.dotlink.ui.shell.TermBridge { @android.webkit.JavascriptInterface <methods>; }
