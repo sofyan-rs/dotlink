@@ -24,6 +24,11 @@ use std::time::Duration;
 /// Line height of a row's title, so things beside it can line up with it.
 const TITLE_LINE: f32 = 22.;
 
+/// Corner radius of controls (buttons, nav items, segmented control) and of cards: slight,
+/// not pills.
+const RADIUS: f32 = 8.;
+const CARD_RADIUS: f32 = 12.;
+
 /// Height of every control (pills, text fields), so they line up side by side.
 const CONTROL: f32 = 38.;
 
@@ -279,7 +284,7 @@ impl MainView {
                 .gap(px(12.))
                 .px(px(14.))
                 .py(px(9.))
-                .rounded(px(999.))
+                .rounded(px(RADIUS))
                 .cursor_pointer()
                 .text_color(if selected { p.ink } else { p.ink_muted })
                 .when(selected, |d| d.bg(p.nav_selected).font_weight(FontWeight::MEDIUM))
@@ -404,7 +409,7 @@ impl MainView {
                     .items_center()
                     .gap(px(14.))
                     .py(px(28.))
-                    .rounded(px(16.))
+                    .rounded(px(CARD_RADIUS))
                     .border_1()
                     .border_dashed()
                     .border_color(p.line_strong)
@@ -1052,7 +1057,7 @@ enum Kind {
     Danger,
 }
 
-/// Dotline button: a pill.
+/// Dotline button.
 fn pill(p: &Palette, id: impl Into<gpui::ElementId>, label: impl Into<SharedString>, kind: Kind) -> Stateful<Div> {
     let (bg, fg, hover): (Hsla, Hsla, Hsla) = match kind {
         Kind::Primary => (p.ink, p.on_ink, p.ink.opacity(0.85)),
@@ -1067,7 +1072,7 @@ fn pill(p: &Palette, id: impl Into<gpui::ElementId>, label: impl Into<SharedStri
         .px(px(16.))
         .flex()
         .items_center()
-        .rounded(px(999.))
+        .rounded(px(RADIUS))
         .bg(bg)
         .text_color(fg)
         .font_weight(FontWeight::MEDIUM)
@@ -1087,7 +1092,7 @@ fn segmented(
     on_select: impl Fn(usize, &mut App) + 'static,
 ) -> Div {
     let on_select = std::rc::Rc::new(on_select);
-    div().flex().gap(px(4.)).p(px(4.)).rounded(px(999.)).bg(p.surface_raised).children(options.iter().enumerate().map(
+    div().flex().gap(px(4.)).p(px(4.)).rounded(px(RADIUS)).bg(p.surface_raised).children(options.iter().enumerate().map(
         |(i, label)| {
             let on_select = on_select.clone();
             let on = i == selected;
@@ -1097,7 +1102,8 @@ fn segmented(
                 .px(px(16.))
                 .flex()
                 .items_center()
-                .rounded(px(999.))
+                // Inside the well's 4 px padding, so its corners follow the well's.
+                .rounded(px(RADIUS - 4.))
                 .font_family(MONO)
                 .text_size(px(12.))
                 .cursor_pointer()
@@ -1148,7 +1154,7 @@ fn section_with<A: IntoElement>(p: &Palette, label: &str, action: Option<A>, bod
 
 /// A rounded card holding rows (Dotline list group).
 fn group(p: &Palette) -> Div {
-    div().flex().flex_col().rounded(px(16.)).bg(p.surface).border_1().border_color(p.line).overflow_hidden()
+    div().flex().flex_col().rounded(px(CARD_RADIUS)).bg(p.surface).border_1().border_color(p.line).overflow_hidden()
 }
 
 fn row(_p: &Palette) -> Div {
@@ -1289,7 +1295,7 @@ fn qr(data: &str, side: f32) -> impl IntoElement {
         Some(c) => (c.width(), c.to_colors().into_iter().map(|m| m == qrcode::Color::Dark).collect::<Vec<_>>()),
         None => (0, Vec::new()),
     };
-    div().flex_none().size(px(side)).rounded(px(16.)).bg(gpui::white()).p(px(14.)).child(
+    div().flex_none().size(px(side)).rounded(px(CARD_RADIUS)).bg(gpui::white()).p(px(14.)).child(
         canvas(
             |_, _, _| {},
             move |bounds: Bounds<gpui::Pixels>, _, window, _| {

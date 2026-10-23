@@ -128,8 +128,9 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
         t.font_family = SharedString::from(SANS);
         t.mono_font_family = SharedString::from(MONO);
         t.font_size = px(15.);
-        t.radius = px(16.);
-        t.radius_lg = px(28.);
+        // Text fields and popovers match the window's slight corners (window.rs RADIUS).
+        t.radius = px(8.);
+        t.radius_lg = px(12.);
         t.background = p.bg;
         t.foreground = p.ink;
         t.border = p.line;
