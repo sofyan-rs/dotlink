@@ -238,6 +238,9 @@ async fn launch(app: &Arc<App>, name: &str, serial: &str, usb: bool) -> Result<(
     }
     let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true).spawn()?;
     let mut stderr = child.stderr.take().unwrap();
+    // Ends scrcpy's whole process tree with the cast (see ProcessTree).
+    #[cfg(windows)]
+    let tree = child.id().and_then(crate::platform::ProcessTree::new);
     let (stop_tx, stop_rx) = oneshot::channel();
     *app.cast.stop.lock().unwrap() = Some(stop_tx);
     set(app, CastState::Casting { device: name.to_string(), usb });
@@ -257,6 +260,8 @@ async fn launch(app: &Arc<App>, name: &str, serial: &str, usb: bool) -> Result<(
                 None
             }
         };
+        #[cfg(windows)]
+        drop(tree);
         app.cast.stop.lock().unwrap().take();
         tracing::info!("cast of {name} ended");
         // Closing the window is a normal end; failing within seconds is an error to show.

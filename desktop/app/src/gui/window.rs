@@ -836,6 +836,8 @@ impl MainView {
                 .child(
                     div()
                         .flex_1()
+                        // Narrower than its text, so a long detail wraps instead of widening the card.
+                        .min_w_0()
                         .flex()
                         .flex_col()
                         .gap(px(2.))

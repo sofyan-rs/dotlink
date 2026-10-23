@@ -1,5 +1,6 @@
 //! What the features need from Windows: an inbound firewall rule for the port, on a Private
-//! network. The fix asks for administrator rights once (UAC).
+//! network (its fix asks for administrator rights once), and adb + scrcpy for Cast (downloaded
+//! without admin rights).
 
 use super::super::Check;
 use super::hidden_command;
@@ -34,7 +35,9 @@ pub fn checks(port: u16) -> Vec<Check> {
         fixable: !rule,
     });
 
-    let public = public_networks();
+    // Allowing Dotlink when Windows asked (on a Public network) adds a rule for the exe that
+    // covers Public too; then the profile doesn't matter.
+    let public = if exe_allowed_on_public() { Vec::new() } else { public_networks() };
     out.push(Check {
         id: "network_profile".into(),
         feature: "Network".into(),
@@ -51,6 +54,25 @@ pub fn checks(port: u16) -> Vec<Check> {
         },
         fixable: false,
     });
+    // Cast. The scrcpy download includes adb; Cast also downloads it on first use.
+    let downloadable = crate::cast::can_install();
+    for (id, title) in [("adb", "adb (Android platform tools)"), ("scrcpy", "scrcpy")] {
+        let ok = crate::cast::find_tool(id).is_some();
+        out.push(Check {
+            id: id.into(),
+            feature: "Cast".into(),
+            title: title.into(),
+            ok,
+            detail: if ok {
+                String::new()
+            } else if downloadable {
+                "Fix downloads scrcpy with adb (from GitHub).".into()
+            } else {
+                "Install scrcpy (winget install Genymobile.scrcpy).".into()
+            },
+            fixable: !ok && downloadable,
+        });
+    }
     out
 }
 
@@ -72,15 +94,36 @@ fn public_networks() -> Vec<String> {
     }
 }
 
+/// An enabled inbound Allow rule for this exe that applies on Public networks.
+fn exe_allowed_on_public() -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let script = format!(
+        "$exe = '{}'; \
+         $r = Get-NetFirewallApplicationFilter | Where-Object Program -eq $exe | Get-NetFirewallRule | \
+         Where-Object {{ $_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and \
+         ($_.Profile -eq 'Any' -or $_.Profile -match 'Public') }}; if ($r) {{ 'yes' }}",
+        exe.display().to_string().replace('\'', "''")
+    );
+    hidden_command("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "yes")
+}
+
 pub async fn fix(id: &str, port: u16) -> Result<()> {
     match id {
         "firewall" => add_firewall_rule(port).await,
+        "adb" | "scrcpy" => crate::cast::install().await,
         _ => bail!("nothing to fix for \"{id}\""),
     }
 }
 
 pub async fn fix_many(ids: &[String], port: u16) -> Result<()> {
-    for id in ids {
+    // One download covers both.
+    if ids.iter().any(|id| id == "adb" || id == "scrcpy") {
+        crate::cast::install().await?;
+    }
+    for id in ids.iter().filter(|id| *id != "adb" && *id != "scrcpy") {
         fix(id, port).await?;
     }
     Ok(())

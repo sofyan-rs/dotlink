@@ -170,6 +170,53 @@ pub fn process_name(pid: u32) -> Option<String> {
     }
 }
 
+/// Kills a process and everything it starts when dropped (or when Dotlink exits, even by a
+/// crash): a job object with KILL_ON_JOB_CLOSE. For scrcpy, which package managers (Chocolatey,
+/// Scoop) install as a shim that runs the real scrcpy as a child: killing the shim alone would
+/// leave its window open.
+pub struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
+
+// The handle is only closed, from whichever thread drops it.
+unsafe impl Send for ProcessTree {}
+unsafe impl Sync for ProcessTree {}
+
+impl ProcessTree {
+    /// Call right after spawning: children the process starts from then on join the job too.
+    pub fn new(pid: u32) -> Option<Self> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::*;
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return None;
+            }
+            let tree = Self(job);
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let set = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+            let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+            if set == 0 || process.is_null() {
+                return None;
+            }
+            let assigned = AssignProcessToJobObject(job, process);
+            CloseHandle(process);
+            (assigned != 0).then_some(tree)
+        }
+    }
+}
+
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+    }
+}
+
 pub fn find_camera(_configured: &str) -> Result<PathBuf> {
     bail!("the phone camera as a webcam is not supported on Windows yet")
 }
