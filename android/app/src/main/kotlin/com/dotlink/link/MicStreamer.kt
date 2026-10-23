@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.util.Log
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -59,33 +60,51 @@ class MicStreamer(
     }
 
     @SuppressLint("MissingPermission")
+    private fun open(source: Int): AudioRecord {
+        val chunk = RATE / 100 * 2
+        val minBuf = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        return AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, chunk * 8))
+            .also { if (it.state != AudioRecord.STATE_INITIALIZED) error("microphone unavailable") }
+    }
+
     private fun record(ws: WebSocket) {
         thread =
             Thread {
                 val chunk = RATE / 100 * 2 // 10 ms of 16-bit mono: each chunk waits that long to fill
-                val minBuf = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-                val rec =
+                // Voice processing first: echo cancelling and noise suppression, like a call.
+                var rec =
                     try {
-                        AudioRecord(
-                            // Voice processing: echo cancelling and noise suppression, like a call.
-                            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                            RATE,
-                            AudioFormat.CHANNEL_IN_MONO,
-                            AudioFormat.ENCODING_PCM_16BIT,
-                            maxOf(minBuf, chunk * 8),
-                        )
+                        open(MediaRecorder.AudioSource.VOICE_COMMUNICATION).apply { startRecording() }
                     } catch (e: Exception) {
                         stop(e.message ?: "microphone unavailable")
                         return@Thread
                     }
+                // Some phones (vivo / iQOO) hand VOICE_COMMUNICATION nothing but zeros outside a
+                // phone call. Real input is never exactly zero for long, so after 1.5 s of that,
+                // fall back to the plain microphone.
+                var checking = true
+                var silentChunks = 0
                 val buf = ByteArray(chunk)
                 try {
-                    rec.startRecording()
                     while (!stopped) {
                         val n = rec.read(buf, 0, buf.size)
+                        if (checking && n > 0) {
+                            if (buf.take(n).any { it != 0.toByte() }) {
+                                checking = false
+                            } else if (++silentChunks >= 150) {
+                                checking = false
+                                Log.i(TAG, "voice-communication input is silent; using the plain microphone")
+                                rec.stop()
+                                rec.release()
+                                rec = open(MediaRecorder.AudioSource.MIC).apply { startRecording() }
+                                continue
+                            }
+                        }
                         // A backlog (Wi-Fi stall) is dropped rather than played late forever.
                         if (n > 0 && ws.queueSize() < chunk * 4) ws.send(buf.toByteString(0, n))
                     }
+                } catch (e: Exception) {
+                    stop(e.message ?: "microphone unavailable")
                 } finally {
                     rec.stop()
                     rec.release()
@@ -106,5 +125,6 @@ class MicStreamer(
 
     companion object {
         const val RATE = 48_000
+        private const val TAG = "Dotlink"
     }
 }

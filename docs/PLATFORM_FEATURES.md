@@ -27,15 +27,15 @@ means Windows 11 only: Windows 10 isn't supported.
 | Shell | ✅ | ✅ | 🔧 |
 | Remote (touchpad + keyboard) | ✅ | ✅ | ❌ |
 | Cast (scrcpy) | ✅ | ✅ USB, 🟡 Wi-Fi | 🔧 |
-| Webcam (phone camera) | ✅ | 🟡 | ❌ |
-| Microphone (phone mic) | ✅ | 🟡 | ❌ |
-| Notifications | ✅ | 🟡 | 🔧 text only |
-| Tray / menu bar | ✅ | 🟡 | ❌ |
-| Start at login | ✅ | 🟡 | ❌ |
+| Webcam (phone camera) | ✅ | ✅ | ❌ |
+| Microphone (phone mic) | ✅ | ✅ (VB-CABLE) | ❌ |
+| Notifications | ✅ | ✅ | 🔧 text only |
+| Tray / menu bar | ✅ | ✅ | ❌ |
+| Start at login | ✅ | ✅ | ❌ |
 | Setup checks and fixes | ✅ | ✅ | ❌ |
 | Control socket (CLI ↔ app) | ✅ | ✅ | 🔧 |
 | Link over a USB cable (`adb reverse`) | 🟡 | ✅ | 🔧 |
-| Installer | ✅ .deb, .rpm, AppImage | ❌ | ❌ |
+| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | ❌ |
 
 ## Wi-Fi or USB
 
@@ -61,13 +61,13 @@ for this PC. On Windows some phones also need their maker's USB driver for adb t
 
 | Feature | Wi-Fi (same network) | USB cable | Notes |
 |---|---|---|---|
-| Pairing | ✅ | 🟡 | Over the cable the phone tries `127.0.0.1` before the addresses in the QR code |
-| Files, both ways | ✅ | ✅ PC → phone, 🟡 phone → PC | |
-| Clipboard, both ways | ✅ | ✅ PC → phone, 🟡 phone → PC | |
-| Shell | ✅ | 🟡 | Same connection, not tried over USB yet |
-| Remote | ✅ | 🟡 | Same connection, not tried over USB yet |
-| Webcam | ✅ | 🟡 | MJPEG over a WebSocket |
-| Microphone | ✅ | 🟡 | PCM over a WebSocket |
+| Pairing | ✅ | ✅ | Over the cable the phone tries `127.0.0.1` first: under a second, against ~20 s over Wi-Fi with virtual adapters |
+| Files, both ways | ✅ | ✅ | |
+| Clipboard, both ways | ✅ | ✅ | |
+| Shell | ✅ | ✅ | |
+| Remote | ✅ | ✅ | |
+| Webcam | ✅ | ✅ | MJPEG over a WebSocket |
+| Microphone | ✅ | ✅ | PCM over a WebSocket |
 | Cast | ✅ Wireless debugging (Android 11+, paired once with a 6-digit code) | ✅ USB debugging | USB is preferred when both are there; it also keeps the phone awake (`--stay-awake`). Cast needs the phone's Dotlink connection (either kind) to know which phone is which |
 
 ✅ / 🟡 above are from Windows (Wi-Fi turned off on the phone for the USB tests). The code is
@@ -153,7 +153,7 @@ apps read, and a placeholder shows while the phone camera is off.
 | Method | `v4l2loopback` device "Dotlink Camera", fed by `ffmpeg` | Windows 11 virtual camera (`MFCreateVirtualCamera`, per user, while Dotlink runs). Its media source is `dotlink_camera.dll` (`desktop/camera`), loaded by the Camera Frame Server; Dotlink decodes the JPEG (`zune-jpeg`), fits it into NV12 and shares it through `%ProgramData%\Dotlink\camera.bin` | ❌ (plan: CoreMediaIO Camera Extension) |
 | Setup | kernel module + device (Setup, polkit) | Setup → Fix (UAC once): DLL into `%ProgramFiles%\Dotlink`, class registered under HKLM | — |
 | Requirements | v4l2loopback, ffmpeg | Windows 11 (build 22000+) | — |
-| Status | ✅ | 🟡 the camera is listed and delivers 1920×1080 NV12 at 30 fps to Media Foundation apps; phone frames arrive in it. Still to check: a real picture in the Camera app / a call | ❌ |
+| Status | ✅ | ✅ the phone's picture in OBS (and any Media Foundation app), 1920×1080 NV12 at 30 fps, over Wi-Fi and USB | ❌ |
 
 ### Microphone (phone mic)
 
@@ -163,29 +163,33 @@ so the mic catches up after a Wi-Fi stall.
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | Method | `pw-cat` as a PipeWire source "Dotlink Mic" | plays into VB-CABLE's "CABLE Input" through WASAPI (`cpal`), converting rate and channels; apps pick "CABLE Output" | ❌ (plan: BlackHole, later an AudioServerPlugIn) |
-| Setup | none (PipeWire) | install VB-CABLE (Setup → Fix opens its download page) | — |
-| Status | ✅ | 🟡 built, converter unit-tested; waits for VB-CABLE to be installed | ❌ |
+| Setup | none (PipeWire) | install VB-CABLE (Setup → Fix opens its download page). Its installer makes "CABLE Input" the default output: set your speakers back as default in Windows' sound settings | — |
+| Status | ✅ | ✅ the phone's audio comes out of "CABLE Output" (recorded and measured), over Wi-Fi and USB | ❌ |
+
+Phone side: the app records with voice processing (`VOICE_COMMUNICATION`). Some phones (vivo /
+iQOO) return only zeros from that source outside a call; after 1.5 s of exact silence the app
+switches to the plain microphone.
 
 ### Notifications
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | Method | `notify-send` with Open / Show in folder actions | toasts (`notify-rust`) under the AppUserModelID `dev.dotlink.Dotlink`, registered in HKCU with name and icon; Open / Show in folder buttons | `notify-rust`, text only |
-| Status | ✅ | 🟡 to check: toast with buttons on a received file | 🔧 |
+| Status | ✅ | ✅ toasts show as "Dotlink" with its icon; received files carry Open / Show in folder (the buttons haven't been clicked in a test) | 🔧 |
 
 ### Tray / menu bar
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | Method | StatusNotifierItem over D-Bus (`ksni`) | notification area (`tray-icon`); left click opens the window, menu on right click | ❌ |
-| Status | ✅ | 🟡 runs; menu actions not all clicked through yet | ❌ |
+| Status | ✅ | ✅ Open, Send clipboard, Cast screen and Quit clicked through; closing the window says once that Dotlink keeps running | ❌ |
 
 ### Start at login
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | Method | XDG autostart entry; on Hyprland also a config include | `HKCU\…\CurrentVersion\Run` value `Dotlink` = `"<exe>" --background`; off in Task Manager counts as off | ❌ (plan: SMAppService / LaunchAgent) |
-| Status | ✅ | 🟡 not tested yet | ❌ |
+| Status | ✅ | ✅ the setting adds and removes the entry; its command starts Dotlink in the tray, without the window | ❌ |
 
 ### Setup checks
 
@@ -207,16 +211,18 @@ so the mic catches up after a Wi-Fi stall.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | `cargo packager` (.deb, AppImage, pacman), `cargo generate-rpm` | ❌ (plan: NSIS per-user install, shipping `dotlink_camera.dll` next to `dotlink.exe`, Authenticode signing) | ❌ (plan: signed, notarized .app in a .dmg) |
+| Method | `cargo packager` (.deb, AppImage, pacman), `cargo generate-rpm` | `cargo packager -f nsis`: a per-user setup .exe with `dotlink_camera.dll` next to `dotlink.exe`; install and uninstall tested (settings and pairing are kept). Not Authenticode-signed yet, so SmartScreen and the firewall show "Unknown publisher" | ❌ (plan: signed, notarized .app in a .dmg) |
 
 ## Still to do
 
 **Windows**
-- Webcam: confirm a real picture in the Camera app and a call; offer more formats than NV12
-  if an app refuses it.
-- Microphone: test with VB-CABLE installed.
-- Check toasts, the tray menu, start at login, and Cast over Wi-Fi.
-- Installer, CI.
+- Cast over Wi-Fi (Wireless debugging).
+- Code signing (Authenticode) for the installer and the exe; CI.
+- Offer more formats than NV12 if a camera app refuses it.
+
+**Linux**
+- Test the USB link, and retest everything after the shared changes (several casts, USB link,
+  the phone's tab rail and keyboard fix).
 
 **macOS**
 - Build it first (Step 1 in [PORTING.md](PORTING.md)), then everything marked ❌ above.
