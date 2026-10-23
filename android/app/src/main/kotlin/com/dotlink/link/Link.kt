@@ -90,8 +90,13 @@ class Link(
     val transfers = MutableStateFlow<List<Transfer>>(emptyList())
     val cameraOn = MutableStateFlow(false)
 
-    /** Where the Camera tab wants the live preview drawn (null when the tab is not shown). */
-    val cameraPreview = MutableStateFlow<androidx.camera.core.Preview.SurfaceProvider?>(null)
+    /** True while the Camera tab is on screen; the streamer then publishes [cameraFrame]. */
+    val cameraPreviewActive = MutableStateFlow(false)
+
+    /** The last frame sent to the PC (rotated and mirrored), for the Camera tab's preview. */
+    val cameraFrame = MutableStateFlow<android.graphics.Bitmap?>(null)
+    val cameraRotation = MutableStateFlow(prefs.rotation)
+    val cameraMirror = MutableStateFlow(prefs.mirror)
     val cameraTorch = MutableStateFlow(false)
 
     /** Zoom ratio (1 = no zoom); clamped to what the camera supports. */

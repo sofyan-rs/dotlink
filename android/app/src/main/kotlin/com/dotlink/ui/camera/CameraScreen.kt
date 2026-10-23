@@ -8,7 +8,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,9 +30,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dotlink.DotlinkApp
@@ -63,7 +64,10 @@ fun CameraScreen() {
     val torch by link.cameraTorch.collectAsStateWithLifecycle()
     val zoom by link.cameraZoom.collectAsStateWithLifecycle()
     var front by remember { mutableStateOf(prefs.frontCamera) }
-    var summary by remember { mutableStateOf(summary(prefs.fullHd, prefs.fps, prefs.landscape)) }
+    val rotation by link.cameraRotation.collectAsStateWithLifecycle()
+    val mirror by link.cameraMirror.collectAsStateWithLifecycle()
+    val frame by link.cameraFrame.collectAsStateWithLifecycle()
+    var summary by remember { mutableStateOf(summary(prefs.fullHd, prefs.fps)) }
 
     val permission =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -81,21 +85,14 @@ fun CameraScreen() {
 
     /** A running stream restarts so the PC gets the new camera or size. */
     fun changed() {
-        summary = summary(prefs.fullHd, prefs.fps, prefs.landscape)
+        summary = summary(prefs.fullHd, prefs.fps)
         if (link.cameraOn.value) LinkService.send(context, LinkService.ACTION_CAMERA_RESTART)
     }
 
-    // The streamer (in LinkService) draws its preview here while this tab is on screen.
-    val previewView =
-        remember {
-            PreviewView(context).apply {
-                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                scaleType = PreviewView.ScaleType.FIT_CENTER
-            }
-        }
+    // While this tab is on screen the streamer publishes the frames it sends, for the preview.
     DisposableEffect(Unit) {
-        link.cameraPreview.value = previewView.surfaceProvider
-        onDispose { link.cameraPreview.value = null }
+        link.cameraPreviewActive.value = true
+        onDispose { link.cameraPreviewActive.value = false }
     }
 
     TabScreen {
@@ -114,8 +111,17 @@ fun CameraScreen() {
                 .background(Dotline.colors.surface),
             contentAlignment = Alignment.Center,
         ) {
-            if (cameraOn) {
-                AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+            val shown = frame
+            if (cameraOn && shown != null) {
+                // Exactly what the PC receives: rotation and mirror included.
+                Image(
+                    bitmap = shown.asImageBitmap(),
+                    contentDescription = "Webcam preview",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else if (cameraOn) {
+                Text("STARTING…", style = Dotline.type.label, color = Dotline.colors.inkFaint)
             } else {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Dotline.space.s2)) {
                     Icon(DotlineIcons.Camera, contentDescription = null, tint = Dotline.colors.inkFaint, modifier = Modifier.size(32.dp))
@@ -159,6 +165,22 @@ fun CameraScreen() {
                 ),
             modifier = Modifier.padding(start = Dotline.space.s4, end = Dotline.space.s4, top = Dotline.space.s3),
         )
+        // Rotate and mirror apply live, without restarting the stream.
+        QuickActionRow(
+            actions =
+                listOf(
+                    QuickAction("Rotate ${rotation}°", DotlineIcons.Rotate) {
+                        val next = (rotation + 90) % 360
+                        prefs.rotation = next
+                        link.cameraRotation.value = next
+                    },
+                    QuickAction(if (mirror) "Mirrored" else "Mirror", DotlineIcons.FlipHorizontal) {
+                        prefs.mirror = !mirror
+                        link.cameraMirror.value = !mirror
+                    },
+                ),
+            modifier = Modifier.padding(start = Dotline.space.s4, end = Dotline.space.s4, top = Dotline.space.s2),
+        )
 
         Section("Video") {
             Choice(listOf("720p", "1080p"), if (prefs.fullHd) 1 else 0) {
@@ -170,12 +192,7 @@ fun CameraScreen() {
                 prefs.fps = if (it == 0) 15 else 30
                 changed()
             }
-            Spacer(Modifier.height(Dotline.space.s2))
-            Choice(listOf("Landscape", "Portrait"), if (prefs.landscape) 0 else 1) {
-                prefs.landscape = it == 0
-                changed()
-            }
-            Hint("Landscape: hold the phone sideways, top to the left. Pick \"Dotlink Camera\" in your call, browser or OBS.")
+            Hint("Pick \"Dotlink Camera\" in your call, browser or OBS. The PC fits every rotation into its fixed size.")
         }
     }
 }
@@ -183,11 +200,6 @@ fun CameraScreen() {
 private fun summary(
     fullHd: Boolean,
     fps: Int,
-    landscape: Boolean,
-): String {
-    val (long, short) = if (fullHd) 1920 to 1080 else 1280 to 720
-    val (w, h) = if (landscape) long to short else short to long
-    return "${w}×$h · $fps fps"
-}
+) = "${if (fullHd) "1080p" else "720p"} · $fps fps"
 
 private fun formatZoom(z: Float) = if (z % 1f == 0f) "${z.toInt()}×" else "%.1f×".format(z)

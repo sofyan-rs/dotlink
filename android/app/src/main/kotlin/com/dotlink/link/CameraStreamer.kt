@@ -2,12 +2,12 @@ package com.dotlink.link
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.util.Size
 import android.view.Surface
 import android.util.Log
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.Preview
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
@@ -42,10 +42,10 @@ class CameraStreamer(
     private val executor = Executors.newSingleThreadExecutor()
     private var provider: ProcessCameraProvider? = null
     private var analysis: ImageAnalysis? = null
-    private var preview: Preview? = null
     private var camera: Camera? = null
     private val controls = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var lastLog = 0L
+    private var lastPreview = 0L
     private var socket: WebSocket? = null
 
     @Volatile private var ready = false
@@ -57,7 +57,7 @@ class CameraStreamer(
     fun start() {
         val prefs = link.prefs
         val (long, short) = if (prefs.fullHd) 1920 to 1080 else 1280 to 720
-        val (w, h) = if (prefs.landscape) long to short else short to long
+        val (w, h) = if (prefs.rotation % 180 == 90) long to short else short to long
         socket =
             link.openSocket(
                 "/ws/camera",
@@ -125,8 +125,7 @@ class CameraStreamer(
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                 .setOutputImageRotationEnabled(true)
-                // ROTATION_90 = phone held sideways (landscape picture); ROTATION_0 = upright.
-                .setTargetRotation(if (prefs.landscape) Surface.ROTATION_90 else Surface.ROTATION_0)
+                .setTargetRotation(surfaceRotation(link.cameraRotation.value))
                 .build()
         a.setAnalyzer(executor) { image ->
             image.use {
@@ -135,32 +134,43 @@ class CameraStreamer(
                 // Skip when too soon or when the network is behind (keeps latency low).
                 if (!ready || now - lastFrame < minInterval || ws.queueSize() > 1_500_000) return@use
                 lastFrame = now
-                val bmp = it.toBitmap()
+                val raw = it.toBitmap()
+                val bmp =
+                    if (link.cameraMirror.value) {
+                        val flip = Matrix().apply { preScale(-1f, 1f) }
+                        Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, flip, false).also { raw.recycle() }
+                    } else {
+                        raw
+                    }
                 jpeg.reset()
                 bmp.compress(Bitmap.CompressFormat.JPEG, 75, jpeg)
+                ws.send(jpeg.toByteArray().toByteString())
                 if (now - lastLog > 2000) {
                     lastLog = now
                     Log.d("Dotlink", "camera frame ${bmp.width}x${bmp.height} jpeg=${jpeg.size()}B")
                 }
-                bmp.recycle()
-                ws.send(jpeg.toByteArray().toByteString())
+                // The preview shows exactly this frame (~12 fps is plenty for framing the shot).
+                // Published bitmaps are left to the GC: the UI may still be drawing the last one.
+                if (link.cameraPreviewActive.value && now - lastPreview > 80) {
+                    lastPreview = now
+                    link.cameraFrame.value = bmp
+                } else {
+                    bmp.recycle()
+                }
             }
         }
         analysis = a
-        // The Camera tab's preview; it shows the same camera, framing and zoom as the PC gets.
-        val pv = Preview.Builder().setResolutionSelector(selector).build()
-        pv.surfaceProvider = link.cameraPreview.value
-        preview = pv
         val cam = if (prefs.frontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
         try {
             p.unbindAll()
-            camera = p.bindToLifecycle(owner, cam, pv, a)
+            camera = p.bindToLifecycle(owner, cam, a)
         } catch (e: Exception) {
             stop(e.message ?: "camera unavailable")
             return
         }
         controls.coroutineContext.cancelChildren()
-        controls.launch { link.cameraPreview.collect { pv.surfaceProvider = it } }
+        // Rotation applies live: CameraX rotates the next frames, no rebind needed.
+        controls.launch { link.cameraRotation.collect { a.targetRotation = surfaceRotation(it) } }
         controls.launch { link.cameraTorch.collect { camera?.cameraControl?.enableTorch(it) } }
         controls.launch {
             link.cameraZoom.collect { ratio ->
@@ -175,7 +185,7 @@ class CameraStreamer(
     fun rebind() {
         val p = provider ?: return
         val (long, short) = if (link.prefs.fullHd) 1920 to 1080 else 1280 to 720
-        val (w, h) = if (link.prefs.landscape) long to short else short to long
+        val (w, h) = if (link.prefs.rotation % 180 == 90) long to short else short to long
         ContextCompat.getMainExecutor(context).execute { if (!stopped) bind(p, w, h) }
     }
 
@@ -189,6 +199,7 @@ class CameraStreamer(
             controls.cancel()
             link.cameraTorch.value = false
             link.cameraZoom.value = 1f
+            link.cameraFrame.value = null
             analysis?.clearAnalyzer()
             provider?.unbindAll()
             executor.shutdown()
@@ -196,3 +207,12 @@ class CameraStreamer(
         }
     }
 }
+
+/** Picture rotation in degrees → the CameraX target rotation that produces it. */
+private fun surfaceRotation(degrees: Int) =
+    when (((degrees % 360) + 360) % 360) {
+        90 -> Surface.ROTATION_90
+        180 -> Surface.ROTATION_180
+        270 -> Surface.ROTATION_270
+        else -> Surface.ROTATION_0
+    }

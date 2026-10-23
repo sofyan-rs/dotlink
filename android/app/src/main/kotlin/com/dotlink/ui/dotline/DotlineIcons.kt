@@ -258,7 +258,7 @@ object DotlineIcons {
     val Clipboard: ImageVector by lazy { lineIcon("Clipboard", "M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2") }
 
     /** Touchpad / remote. Lucide: mouse. */
-    val Mouse: ImageVector by lazy { lineIcon("Mouse", "M5 7a7 7 0 0 1 14 0v10a7 7 0 0 1-14 0zM12 7v4") }
+    val Mouse: ImageVector by lazy { lineIcon("Mouse", "M5 9a7 7 0 0 1 14 0v6a7 7 0 0 1-14 0zM12 6v4") }
 
     /** Keyboard. Lucide: keyboard. */
     val Keyboard: ImageVector by lazy { lineIcon("Keyboard", "M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8") }
@@ -274,6 +274,14 @@ object DotlineIcons {
 
     /** Scan a QR code. Lucide: scan-line. */
     val Scan: ImageVector by lazy { lineIcon("Scan", "M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10") }
+
+    /** Rotate the picture. Lucide: rotate-cw. */
+    val Rotate: ImageVector by lazy { lineIcon("Rotate", "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5") }
+
+    /** Mirror the picture. Lucide: flip-horizontal-2. */
+    val FlipHorizontal: ImageVector by lazy {
+        lineIcon("FlipHorizontal", "M3 7l5 5-5 5zM21 7l-5 5 5 5zM12 20v2M12 14v2M12 8v2M12 2v2")
+    }
 
     /** Camera torch. Lucide: flashlight. */
     val Flashlight: ImageVector by lazy {

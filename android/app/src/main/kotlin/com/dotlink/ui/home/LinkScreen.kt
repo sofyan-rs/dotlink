@@ -119,7 +119,7 @@ fun LinkScreen(onOpenTab: (MainTab) -> Unit) {
                             if (prefs.fullHd) "1080p" else "720p",
                             if (prefs.frontCamera) "front" else "back",
                             "${prefs.fps} fps",
-                            if (prefs.landscape) "landscape" else "portrait",
+                            "${prefs.rotation}°" + if (prefs.mirror) " mirrored" else "",
                         ).joinToString(" · "),
                     subtitleIsData = true,
                     leadingIcon = DotlineIcons.Camera,

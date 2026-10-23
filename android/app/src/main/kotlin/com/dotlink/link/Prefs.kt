@@ -48,9 +48,15 @@ class Prefs(
     var fps: Int
         get() = sp.getInt("fps", 30)
         set(v) = sp.edit { putInt("fps", v) }
-    var landscape: Boolean
-        get() = sp.getBoolean("landscape", true)
-        set(v) = sp.edit { putBoolean("landscape", v) }
+    /** Webcam picture rotation in degrees (0, 90, 180, 270). 90 = landscape, the old default. */
+    var rotation: Int
+        get() = sp.getInt("rotation", if (sp.getBoolean("landscape", true)) 90 else 0)
+        set(v) = sp.edit { putInt("rotation", v) }
+
+    /** Flip the webcam picture left-right. */
+    var mirror: Boolean
+        get() = sp.getBoolean("mirror", false)
+        set(v) = sp.edit { putBoolean("mirror", v) }
     var autoClipboard: Boolean
         get() = sp.getBoolean("auto_clipboard", true)
         set(v) = sp.edit { putBoolean("auto_clipboard", v) }

@@ -1,14 +1,17 @@
 /**
- * The SETTINGS tab: webcam, clipboard, remote and shell options, and the paired PC.
+ * The SETTINGS tab: clipboard, remote and shell options, the paired PC, theme and about.
  */
 package com.dotlink.ui.settings
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -20,6 +23,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import com.dotlink.DotlinkApp
 import com.dotlink.link.LinkService
 import com.dotlink.ui.Hint
@@ -34,6 +38,7 @@ import com.dotlink.ui.dotline.KuSwitch
 import com.dotlink.ui.dotline.ListDivider
 import com.dotlink.ui.dotline.ListGroup
 import com.dotlink.ui.dotline.ListRow
+import com.dotlink.ui.dotline.ListRowChevron
 import com.dotlink.ui.dotline.ScreenTitle
 import com.dotlink.ui.dotline.SecondaryButton
 import com.dotlink.ui.dotline.SegmentOption
@@ -47,14 +52,7 @@ fun SettingsScreen() {
     val context = LocalContext.current
 
     TabScreen {
-        ScreenTitle(title = "Settings", subline = "Dotlink 0.1")
-
-        Section("Theme") {
-            Choice(listOf("System", "Light", "Dark"), prefs.themeMode) {
-                prefs.themeMode = it
-                link.themeMode.value = it
-            }
-        }
+        ScreenTitle(title = "Settings")
 
         Section("Clipboard") {
             var auto by remember { mutableStateOf(prefs.autoClipboard) }
@@ -148,6 +146,33 @@ fun SettingsScreen() {
                     },
                 )
             }
+        }
+
+        Section("Theme") {
+            Choice(listOf("System", "Light", "Dark"), prefs.themeMode) {
+                prefs.themeMode = it
+                link.themeMode.value = it
+            }
+        }
+
+        Section("About") {
+            ListGroup {
+                ListRow(
+                    title = "Created by Kurodev",
+                    subtitle = "kurodev.org",
+                    subtitleIsData = true,
+                    onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://kurodev.org"))) },
+                    trailing = { ListRowChevron() },
+                )
+            }
+            val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
+            Text(
+                text = "DOTLINK $version",
+                style = Dotline.type.label,
+                color = Dotline.colors.inkFaint,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = Dotline.space.s3),
+            )
         }
     }
 }
