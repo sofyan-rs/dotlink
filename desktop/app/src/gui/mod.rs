@@ -95,6 +95,8 @@ pub fn run(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
             gpui_component::init(cx);
             theme::load_fonts(cx);
             theme::apply(None, cx);
+            #[cfg(target_os = "linux")]
+            theme::follow_portal(cx);
             let model = Model::new(client, owns_service, cx);
             model.update(cx, |m, _| m.has_tray = has_tray);
             #[cfg(windows)]
