@@ -201,8 +201,9 @@ pub async fn fix_many(ids: &[String], port: u16) -> Result<()> {
 }
 
 /// Installs the camera DLL into Program Files and registers its class under HKLM, as
-/// administrator (one UAC prompt). The frame server is stopped first so an older DLL it has
-/// loaded can be replaced; Windows starts it again on the next camera use.
+/// administrator (one UAC prompt). The frame server is then stopped so it lets go of an older
+/// DLL; Windows starts it again on the next camera use, with the new one. Apps using the
+/// camera lose it for a moment.
 async fn install_camera() -> Result<()> {
     let source = super::camera::bundled_dll().ok_or_else(|| anyhow::anyhow!("dotlink_camera.dll is missing next to Dotlink"))?;
     let target = super::camera::installed_dll(&source)?;
@@ -218,6 +219,8 @@ async fn install_camera() -> Result<()> {
          New-Item -Force {key_inproc} | Out-Null\n\
          Set-ItemProperty {key_inproc} '(default)' $dll\n\
          Set-ItemProperty {key_inproc} 'ThreadingModel' 'Both'\n\
+         # The frame server keeps the old build loaded (and its formats) until it restarts.\n\
+         Stop-Service FrameServer -Force -ErrorAction SilentlyContinue\n\
          # Older builds: removed when nothing has them loaded any more.\n\
          Get-ChildItem (Split-Path $dll) -Filter 'dotlink_camera*.dll' | Where-Object FullName -ne $dll | \
          Remove-Item -Force -ErrorAction SilentlyContinue\n",

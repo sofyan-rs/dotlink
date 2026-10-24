@@ -62,7 +62,7 @@ for this PC. On Windows some phones also need their maker's USB driver for adb t
 
 | Feature | Wi-Fi (same network) | USB cable | Notes |
 |---|---|---|---|
-| Pairing | ✅ | ✅ | Over the cable the phone tries `127.0.0.1` first: under a second, against ~20 s over Wi-Fi with virtual adapters. **Pair over USB** (`dotlink pair --usb`) opens the link on the phone through adb, so nothing is scanned (tested on Linux) |
+| Pairing | ✅ | ✅ | Over the cable the phone tries `127.0.0.1` first: under a second, against ~20 s over Wi-Fi with virtual adapters. **Pair over USB** (`dotlink pair --usb`) opens the link on the phone through adb, so nothing is scanned (tested on Linux and Windows, two phones at once) |
 | Files, both ways | ✅ | ✅ | |
 | Clipboard, both ways | ✅ | ✅ | |
 | Shell | ✅ | ✅ | |
@@ -160,7 +160,7 @@ apps read, and a placeholder shows while the phone camera is off.
 | Method | `v4l2loopback` device "Dotlink Camera", fed by `ffmpeg` | Windows 11 virtual camera (`MFCreateVirtualCamera`, per user, while Dotlink runs). Its media source is `dotlink_camera.dll` (`desktop/camera`), loaded by the Camera Frame Server; Dotlink decodes the JPEG (`zune-jpeg`), fits it into NV12 and shares it through `%ProgramData%\Dotlink\camera.bin` | ❌ (plan: CoreMediaIO Camera Extension) |
 | Setup | kernel module + device (Setup, polkit) | Setup → Fix (UAC once): DLL into `%ProgramFiles%\Dotlink`, class registered under HKLM | — |
 | Requirements | v4l2loopback, ffmpeg | Windows 11 (build 22000+) | — |
-| Status | ✅ | ✅ the phone's picture in OBS (and any Media Foundation app), 1920×1080 NV12 at 30 fps, over Wi-Fi and USB | ❌ |
+| Status | ✅ | ✅ the phone's picture in OBS (and any Media Foundation app), 1920×1080 NV12 at 30 or 60 fps, over Wi-Fi and USB | ❌ |
 
 Webcam frame rate: 30 or 60 fps, and the phone only offers what the lens in use can do (front
 and back are read separately, from the camera's auto-exposure ranges). Both test phones (iQOO
@@ -168,8 +168,7 @@ I2218, realme RMX5085) top out at 30 on both lenses, so they show only 30. Their
 have 60-120 fps high-speed modes, but Android only gives those to preview and video-encoder
 outputs, not to the frames the app reads and sends as JPEG; using them would mean sending H.264
 instead. The PC takes 60: Linux passes every frame through, and the Windows virtual camera
-offers 60 and 30 fps (`RATES` in `desktop/camera/src/source.rs`; type-checked, not yet run on
-Windows).
+offers 60 and 30 fps (`RATES` in `desktop/camera/src/source.rs`; OBS lists and plays both).
 
 ### Microphone (phone mic)
 
@@ -235,29 +234,31 @@ switches to the plain microphone.
 - Code signing (Authenticode) for the installer and the exe; CI.
 - Offer more formats than NV12 if a camera app refuses it.
 
-**Windows, retest after the Linux pass** (2026-10-24). These changed in shared or Windows
-code and were only built or type-checked on Linux. Rebuild (`cargo build -p dotlink
--p dotlink-camera`, or the installer), and with the phone's current build:
+**Windows, retested after the Linux pass** (2026-10-24, with the iQOO I2218 and the realme
+RMX5085). These changed in shared or Windows code and had only been built or type-checked on
+Linux:
 - [x] Build on Windows: `cargo build`, `cargo test`, `cargo clippy --all-targets` (no
   warnings). The GNOME title bar used gpui's Linux-only `WindowButtonLayout::linux_default`,
   which broke the Windows build; it now spells the fallback out.
-- [x] Setup: the camera shows as outdated (the DLL changed); Fix reinstalls it. It also said
-  "administrator rights were refused" after a successful install: removing the old DLL, still
-  loaded by the Frame Server, failed silently and left PowerShell's exit code at 1. Fixed
-  (`exit 0`), not yet seen with the next outdated DLL.
-- [ ] Dotlink Camera offers 60 and 30 fps: OBS lists both, both play; a 30 fps phone at 60
-  just repeats frames.
+- [x] Setup: the camera shows as outdated (the DLL changed); Fix reinstalls it, with OBS
+  using the camera. Two fixes on the way: Fix said "administrator rights were refused" after
+  a successful install (removing the old DLL failed silently and left PowerShell's exit code
+  at 1; the script now ends with `exit 0`), and the frame server kept the old DLL and its
+  formats until restarted (Fix now stops it after registering the new DLL).
+- [x] Dotlink Camera offers 60 and 30 fps: OBS lists both (and the rates between), both play;
+  a 30 fps phone at 60 just repeats frames.
 - [x] The tray icon: monochrome dots, white on a dark taskbar, black on a light one, switching
   live when the Windows mode changes (within ~3 s).
 - [x] The tray icon is the same size as the icons next to it.
-- [ ] Pairing over USB: Pair a phone → Pair over USB (and `dotlink pair --usb`) opens the
-  pairing screen on the phone; the phone's own Pair with <PC> over USB pairs without a tap;
-  two phones at once.
-- [ ] Unpairing a connected phone (Devices → Forget, `dotlink unpair`) cuts it off within a
-  second, and the phone forgets the PC.
-- [ ] Devices: each connected phone's battery and charging state.
-- [ ] Setup's texts and order (the firewall first, the camera's "pick Dotlink Camera" line).
-- [ ] Shell: the phone's terminal PIN is per PC (Settings → Paired PC).
+- [x] Pairing over USB: `dotlink pair --usb` opens the pairing screen on the phone; the phone's
+  own Pair with <PC> over USB pairs without a tap.
+- [x] Pairing over USB from the window (Pair a phone → Pair over USB); two phones at once.
+- [x] Unpairing a connected phone (`dotlink unpair`) cuts it off within a second, and the phone
+  forgets the PC ("X-PC forgot this phone").
+- [x] Unpairing from the window (Devices → Forget).
+- [x] Devices: each connected phone's battery and charging state.
+- [x] Setup's texts and order (the firewall first, the camera's "pick Dotlink Camera" line).
+- [x] Shell: the phone's terminal PIN is per PC (Settings → Paired PC).
 
 **Linux** (Fedora 44, GNOME and Hyprland; no KDE machine at hand). Rechecked 2026-10-24 with
 an iQOO I2218 and a realme RMX5085 after the Windows work changed shared code:
