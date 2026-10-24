@@ -2,17 +2,21 @@
 //! and starts it again); an AppImage replaces itself. Other Linux installs (.deb, .rpm, built from
 //! source) get the release page: their package manager or `install.sh` updates them.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use std::cmp::Ordering;
 use std::io::Read;
 use std::path::PathBuf;
 use std::time::Duration;
 
+const REPO: &str = "https://github.com/sofyan-rs/dotlink";
 const RELEASES: &str = "https://api.github.com/repos/sofyan-rs/dotlink/releases?per_page=20";
+const FEED: &str = "https://github.com/sofyan-rs/dotlink/releases.atom";
 
 /// The release workflow appends the downloads from this heading on; the app hides them.
 const DOWNLOADS_HEADING: &str = "## Downloads";
+/// The same heading in the feed's HTML.
+const DOWNLOADS_HTML: &str = "<h2>Downloads</h2>";
 
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
@@ -56,13 +60,7 @@ fn agent(timeout: Duration) -> ureq::Agent {
 /// The newest release above this version, or None. Pre-releases count only when this version
 /// is one too, so stable installs stay on stable releases. Blocking.
 pub fn check() -> Result<Option<Release>> {
-    let mut body = agent(Duration::from_secs(20))
-        .get(RELEASES)
-        .header("Accept", "application/vnd.github+json")
-        .call()
-        .context("couldn't reach GitHub")?
-        .into_body();
-    let releases: Vec<GhRelease> = serde_json::from_reader(body.as_reader())?;
+    let releases = releases()?;
     let current = Version::parse(CURRENT).context("bad version")?;
     let with_pre = !current.pre.is_empty();
     let best = releases
@@ -79,6 +77,108 @@ pub fn check() -> Result<Option<Release>> {
         page_url: r.html_url,
         asset,
     }))
+}
+
+/// The releases from the API. It allows 60 requests an hour per IP address without a token
+/// (every phone and PC behind one router shares them); past that, from the releases feed, which
+/// has no such limit.
+fn releases() -> Result<Vec<GhRelease>> {
+    let response = agent(Duration::from_secs(20))
+        .get(RELEASES)
+        .header("Accept", "application/vnd.github+json")
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .call()
+        .context("couldn't reach GitHub")?;
+    let status = response.status().as_u16();
+    if response.status().is_success() {
+        return Ok(serde_json::from_reader(response.into_body().as_reader())?);
+    }
+    if status != 403 && status != 429 {
+        bail!("GitHub answered {status}");
+    }
+    let minutes = response.headers().get("x-ratelimit-reset").and_then(|v| v.to_str().ok()?.parse::<u64>().ok()).and_then(|reset| {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+        Some(reset.saturating_sub(now).div_ceil(60).max(1))
+    });
+    from_feed().map_err(|_| match minutes {
+        Some(m) => anyhow!("GitHub limits update checks. Try again in {m} min."),
+        None => anyhow!("GitHub limits update checks. Try again later."),
+    })
+}
+
+fn from_feed() -> Result<Vec<GhRelease>> {
+    let xml = agent(Duration::from_secs(20)).get(FEED).call().context("couldn't reach GitHub")?.into_body().read_to_string()?;
+    Ok(parse_feed(&xml))
+}
+
+/// The releases in the Atom feed: no drafts, no pre-release flag (a version with a suffix is one,
+/// as for the release workflow), the notes as HTML, and the files named in the download table the
+/// workflow appends (sizes unknown).
+fn parse_feed(xml: &str) -> Vec<GhRelease> {
+    xml.split("<entry>")
+        .skip(1)
+        .filter_map(|entry| {
+            let tag = between(entry, "/releases/tag/", "\"")?;
+            let html = unescape(between(entry, "<content type=\"html\">", "</content>").unwrap_or_default());
+            let (notes, downloads) = html.split_once(DOWNLOADS_HTML).unwrap_or((&html, ""));
+            let assets = downloads
+                .split("<code>")
+                .skip(1)
+                .filter_map(|s| s.split_once("</code>"))
+                .map(|(name, _)| unescape(name))
+                .map(|name| Asset { url: format!("{REPO}/releases/download/{tag}/{name}"), name, size: 0 })
+                .collect();
+            Some(GhRelease {
+                tag_name: tag.to_string(),
+                body: Some(html_to_text(notes)),
+                draft: false,
+                prerelease: tag.split('+').next().unwrap_or_default().contains('-'),
+                html_url: format!("{REPO}/releases/tag/{tag}"),
+                assets,
+            })
+        })
+        .collect()
+}
+
+/// The text between the first `start` and the `end` after it.
+fn between<'a>(text: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let rest = &text[text.find(start)? + start.len()..];
+    Some(&rest[..rest.find(end)?])
+}
+
+/// Release notes HTML as the Markdown the API gives, near enough.
+fn html_to_text(html: &str) -> String {
+    let mut text = String::new();
+    let mut rest = html;
+    while let Some(open) = rest.find('<') {
+        text.push_str(&rest[..open]);
+        let Some(close) = rest[open..].find('>') else { break };
+        match &rest[open + 1..open + close] {
+            tag @ ("h1" | "h2" | "h3" | "h4") => text.push_str(&format!("{} ", "#".repeat(tag[1..].parse().unwrap_or(2)))),
+            "li" => text.push_str("- "),
+            "code" | "/code" => text.push('`'),
+            _ => {}
+        }
+        rest = &rest[open + close + 1..];
+    }
+    text.push_str(rest);
+    // At most one blank line in a row.
+    let mut out = String::new();
+    let mut blank = 0;
+    for line in unescape(&text).trim().lines() {
+        blank = if line.trim().is_empty() { blank + 1 } else { 0 };
+        if blank < 2 {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out.trim().to_string()
+}
+
+fn unescape(text: &str) -> String {
+    text.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&")
 }
 
 /// The release file that updates this kind of install.
@@ -107,7 +207,13 @@ pub fn download(asset: &Asset, progress: impl Fn(f32)) -> Result<PathBuf> {
         // Next to it: the rename over it stays on one filesystem.
         current.with_extension("AppImage.part")
     };
-    let mut body = agent(Duration::from_secs(600)).get(&asset.url).call().context("download")?.into_body();
+    let response = agent(Duration::from_secs(600)).get(&asset.url).call().context("download")?;
+    // The feed doesn't give sizes.
+    let size = match asset.size {
+        0 => response.headers().get("content-length").and_then(|v| v.to_str().ok()?.parse().ok()).unwrap_or(0),
+        size => size,
+    };
+    let mut body = response.into_body();
     let mut reader = body.as_reader();
     let mut file = std::fs::File::create(&dest).with_context(|| format!("can't write {}", dest.display()))?;
     let mut buf = vec![0u8; 64 * 1024];
@@ -119,12 +225,12 @@ pub fn download(asset: &Asset, progress: impl Fn(f32)) -> Result<PathBuf> {
         }
         std::io::Write::write_all(&mut file, &buf[..n])?;
         done += n as u64;
-        if asset.size > 0 {
-            progress(done as f32 / asset.size as f32);
+        if size > 0 {
+            progress(done as f32 / size as f32);
         }
     }
     drop(file);
-    if asset.size > 0 && done != asset.size {
+    if size > 0 && done != size {
         let _ = std::fs::remove_file(&dest);
         bail!("the download stopped early");
     }
@@ -240,7 +346,36 @@ impl Eq for Version {}
 
 #[cfg(test)]
 mod tests {
-    use super::Version;
+    use super::{Version, parse_feed};
+
+    #[test]
+    fn feed() {
+        let xml = r#"<feed><entry>
+    <link rel="alternate" type="text/html" href="https://github.com/sofyan-rs/dotlink/releases/tag/v0.1.0-beta.4"/>
+    <content type="html">&lt;h2&gt;Fixes&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Scanning works &amp;amp; &lt;code&gt;again&lt;/code&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;Downloads&lt;/h2&gt;
+&lt;td&gt;&lt;code&gt;Dotlink-0.1.0-beta.4.apk&lt;/code&gt;&lt;/td&gt;
+&lt;td&gt;&lt;code&gt;dotlink_0.1.0-beta.4_x64-setup.exe&lt;/code&gt;&lt;/td&gt;</content>
+  </entry><entry>
+    <link rel="alternate" type="text/html" href="https://github.com/sofyan-rs/dotlink/releases/tag/v0.2.0"/>
+    <content type="html"></content>
+  </entry></feed>"#;
+        let releases = parse_feed(xml);
+        assert_eq!(releases.len(), 2);
+        let r = &releases[0];
+        assert_eq!(r.tag_name, "v0.1.0-beta.4");
+        assert!(r.prerelease && !releases[1].prerelease);
+        assert_eq!(r.body.as_deref(), Some("## Fixes\n\n- Scanning works & `again`."));
+        assert_eq!(r.assets.len(), 2);
+        assert_eq!(r.assets[1].name, "dotlink_0.1.0-beta.4_x64-setup.exe");
+        assert_eq!(
+            r.assets[1].url,
+            "https://github.com/sofyan-rs/dotlink/releases/download/v0.1.0-beta.4/dotlink_0.1.0-beta.4_x64-setup.exe"
+        );
+    }
 
     #[test]
     fn order() {
