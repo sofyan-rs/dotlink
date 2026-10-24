@@ -269,7 +269,7 @@ impl Render for MainView {
                 .font_family(theme::SANS)
                 .text_size(px(15.))
                 .child(self.sidebar(&p, page, cx))
-                .child(div().id("content").flex_1().h_full().overflow_y_scroll().child(
+                .child(div().id("content").flex_1().min_w_0().h_full().overflow_y_scroll().child(
                     div().w_full().max_w(px(760.)).mx_auto().px(px(32.)).py(px(28.)).flex().flex_col().gap(px(24.)).child(content),
                 ));
         // GNOME (and other compositors without server-side decorations) leave the title bar to
@@ -394,7 +394,7 @@ impl MainView {
         let mut phones = group(p);
         if status.devices.is_empty() {
             phones = phones.child(
-                row(p).child(div().flex_1().text_color(p.ink_muted).child("No phone paired yet.")).child(
+                row(p).child(div().flex_1().min_w_0().text_color(p.ink_muted).child("No phone paired yet.")).child(
                     pill(p, "pair-empty", "Pair a phone", Kind::Primary)
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go(Page::Pair, cx))),
                 ),
@@ -413,7 +413,7 @@ impl MainView {
                     .child(status_dot(if d.online { p.positive } else { p.ink_faint }))
                     .child(
                         div()
-                            .flex_1()
+                            .flex_1().min_w_0()
                             .flex()
                             .flex_col()
                             .child(div().font_weight(FontWeight::MEDIUM).child(d.name.clone()))
@@ -659,7 +659,7 @@ impl MainView {
         let first = usize::from(online.len() > 1);
         if online.len() > 1 {
             let entity = self.model.clone();
-            list = list.child(row(p).child(div().flex_1().child("Phone")).child(phone_picker(
+            list = list.child(row(p).child(div().flex_1().min_w_0().child("Phone")).child(phone_picker(
                 "stream-from",
                 online,
                 model.stream_source(),
@@ -700,7 +700,7 @@ impl MainView {
                     .child(status_dot(dot))
                     .child(
                         div()
-                            .flex_1()
+                            .flex_1().min_w_0()
                             .flex()
                             .flex_col()
                             .child(div().font_weight(FontWeight::MEDIUM).child(title))
@@ -726,7 +726,7 @@ impl MainView {
                     .child(qr(self.qr.as_ref().map(|(_, q)| q.clone()), 260.))
                     .child(
                         div()
-                            .flex_1()
+                            .flex_1().min_w_0()
                             .flex()
                             .flex_col()
                             .gap(px(14.))
@@ -813,7 +813,7 @@ impl MainView {
                 row(p)
                     .when(i > 0, |r| r.border_t_1().border_color(p.line))
                     .child(direction(p, c.to_phone))
-                    .child(div().flex_1().child(what))
+                    .child(div().flex_1().min_w_0().child(what))
                     .child(mono_label(p, format!("{} CHARS · {}", c.chars, ago_instant(c.at)))),
             );
         }
@@ -953,7 +953,7 @@ impl MainView {
                 .when(!first, |r| r.border_t_1().border_color(p.line))
                 .child(
                     div()
-                        .flex_1()
+                        .flex_1().min_w_0()
                         .flex()
                         .flex_col()
                         .child(title)
@@ -979,7 +979,7 @@ impl MainView {
                         .child(title)
                         .child(div().text_size(px(13.)).text_color(p.ink_muted).child(detail)),
                 )
-                .child(div().flex_1().child(Input::new(state).h(px(CONTROL))))
+                .child(div().flex_1().min_w_0().child(Input::new(state).h(px(CONTROL))))
         };
 
         let view = cx.entity().downgrade();
@@ -1133,7 +1133,7 @@ impl MainView {
                         row(p)
                             .border_t_1()
                             .border_color(p.line)
-                            .child(div().flex_1().text_color(p.ink_muted).child("Dotlink is made by Kurodev."))
+                            .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("Dotlink is made by Kurodev."))
                             .child(
                                 pill(p, "kurodev", "kurodev.org", Kind::Ghost)
                                     .on_click(|_, _, cx| cx.open_url("https://kurodev.org")),
@@ -1143,7 +1143,7 @@ impl MainView {
                         row(p)
                             .border_t_1()
                             .border_color(p.line)
-                            .child(div().flex_1().text_color(p.ink_muted).child("Found a bug or have an idea?"))
+                            .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("Found a bug or have an idea?"))
                             .child(
                                 pill(p, "report-bug", "Report a bug or suggestion", Kind::Ghost)
                                     .on_click(|_, _, cx| cx.open_url("https://github.com/sofyan-rs/dotlink/issues")),
@@ -1153,7 +1153,7 @@ impl MainView {
                         row(p)
                             .border_t_1()
                             .border_color(p.line)
-                            .child(div().flex_1().text_color(p.ink_muted).child(if owns {
+                            .child(div().flex_1().min_w_0().text_color(p.ink_muted).child(if owns {
                                 "Quitting stops Dotlink until you open it again."
                             } else {
                                 "The service runs separately (dotlink daemon); this window only controls it."
@@ -1190,7 +1190,7 @@ impl MainView {
         row(p)
             .border_t_1()
             .border_color(p.line)
-            .child(div().flex_1().text_color(p.ink_muted).child(text))
+            .child(div().flex_1().min_w_0().text_color(p.ink_muted).child(text))
             .when_some(release_page, |r, url| {
                 r.child(pill(p, "release-notes", "What's new", Kind::Ghost).on_click(move |_, _, cx| cx.open_url(&url)))
             })
@@ -1212,7 +1212,7 @@ impl MainView {
         group(p).child(
             row(p)
                 .child(status_dot(p.accent))
-                .child(div().flex_1().text_color(p.ink_muted).child("Waiting for the Dotlink service…")),
+                .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("Waiting for the Dotlink service…")),
         )
     }
 }
@@ -1361,7 +1361,7 @@ fn row(_p: &Palette) -> Div {
 fn kv(p: &Palette, key: &str, value: String) -> Div {
     row(p)
         .child(div().w(px(120.)).text_color(p.ink_muted).child(key.to_string()))
-        .child(div().flex_1().font_family(MONO).text_size(px(14.)).child(value))
+        .child(div().flex_1().min_w_0().font_family(MONO).text_size(px(14.)).child(value))
 }
 
 fn mono_label(p: &Palette, text: impl Into<SharedString>) -> Div {
