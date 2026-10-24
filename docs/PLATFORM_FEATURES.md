@@ -158,7 +158,7 @@ apps read, and a placeholder shows while the phone camera is off.
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | Method | `v4l2loopback` device "Dotlink Camera", fed by `ffmpeg` | Windows 11 virtual camera (`MFCreateVirtualCamera`, per user, while Dotlink runs). Its media source is `dotlink_camera.dll` (`desktop/camera`), loaded by the Camera Frame Server; Dotlink decodes the JPEG (`zune-jpeg`), fits it into NV12 and shares it through `%ProgramData%\Dotlink\camera.bin` | ❌ (plan: CoreMediaIO Camera Extension) |
-| Setup | kernel module + device (Setup, polkit) | Setup → Fix (UAC once): DLL into `%ProgramFiles%\Dotlink`, class registered under HKLM | — |
+| Setup | kernel module + device (Setup, polkit) | Setup → Fix (UAC once): DLL into `%ProgramFiles%\Dotlink`, class registered under HKLM, then the Camera Frame Server stopped so it loads the new DLL (an app using the camera loses it for a moment) | — |
 | Requirements | v4l2loopback, ffmpeg | Windows 11 (build 22000+) | — |
 | Status | ✅ | ✅ the phone's picture in OBS (and any Media Foundation app), 1920×1080 NV12 at 30 or 60 fps, over Wi-Fi and USB | ❌ |
 

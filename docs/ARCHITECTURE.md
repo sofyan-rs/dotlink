@@ -203,7 +203,9 @@ request line in, one or more reply lines out.
 - **Setup.** `platform::setup::checks` lists what each feature needs; `fix_many` fixes the
   chosen ones. Linux: one pkexec run (packages in one install command, udev rule, camera
   service, firewalld port). Windows: one UAC prompt each for the firewall rule and installing
-  the camera DLL; scrcpy/adb download without admin rights.
+  the camera DLL (each build under its own `dotlink_camera-<hash>.dll`; the frame server is
+  stopped afterwards, or it keeps serving the old DLL); scrcpy/adb download without admin
+  rights.
 - **Autostart.** Linux: XDG autostart entry; on Hyprland also `~/.config/hypr/dotlink.lua` plus
   one marked `pcall(require, "dotlink")` line, removed again when turned off. Windows: the
   `Dotlink` value under `HKCU\…\CurrentVersion\Run`.

@@ -30,7 +30,8 @@ entry, icon, autostart).
 On Windows: Rust with the MSVC toolchain, nothing else. `cargo build` builds the workspace,
 including `dotlink_camera.dll` (a development build finds it in `target/debug/deps/`). Setup's
 webcam Fix installs that DLL into Program Files; after changing the `camera` crate, run Fix again
-(Setup shows the camera as outdated).
+(Setup shows the camera as outdated). Fix stops the Camera Frame Server so the new DLL is the one
+loaded; an app using the camera loses it for a moment.
 
 ### Android
 
@@ -95,7 +96,9 @@ cargo run -p dotlink
   --nocapture` opens "Dotlink Camera" through the frame server like an app would.
   From Linux, `rustup target add x86_64-pc-windows-msvc` then `cargo check -p dotlink-camera
   --target x86_64-pc-windows-msvc` type-checks the camera DLL; the whole app needs MSVC's C
-  compiler (ring, aws-lc), so build it on Windows.
+  compiler (ring, aws-lc), so build it on Windows. Some gpui APIs only exist on one OS (for
+  example `WindowButtonLayout::linux_default`), so after changing the GUI on Linux, build on
+  Windows too.
 - **Driving the phone from the PC.** With USB debugging, `adb shell input tap/swipe/text`
   and `adb exec-out screencap -p` test the app's side; the Remote and Shell keyboards accept
   `input text`. Use a new Shell tab for tests: the first one may be a session in use.

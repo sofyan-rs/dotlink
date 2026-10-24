@@ -39,7 +39,8 @@ work.
 Each step leaves a usable app, so it can ship after any of them.
 
 1. **It builds.** CI for both OSes (below), then `cargo build -p dotlink` and `cargo test`
-   until they're clean. Expect small fixes: the stubs were never type-checked there.
+   until they're clean. Expect small fixes: the stubs were never type-checked there, and some
+   gpui APIs are Linux-only (`WindowButtonLayout::linux_default` broke the Windows build once).
 2. **Core works.** Pair a phone, send files both ways, clipboard both ways, Shell. Fix the
    named-pipe ACL (Windows) before anything leaves your machine.
 3. **Feels native.** Tray / menu bar, start at login, notifications under the app's name,
