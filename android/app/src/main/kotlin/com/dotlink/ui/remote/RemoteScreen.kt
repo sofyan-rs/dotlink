@@ -381,7 +381,7 @@ private fun KeyStrip(
         keyboardField()
         modifiers.forEach { (label, key) ->
             val active = key in mods
-            KeyChip(label, active = active, feedback = if (active) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn) { onMod(key) }
+            KeyChip(label, active = active, feedback = if (active) HapticFeedbackType.VirtualKey else HapticFeedbackType.ContextClick) { onMod(key) }
         }
         KEYS.forEach { (label, key) -> KeyChip(label) { onKey(key) } }
     }
@@ -391,7 +391,7 @@ private fun KeyStrip(
 private fun KeyChip(
     label: String,
     active: Boolean = false,
-    feedback: HapticFeedbackType = HapticFeedbackType.KeyboardTap,
+    feedback: HapticFeedbackType = HapticFeedbackType.VirtualKey,
     onClick: () -> Unit,
 ) {
     val colors = Dotline.colors
@@ -500,7 +500,7 @@ private fun KeyChipIcon(
                     awaitEachGesture {
                         awaitFirstDown()
                         if (waitForUpOrCancellation() != null) {
-                            haptic.performHapticFeedback(HapticFeedbackType.KeyboardTap)
+                            haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
                             onClick()
                         }
                     }
