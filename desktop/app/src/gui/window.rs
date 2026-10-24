@@ -1,6 +1,6 @@
 //! The Dotlink window: a sidebar and five pages.
 
-use super::client::{DeviceInfo, Status};
+use super::client::{Battery, DeviceInfo, Status};
 use super::model::{Model, Notice, Page, Pairing};
 use super::theme::{self, DISPLAY, MONO, Palette, palette};
 use super::title_bar::TitleBar;
@@ -419,6 +419,7 @@ impl MainView {
                             .child(div().font_weight(FontWeight::MEDIUM).child(d.name.clone()))
                             .child(div().text_size(px(13.)).text_color(p.ink_muted).child(subtitle)),
                     )
+                    .children(d.battery.map(|b| battery(p, b)))
                     .child(pill(p, SharedString::from(format!("unpair-{id}")), "Forget", Kind::Ghost).on_click(
                         cx.listener(move |this, _: &ClickEvent, _, cx| {
                             let id = id.clone();
@@ -1338,6 +1339,47 @@ fn direction(p: &Palette, to_phone: bool) -> Div {
         .text_size(px(15.))
         .text_color(if to_phone { p.ink } else { p.positive })
         .child(if to_phone { "↑" } else { "↓" })
+}
+
+/// The phone's battery: a small battery filled to its level, the percentage, and "Charging".
+/// Green while charging, red when low (15 % or less) and not charging.
+fn battery(p: &Palette, b: Battery) -> Div {
+    let colour = if b.charging {
+        p.positive
+    } else if b.level <= 15 {
+        p.accent
+    } else {
+        p.ink
+    };
+    // 20 × 10 body with a 1 px outline and 1 px inner gap, so the bar is 16 px at 100 %.
+    let fill = 16. * b.level.min(100) as f32 / 100.;
+    let glyph = div()
+        .flex()
+        .items_center()
+        .child(
+            div()
+                .w(px(20.))
+                .h(px(10.))
+                .rounded(px(2.5))
+                .border_1()
+                .border_color(colour)
+                .p(px(1.))
+                .child(div().h_full().w(px(fill)).rounded(px(1.)).bg(colour)),
+        )
+        // The terminal.
+        .child(div().w(px(2.)).h(px(4.)).rounded_r(px(1.)).bg(colour));
+    div()
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .child(glyph)
+        .child(
+            div()
+                .font_family(MONO)
+                .text_size(px(13.))
+                .text_color(if b.charging { p.positive } else { p.ink_muted })
+                .child(if b.charging { format!("{}% · Charging", b.level) } else { format!("{}%", b.level) }),
+        )
 }
 
 fn status_dot(color: Hsla) -> Div {

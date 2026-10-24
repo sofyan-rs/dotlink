@@ -49,6 +49,15 @@ pub struct DeviceInfo {
     /// Connected through the USB cable rather than Wi-Fi.
     #[serde(default)]
     pub usb: bool,
+    /// While connected, from phone apps that report it.
+    #[serde(default)]
+    pub battery: Option<Battery>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+pub struct Battery {
+    pub level: u8,
+    pub charging: bool,
 }
 
 /// What the watch connection reports to the window.

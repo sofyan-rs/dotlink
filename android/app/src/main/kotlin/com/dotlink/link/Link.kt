@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.database.ContentObserver
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -315,6 +316,51 @@ class Link(
         controlJob = scope.launch { controlLoop() }
         watchDebugSettings()
         watchUsb()
+        watchBattery()
+    }
+
+    private var batteryReceiver: BroadcastReceiver? = null
+
+    /** The battery as last sent: (percent, charging). Null until sent on this connection. */
+    @Volatile private var sentBattery: Pair<Int, Boolean>? = null
+
+    /**
+     * Tells the PC the battery level and whether it's charging (`battery`), for its Devices
+     * page. ACTION_BATTERY_CHANGED comes every few seconds for voltage and temperature alone,
+     * so only a new percentage or charging state is sent.
+     */
+    private fun watchBattery() {
+        if (batteryReceiver != null) return
+        val receiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(
+                    context: Context,
+                    intent: Intent,
+                ) = sendBattery(intent)
+            }
+        ContextCompat.registerReceiver(app, receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+        batteryReceiver = receiver
+    }
+
+    /** Sends the battery from [intent] (the sticky one when null) if it changed, or [force]d. */
+    private fun sendBattery(
+        intent: Intent? = null,
+        force: Boolean = false,
+    ) {
+        val battery =
+            intent ?: ContextCompat.registerReceiver(app, null, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+                ?: return
+        val level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+        if (level < 0 || scale <= 0) return
+        val percent = level * 100 / scale
+        val status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+        // Full while plugged in counts as charging: the phone is on power.
+        val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+        val now = percent to charging
+        if (!force && now == sentBattery) return
+        val ws = control ?: return
+        if (ws.send(JSONObject().put("t", "battery").put("level", percent).put("charging", charging).toString())) sentBattery = now
     }
 
     private var usbReceiver: BroadcastReceiver? = null
@@ -522,6 +568,7 @@ class Link(
                 msg.optString("os").takeIf { it.isNotEmpty() }?.let { prefs.pcOs = it }
                 state.value = LinkState.Online(name)
                 sendInfo()
+                sendBattery(force = true)
             }
             "adb_wifi" -> adbWifiRequests.tryEmit(Unit)
             "clip" -> setPhoneClipboard(msg.optString("text"))

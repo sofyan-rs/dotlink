@@ -120,6 +120,7 @@ Dotlink).
   the phone app isn't open, the phone shows a notification: tap **Start**.
 - Phone → PC clipboard happens when you open the app: Android only lets the app in front read the
   clipboard.
+- **Devices** shows each connected phone's battery level and whether it's charging.
 
 ## CLI
 

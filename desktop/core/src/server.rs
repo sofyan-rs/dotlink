@@ -50,6 +50,8 @@ pub struct PhoneInfo {
     pub ip: Option<IpAddr>,
     /// Control connections over the USB cable (`adb reverse`, seen as 127.0.0.1).
     pub usb: usize,
+    /// Battery percent and whether it's charging, from its `battery` message (newer apps).
+    pub battery: Option<(u8, bool)>,
 }
 
 /// Where a file or clipboard goes: one phone, or every connected phone.
@@ -226,6 +228,12 @@ impl App {
                     "model": phones.get(&d.id).map(|p| p.model.clone()),
                     "adb_wifi": phones.get(&d.id).map(|p| p.adb_wifi),
                     "usb": phones.get(&d.id).is_some_and(|p| p.usb > 0),
+                    // Only while connected: an old reading would look current.
+                    "battery": phones
+                        .get(&d.id)
+                        .and_then(|p| p.battery)
+                        .filter(|_| online.get(&d.id).copied().unwrap_or(0) > 0)
+                        .map(|(level, charging)| json!({ "level": level, "charging": charging })),
                 })
             })
             .collect()
@@ -695,6 +703,14 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                         if let Some(name) = v["name"].as_str() {
                             app.rename_device(&dev.id, name);
                         }
+                        app.emit(Event::Devices);
+                    }
+                    if v["t"] == "battery"
+                        && let Some(level) = v["level"].as_u64()
+                    {
+                        let charging = v["charging"].as_bool().unwrap_or(false);
+                        app.phones.lock().unwrap().entry(dev.id.clone()).or_default().battery =
+                            Some((level.min(100) as u8, charging));
                         app.emit(Event::Devices);
                     }
                     if v["t"] == "media" && v["state"] == "needs_tap" {

@@ -121,6 +121,7 @@ Control messages (`{"t": …}`):
 | phone → PC | `clip` | phone clipboard text |
 | phone → PC | `info` | phone name, model, Wireless debugging on, Developer options on (for Cast) |
 | phone → PC | `media` | `state: needs_tap`: starting camera/mic waits for a tap |
+| phone → PC | `battery` | `level` (percent), `charging`; on connect and when either changes. The Devices page shows it while the phone is connected |
 
 ### Wi-Fi or USB
 
