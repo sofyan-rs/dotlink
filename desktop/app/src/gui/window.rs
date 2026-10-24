@@ -3,6 +3,7 @@
 use super::client::{DeviceInfo, Status};
 use super::model::{Model, Notice, Page, Pairing};
 use super::theme::{self, DISPLAY, MONO, Palette, palette};
+use super::title_bar::TitleBar;
 use dotlink_core::cast::CastState;
 use dotlink_core::config::Config;
 use dotlink_core::events::{Transfer, TransferState};
@@ -12,7 +13,6 @@ use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Decorations, Div, Entity, ExternalPaths, FontWeight, Hsla,
     PathPromptOptions, SharedString, Stateful, Subscription, Window, canvas, div, fill, point, px, size,
 };
-use gpui_component::TitleBar;
 use gpui_component::WindowExt as _;
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
@@ -106,6 +106,8 @@ impl MainView {
                 window.push_notification(note, cx);
             }),
             cx.observe_window_appearance(window, |_, window, cx| theme::apply(Some(window), cx)),
+            // GNOME's button layout changed (Tweaks → Window Titlebars): redraw the title bar.
+            cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()),
         ];
         // Ticks the pairing countdown.
         cx.spawn(async move |this, cx| {
@@ -271,8 +273,8 @@ impl Render for MainView {
                     div().w_full().max_w(px(760.)).mx_auto().px(px(32.)).py(px(28.)).flex().flex_col().gap(px(24.)).child(content),
                 ));
         // GNOME (and other compositors without server-side decorations) leave the title bar to
-        // the app: draw one with window controls. gpui-component's Root already adds the
-        // resizable frame and its shadow. KDE and Hyprland decorate (or tile) the window.
+        // the app: draw one with window controls (title_bar.rs). gpui-component's Root already
+        // adds the resizable frame and its shadow. KDE and Hyprland decorate (or tile) the window.
         if matches!(window.window_decorations(), Decorations::Client { .. }) {
             div()
                 .size_full()
@@ -280,7 +282,7 @@ impl Render for MainView {
                 .flex_col()
                 .bg(p.bg)
                 // Empty: the sidebar right under it already says DOTLINK.
-                .child(TitleBar::new())
+                .child(TitleBar::new(p))
                 .child(div().flex_1().min_h(px(0.)).child(body))
                 .into_any_element()
         } else {
@@ -290,7 +292,7 @@ impl Render for MainView {
 }
 
 #[cfg(windows)]
-const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks Windows for administrator rights once.";
+const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for administrator rights (UAC).";
 #[cfg(not(windows))]
 const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for your password once (polkit).";
 
@@ -729,12 +731,17 @@ impl MainView {
                             .gap(px(14.))
                             .child(step(p, "1", "Open Dotlink on your phone."))
                             .child(step(p, "2", "Tap Pair and scan this code."))
-                            .child(step(p, "3", "Keep both on the same Wi-Fi."))
+                            .child(step(p, "3", "Keep both on the same Wi-Fi, or use a USB cable."))
                             .child(mono_label(p, format!("EXPIRES IN {}:{:02}", left / 60, left % 60)).pt(px(8.)))
                             .child(
                                 div()
                                     .flex()
                                     .gap(px(8.))
+                                    // Plugged in with USB debugging: the PC opens the link on the
+                                    // phone, no scanning.
+                                    .child(pill(p, "pair-usb", "Pair over USB", Kind::Secondary).on_click(cx.listener(
+                                        |this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.pair_usb(cx)),
+                                    )))
                                     .child(pill(p, "copy-link", "Copy link", Kind::Secondary).on_click(cx.listener(
                                         move |this, _: &ClickEvent, _, cx| {
                                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(uri.clone()));

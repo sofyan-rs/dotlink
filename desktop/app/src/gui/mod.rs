@@ -21,6 +21,7 @@ mod assets;
 mod client;
 mod model;
 mod theme;
+mod title_bar;
 mod tray;
 mod window;
 
@@ -151,10 +152,10 @@ fn show_window(cx: &mut App) {
         let state = cx.global::<State>();
         (state.window, state.model.clone())
     };
-    if let Some(handle) = existing {
-        if handle.update(cx, |_, window, _| window.activate_window()).is_ok() {
-            return;
-        }
+    if let Some(handle) = existing
+        && handle.update(cx, |_, window, _| window.activate_window()).is_ok()
+    {
+        return;
     }
     let bounds = Bounds::centered(None, size(px(1040.), px(740.)), cx);
     let options = WindowOptions {
