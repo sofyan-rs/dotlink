@@ -409,7 +409,17 @@ async fn launch(app: &Arc<App>, id: &str, name: &str, serial: &str, usb: bool, r
 
 /// Serials of the phones plugged in over USB that allow debugging from this PC.
 pub(crate) async fn usb_serials() -> Result<Vec<String>> {
-    Ok(adb_devices().await?.into_iter().filter(|d| d.usb && d.state == "device").map(|d| d.serial).collect())
+    Ok(usb_phones().await?.into_iter().map(|(serial, _)| serial).collect())
+}
+
+/// `(serial, model)` of the phones plugged in over USB that allow debugging from this PC.
+pub(crate) async fn usb_phones() -> Result<Vec<(String, String)>> {
+    Ok(adb_devices()
+        .await?
+        .into_iter()
+        .filter(|d| d.usb && d.state == "device")
+        .map(|d| (d.serial, d.model.replace('_', " ")))
+        .collect())
 }
 
 struct AdbDevice {

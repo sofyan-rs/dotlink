@@ -99,10 +99,8 @@ impl Model {
                 // Rewrite the entries each start, so they follow the app if it moved (or were
                 // written with a wrong path by an older version).
                 let on = platform::autostart::enabled();
-                if on {
-                    if let Err(e) = platform::autostart::set(true) {
-                        tracing::warn!("autostart: {e:#}");
-                    }
+                if on && let Err(e) = platform::autostart::set(true) {
+                    tracing::warn!("autostart: {e:#}");
                 }
                 on
             },
@@ -409,6 +407,21 @@ impl Model {
     /// The camera/mic was asked to start a moment ago and the phone hasn't begun yet.
     pub fn is_starting(&self, kind: &str) -> bool {
         self.starting.iter().any(|(k, at)| *k == kind && at.elapsed() < START_WAIT)
+    }
+
+    /// Opens the current pairing link on the phones on the cable; the result is a toast.
+    pub fn pair_usb(&mut self, cx: &mut Context<Self>) {
+        let Pairing::Waiting { uri, .. } = &self.pairing else { return };
+        let call = self.client.pair_usb(uri);
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| match result {
+                Ok(msg) => this.notice(msg, false, cx),
+                Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn unpair(&mut self, id: String, cx: &mut Context<Self>) {

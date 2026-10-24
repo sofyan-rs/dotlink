@@ -137,6 +137,11 @@ impl Client {
         ok_text(self.call(json!({ "cmd": "cast_pair", "id": id, "code": code })))
     }
 
+    /// Opens the pairing link `uri` on the phones plugged in over USB.
+    pub fn pair_usb(&self, uri: &str) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "pair_usb", "uri": uri })))
+    }
+
     pub fn unpair(&self, id: &str) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "unpair", "id": id })))
     }
@@ -206,6 +211,6 @@ impl Client {
     }
 }
 
-fn ok_text(call: impl Future<Output = Result<Value>>) -> impl Future<Output = Result<String>> {
-    async move { Ok(call.await?["ok"].as_str().unwrap_or("done").to_string()) }
+async fn ok_text(call: impl Future<Output = Result<Value>>) -> Result<String> {
+    Ok(call.await?["ok"].as_str().unwrap_or("done").to_string())
 }

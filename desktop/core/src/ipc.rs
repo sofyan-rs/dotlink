@@ -107,6 +107,15 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
             };
             w.write_all(reply(msg).as_bytes()).await?;
         }
+        "pair_usb" => {
+            let uri = req["uri"].as_str().unwrap_or("");
+            let msg = result(
+                crate::usb::open_pairing(uri, false)
+                    .await
+                    .map(|phones| format!("Tap Pair on {} to finish", phones.join(" and "))),
+            );
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
         "send" => {
             let paths: Vec<PathBuf> =
                 req["paths"].as_array().into_iter().flatten().filter_map(|p| p.as_str().map(PathBuf::from)).collect();

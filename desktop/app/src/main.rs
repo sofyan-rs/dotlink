@@ -32,7 +32,11 @@ enum Cmd {
     /// Run the service without a window (for `exec-once`, servers, or no tray).
     Daemon,
     /// Show a QR code to pair a phone.
-    Pair,
+    Pair {
+        /// Also open the link on the phones plugged in over USB (USB debugging on): no scanning.
+        #[arg(long)]
+        usb: bool,
+    },
     /// Send files to the connected phones.
     Send {
         /// Only to this phone (name or id); every connected phone without it.
@@ -115,7 +119,7 @@ fn open_app(rt: tokio::runtime::Runtime, _background: bool) -> Result<()> {
 }
 
 /// A `windows_subsystem = "windows"` program starts without stdout; started from a terminal,
-/// print there (`dotlink status`, `--help`, logs). Started from the Start menu there is no
+/// print there (`dotlink devices`, `--help`, logs). Started from the Start menu there is no
 /// parent console and nothing changes.
 #[cfg(all(windows, feature = "gui"))]
 fn attach_console() {
@@ -138,12 +142,21 @@ fn init_logging() {
 async fn command(cmd: Cmd) -> Result<()> {
     match cmd {
         Cmd::Daemon => unreachable!(),
-        Cmd::Pair => {
+        Cmd::Pair { usb } => {
             ipc::request(json!({ "cmd": "pair" }), |v| {
                 if let Some(uri) = v["uri"].as_str() {
                     print_qr(uri);
                     println!("\nScan this with the Dotlink app (valid for 5 minutes).");
                     println!("Or paste this link in the app:\n{uri}\n\nWaiting for the phone…");
+                    if usb {
+                        // A second request while this one waits for the phone to pair.
+                        let req = json!({ "cmd": "pair_usb", "uri": uri });
+                        tokio::spawn(async move {
+                            if let Err(e) = simple(req).await {
+                                eprintln!("USB: {e:#}");
+                            }
+                        });
+                    }
                 } else if let Some(name) = v["paired"].as_str() {
                     println!("Paired with {name}.");
                 } else if let Some(e) = v["error"].as_str() {

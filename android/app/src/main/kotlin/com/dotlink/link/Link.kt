@@ -54,6 +54,7 @@ import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import javax.net.SocketFactory
@@ -223,6 +224,58 @@ class Link(
             }
         }
 
+    // ---------- pairing over the cable ----------
+
+    /** Set while this phone waits for the PC on the cable to send back a pairing link. */
+    @Volatile private var usbPairNonce: String? = null
+
+    /**
+     * The name of the Dotlink PC on the other end of a USB cable (`adb reverse` set up), or
+     * null. The certificate can't be pinned yet (nothing is paired), so nothing secret is
+     * sent on this connection: see [requestUsbPairing].
+     */
+    suspend fun usbPc(): String? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                probeClient.newCall(Request.Builder().url("https://$USB_HOST:$DEFAULT_PORT/pair/usb").build()).execute().use { res ->
+                    if (res.isSuccessful) JSONObject(res.body!!.string()).optString("name").ifEmpty { "PC" } else null
+                }
+            }.getOrNull()
+        }
+
+    /**
+     * Asks the PC on the cable to pair. It doesn't answer with the code: it opens the
+     * pairing link in this app through adb (only possible from a PC this phone allowed USB
+     * debugging for), carrying our nonce, and [UsbPairReceiver] hands it to the pair screen, which pairs without a tap.
+     */
+    suspend fun requestUsbPairing(): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val nonce = UUID.randomUUID().toString().replace("-", "")
+                usbPairNonce = nonce
+                val body = JSONObject().put("nonce", nonce).toString().toRequestBody("application/json".toMediaType())
+                probeClient
+                    .newBuilder()
+                    .readTimeout(30, TimeUnit.SECONDS) // the PC runs adb before answering
+                    .build()
+                    .newCall(Request.Builder().url("https://$USB_HOST:$DEFAULT_PORT/pair/usb").post(body).build())
+                    .execute()
+                    .use { res -> if (!res.isSuccessful) error(res.body?.string().orEmpty().ifBlank { "PC answered ${res.code}" }) }
+            }.onFailure { usbPairNonce = null }
+        }
+
+    /** The link the PC sent back for [requestUsbPairing]; the pair screen pairs with it. */
+    val usbPairLink = MutableStateFlow<String?>(null)
+
+    /** From [UsbPairReceiver]: kept only when it answers this phone's own request. */
+    fun offerUsbPairLink(link: String) {
+        val nonce = usbPairNonce ?: return
+        if (runCatching { Uri.parse(link.trim()).getQueryParameter("r") == nonce }.getOrDefault(false)) {
+            usbPairNonce = null
+            usbPairLink.value = link
+        }
+    }
+
     /** Forgets the active PC. Another paired PC, if any, becomes active (not connected yet). */
     fun unpair() {
         stop()
@@ -348,6 +401,8 @@ class Link(
             val host = resolveHost()
             if (host != null) {
                 val closed = CompletableDeferred<Unit>()
+                // The token this connection uses: a 401 for it says nothing about a newer one.
+                val token = prefs.token
                 val ws =
                     http().newWebSocket(
                         request("/ws/control", host).build(),
@@ -375,7 +430,7 @@ class Link(
                                 t: Throwable,
                                 response: Response?,
                             ) {
-                                if (response?.code == 401) revoked()
+                                if (response?.code == 401) revoked(token)
                                 closed.complete(Unit)
                             }
                         },
@@ -429,8 +484,9 @@ class Link(
     private fun ping(host: String): Boolean =
         try {
             val quick = http().newBuilder().connectTimeout(1500, TimeUnit.MILLISECONDS).readTimeout(3, TimeUnit.SECONDS).build()
+            val token = prefs.token
             quick.newCall(request("/ping", host).build()).execute().use { res ->
-                if (res.code == 401) revoked()
+                if (res.code == 401) revoked(token)
                 // The cable isn't an address to come back to over Wi-Fi.
                 if (res.isSuccessful && host != USB_HOST) prefs.lastHost = host
                 res.isSuccessful
@@ -439,13 +495,22 @@ class Link(
             false
         }
 
-    /** The PC forgot this phone (`dotlink unpair`). */
-    private fun revoked() {
-        val name = prefs.serverName
+    /**
+     * The PC forgot this phone (`dotlink unpair`): it refused [token]. Forgets the PC holding
+     * that token, not simply the active one. A reply to an old request can arrive after the
+     * phone switched PCs or paired again (a new token), and must not remove those.
+     */
+    private fun revoked(token: String?) {
+        val pc = prefs.pcs.find { it.token == token } ?: return
+        if (pc.id != prefs.active?.id) {
+            prefs.removePc(pc.id)
+            notices.tryEmit("${pc.name} forgot this phone")
+            return
+        }
         prefs.clearPairing()
         client = null
         state.value = if (prefs.paired) LinkState.Offline else LinkState.Unpaired
-        notices.tryEmit("$name forgot this phone")
+        notices.tryEmit("${pc.name} forgot this phone")
     }
 
     private fun onControl(text: String) {
@@ -733,6 +798,38 @@ class Link(
          * decides whether it is the right PC.
          */
         const val USB_HOST = "127.0.0.1"
+
+        /** The PC's default port; `adb reverse` maps the same port on the phone. */
+        private const val DEFAULT_PORT = 47390
+
+        /**
+         * For [usbPc] / [requestUsbPairing] only: accepts any certificate, because before
+         * pairing there is none to pin. Only a nonce goes over it, never a secret.
+         */
+        private val probeClient: OkHttpClient by lazy {
+            val tm =
+                object : X509TrustManager {
+                    override fun checkClientTrusted(
+                        chain: Array<out X509Certificate>,
+                        authType: String,
+                    ) = throw CertificateException("client certs not used")
+
+                    override fun checkServerTrusted(
+                        chain: Array<out X509Certificate>,
+                        authType: String,
+                    ) = Unit
+
+                    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+                }
+            val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(tm), null) }
+            OkHttpClient
+                .Builder()
+                .sslSocketFactory(ssl.socketFactory, tm)
+                .hostnameVerifier { _, _ -> true }
+                .connectTimeout(2, TimeUnit.SECONDS)
+                .readTimeout(3, TimeUnit.SECONDS)
+                .build()
+        }
 
         /** How often a Wi-Fi link checks whether the cable has become available. */
         private const val USB_PROBE_MS = 5_000L
