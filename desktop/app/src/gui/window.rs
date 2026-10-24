@@ -719,14 +719,17 @@ impl MainView {
             Pairing::Waiting { uri, since } => {
                 let left = 300u64.saturating_sub(since.elapsed().as_secs());
                 let uri = uri.clone();
+                // Too narrow for both side by side: the steps go under the code.
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap(px(28.))
                     .items_start()
                     .child(qr(self.qr.as_ref().map(|(_, q)| q.clone()), 260.))
                     .child(
                         div()
-                            .flex_1().min_w_0()
+                            .flex_1()
+                            .min_w(px(240.))
                             .flex()
                             .flex_col()
                             .gap(px(14.))
@@ -737,6 +740,7 @@ impl MainView {
                             .child(
                                 div()
                                     .flex()
+                                    .flex_wrap()
                                     .gap(px(8.))
                                     // Plugged in with USB debugging: the PC opens the link on the
                                     // phone, no scanning.
@@ -1468,7 +1472,7 @@ fn step(p: &Palette, n: &str, text: &str) -> Div {
                 .text_size(px(13.))
                 .child(n.to_string()),
         )
-        .child(text.to_string())
+        .child(div().flex_1().min_w_0().child(text.to_string()))
 }
 
 fn transfer_row(p: &Palette, t: &Transfer) -> Div {
