@@ -139,7 +139,7 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
 #[cfg(windows)]
 pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
     use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-    use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    use tray_icon::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
     let items = [
         ("open", "Open Dotlink", TrayAction::Open),
@@ -206,7 +206,7 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
     }
 }
 
-/// The tray icon and whether it's drawn for a light taskbar.
+// The tray icon and whether it's drawn for a light taskbar.
 #[cfg(windows)]
 thread_local! {
     static TRAY: std::cell::RefCell<Option<(tray_icon::TrayIcon, bool)>> = const { std::cell::RefCell::new(None) };

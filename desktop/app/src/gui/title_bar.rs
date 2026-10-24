@@ -35,7 +35,12 @@ struct DragState {
 impl RenderOnce for TitleBar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = self.palette;
-        let layout = cx.button_layout().unwrap_or_else(WindowButtonLayout::linux_default);
+        // gpui's `linux_default` only exists on Linux; Windows and macOS decorate the window
+        // themselves and never get here, but still compile this.
+        let layout = cx.button_layout().unwrap_or(WindowButtonLayout {
+            left: [None; 3],
+            right: [Some(WindowButton::Minimize), Some(WindowButton::Maximize), Some(WindowButton::Close)],
+        });
         // What the compositor can do: a tiling one may offer neither minimize nor maximize.
         let supported = window.window_controls();
         let shown = move |b: &WindowButton| match b {

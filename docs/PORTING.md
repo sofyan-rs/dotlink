@@ -144,8 +144,8 @@ used (its ACL is already user-only); revisit it only if the config dir becomes c
 
 ### Tray / menu bar
 
-`app/src/gui/tray.rs` returns `false` off Linux. Use the `tray-icon` crate (with `muda` for
-the menu) and send the same `TrayAction`s:
+`app/src/gui/tray.rs` returns `false` on macOS (Linux uses `ksni`, Windows `tray-icon`). Use
+the `tray-icon` crate there too (with `muda` for the menu) and send the same `TrayAction`s:
 
 - Create it on the main thread after GPUI has started (inside `Application::run`). GPUI owns
   the run loop on both OSes; `tray-icon` only needs the main thread to pump messages, which

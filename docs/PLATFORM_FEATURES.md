@@ -238,11 +238,18 @@ switches to the plain microphone.
 **Windows, retest after the Linux pass** (2026-10-24). These changed in shared or Windows
 code and were only built or type-checked on Linux. Rebuild (`cargo build -p dotlink
 -p dotlink-camera`, or the installer), and with the phone's current build:
-- [ ] Setup: the camera shows as outdated (the DLL changed); Fix reinstalls it.
+- [x] Build on Windows: `cargo build`, `cargo test`, `cargo clippy --all-targets` (no
+  warnings). The GNOME title bar used gpui's Linux-only `WindowButtonLayout::linux_default`,
+  which broke the Windows build; it now spells the fallback out.
+- [x] Setup: the camera shows as outdated (the DLL changed); Fix reinstalls it. It also said
+  "administrator rights were refused" after a successful install: removing the old DLL, still
+  loaded by the Frame Server, failed silently and left PowerShell's exit code at 1. Fixed
+  (`exit 0`), not yet seen with the next outdated DLL.
 - [ ] Dotlink Camera offers 60 and 30 fps: OBS lists both, both play; a 30 fps phone at 60
   just repeats frames.
-- [ ] The tray icon: monochrome dots, white on a dark taskbar, black on a light one, switching
-  live when the Windows mode changes (within ~3 s); same size as the icons next to it.
+- [x] The tray icon: monochrome dots, white on a dark taskbar, black on a light one, switching
+  live when the Windows mode changes (within ~3 s).
+- [x] The tray icon is the same size as the icons next to it.
 - [ ] Pairing over USB: Pair a phone → Pair over USB (and `dotlink pair --usb`) opens the
   pairing screen on the phone; the phone's own Pair with <PC> over USB pairs without a tap;
   two phones at once.

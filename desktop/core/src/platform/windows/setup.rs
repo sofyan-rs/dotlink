@@ -239,8 +239,10 @@ async fn run_elevated_powershell(script: &str) -> Result<()> {
     let log = std::env::temp_dir().join(format!("dotlink-setup-{}.txt", std::process::id()));
     let _ = std::fs::remove_file(&log);
     let quoted_log = format!("'{}'", log.to_string_lossy().replace('\'', "''"));
+    // `exit 0` on success: a non-terminating error the script silenced (-ErrorAction
+    // SilentlyContinue) still leaves $? false, and PowerShell would exit 1 with no message.
     let script = format!(
-        "try {{\n{script}\n}} catch {{ $_.Exception.Message | Out-File -Encoding utf8 {quoted_log}; exit 1 }}\n"
+        "try {{\n{script}\n}} catch {{ $_.Exception.Message | Out-File -Encoding utf8 {quoted_log}; exit 1 }}\nexit 0\n"
     );
     let utf16: Vec<u8> = script.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
