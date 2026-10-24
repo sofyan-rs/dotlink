@@ -5,8 +5,9 @@ reference implementation; [PORTING.md](PORTING.md) is the plan for the rest. Eve
 OS-specific lives in `desktop/core/src/platform/{linux,windows,macos}/` (plus the tray in
 `desktop/app/src/gui/tray.rs` and the camera DLL in `desktop/camera/`).
 
-Status as of 2026-10-23. Tested with an iQOO I2218 (Android 16) against Fedora 44 (GNOME, KDE
-Plasma, Hyprland) and Windows 11 Pro 26H2 (build 26300); macOS hasn't been built yet. Windows
+Status as of 2026-10-24. Tested with an iQOO I2218 and a realme RMX5085 (both Android 16)
+against Fedora 44 (GNOME, KDE Plasma, Hyprland) and Windows 11 Pro 26H2 (build 26300); macOS
+hasn't been built yet. Windows
 means Windows 11 only: Windows 10 isn't supported.
 
 | Mark | Meaning |
@@ -34,7 +35,7 @@ means Windows 11 only: Windows 10 isn't supported.
 | Start at login | ✅ | ✅ | ❌ |
 | Setup checks and fixes | ✅ | ✅ | ❌ |
 | Control socket (CLI ↔ app) | ✅ | ✅ | 🔧 |
-| Link over a USB cable (`adb reverse`) | 🟡 | ✅ | 🔧 |
+| Link over a USB cable (`adb reverse`) | ✅ | ✅ | 🔧 |
 | Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | ❌ |
 
 ## Wi-Fi or USB
@@ -70,8 +71,8 @@ for this PC. On Windows some phones also need their maker's USB driver for adb t
 | Microphone | ✅ | ✅ | PCM over a WebSocket |
 | Cast | ✅ Wireless debugging (Android 11+, paired once with a 6-digit code) | ✅ USB debugging | USB is preferred when both are there; it also keeps the phone awake (`--stay-awake`). Cast needs the phone's Dotlink connection (either kind) to know which phone is which |
 
-✅ / 🟡 above are from Windows (Wi-Fi turned off on the phone for the USB tests). The code is
-the same on Linux and macOS; it only needs adb, which Dotlink already finds or downloads for
+✅ above are from Windows and Linux (Wi-Fi turned off on the phone for the USB tests). The
+code is the same on macOS; it only needs adb, which Dotlink already finds or downloads for
 Cast.
 
 ## Per feature
@@ -147,7 +148,7 @@ One cast per phone, several at once; Stop also cancels while connecting.
 | scrcpy / adb | PATH, Android SDK, or the downloaded release (`.tar.gz`) | PATH, `%LOCALAPPDATA%\Android\Sdk`, or the downloaded release (`.zip`, win64 / winarm64) | PATH, `~/Library/Android/sdk`, or the downloaded release (`.tar.gz`) |
 | Process cleanup | kill on stop | job object (`KILL_ON_JOB_CLOSE`): ends package-manager shims and their child | kill on stop |
 | USB detection | `usb:` in `adb devices -l` | serial isn't `ip:port` or an mDNS name (Windows' adb prints no `usb:`) | `usb:` field |
-| Status | ✅ | ✅ USB and Wi-Fi, download, stop, cancel, several phones (tested with one) | 🔧 |
+| Status | ✅ USB and Wi-Fi, stop, cancel, two phones at once | ✅ USB and Wi-Fi, download, stop, cancel, several phones (tested with one) | 🔧 |
 
 ### Webcam (phone camera)
 
@@ -234,24 +235,36 @@ switches to the plain microphone.
 - Code signing (Authenticode) for the installer and the exe; CI.
 - Offer more formats than NV12 if a camera app refuses it.
 
-**Linux**: retest after the Windows work changed shared code. On Fedora 44 (GNOME, KDE,
-Hyprland), with the phone's current debug or release build. Checked 2026-10-24 on GNOME
-(Wayland) with the phone's debug build over USB:
+**Linux**: retest after the Windows work changed shared code. On Fedora 44 (GNOME and
+Hyprland; no KDE machine at hand), with the phone's current debug or release build. Checked
+2026-10-24 on GNOME (Wayland) with the phone's debug build over USB, and Hyprland 0.56 nested:
 - [x] Build: `cargo build -p dotlink`, `--no-default-features`, `cargo test`, `cargo clippy`
   (no warnings). Still to do: run `install.sh`.
 - [x] Pair (over the cable), files both ways (SHA-256 checked), clipboard both ways (X11 path
   on GNOME), Shell (⏺ ⎿ ⏵, Nerd icons, powerline separators, box lines, colours, resize).
 - [x] Remote: pointer and typing checked on screen.
-- [ ] USB link: plug in with USB debugging, the phone shows "USB cable" ✅; unplug falls back
-  to Wi-Fi within a second, then files, clipboard, mic and Cast work over Wi-Fi ✅; Wi-Fi off
-  on the phone, replug moves back.
-- [ ] Cast: one phone over USB and over Wi-Fi (Wireless debugging), Stop, Stop while
-  connecting ✅; several phones.
-- [ ] Webcam (needs Setup → Fix for the v4l2loopback device); mic ✅ ("Dotlink Mic" records
-  the phone).
+- [x] USB link: plug in with USB debugging, the phone shows "USB cable"; unplug falls back to
+  Wi-Fi within a second, then files, clipboard, mic and Cast work over Wi-Fi; replug moves
+  back; Wi-Fi off on the phone, files still go over the cable.
+- [x] Pairing over USB from the PC and from the phone, two phones at once; unpairing cuts a
+  connected phone off within a second.
+- [x] Cast: one phone over USB and over Wi-Fi (Wireless debugging), Stop, Stop while
+  connecting; two phones at once.
+- [x] Webcam ("Dotlink Camera" set up by Setup → Fix) and mic ("Dotlink Mic" records the
+  phone).
 - [x] The phone's tab rail in landscape.
-- [ ] Tray (registered with GNOME's StatusNotifierWatcher), start at login entry, `dotlink
-  quit` ✅; Setup page, and KDE / Hyprland.
+- [ ] Tray (the monochrome icon on GNOME's top bar, text menu), start at login entry, `dotlink
+  quit`, battery on the Devices page ✅; Setup page.
+- [ ] Hyprland: the window is tiled with Hyprland's border and no title bar of ours, the
+  clipboard uses `wl-paste --watch`, and the start-at-login hook is in `hyprland.lua` ✅;
+  the tray icon in a bar (Waybar or similar), and Dotlink starting at login.
+
+**Windows, after the Linux pass**: retest what changed. Written and type-checked (or built) on
+Linux, not run on Windows yet:
+- [ ] The tray icon: white on a dark taskbar, black on a light one, switching live.
+- [ ] Dotlink Camera at 60 and 30 fps (`RATES`): reinstall it with Setup → Fix, then pick 60
+  in OBS.
+- [ ] Pairing over USB, the battery on the Devices page, unpairing cutting a phone off.
 
 **macOS**
 - Build it first (Step 1 in [PORTING.md](PORTING.md)), then everything marked ❌ above.
