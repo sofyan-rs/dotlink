@@ -153,8 +153,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          path: dist
-          merge-multiple: true
+          path: artifacts
+      # The Linux artifact keeps its folders (packages/, generate-rpm/): flatten everything.
+      - name: Files
+        run: mkdir dist && find artifacts -type f -exec mv -t dist {} +
       - name: Release notes
         run: |
           NOTES=".github/release-notes/$TAG.md"
