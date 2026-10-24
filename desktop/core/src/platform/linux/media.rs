@@ -1,6 +1,6 @@
 //! Phone camera → v4l2loopback ("Dotlink Camera"), phone mic → PipeWire source ("Dotlink Mic").
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
@@ -67,7 +67,6 @@ impl CameraSink {
         Ok(())
     }
 }
-
 
 /// Keeps "Dotlink Camera" fed for the daemon's whole life: phone frames while the phone streams,
 /// a "camera off" placeholder at 5 fps otherwise. With `exclusive_caps=1` the device is only
@@ -186,10 +185,11 @@ async fn placeholder_jpeg((w, h): (u32, u32)) -> axum::body::Bytes {
             .stdin(Stdio::null())
             .output()
             .await;
-        if let Ok(out) = out {
-            if out.status.success() && !out.stdout.is_empty() {
-                return out.stdout.into();
-            }
+        if let Ok(out) = out
+            && out.status.success()
+            && !out.stdout.is_empty()
+        {
+            return out.stdout.into();
         }
     }
     axum::body::Bytes::new()

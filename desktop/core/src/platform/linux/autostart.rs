@@ -54,10 +54,8 @@ pub fn exe_path() -> String {
         (Some(dir), Some(exe)) => exe.starts_with(dir),
         _ => false,
     };
-    if in_appimage {
-        if let Ok(appimage) = std::env::var("APPIMAGE") {
-            return appimage;
-        }
+    if in_appimage && let Ok(appimage) = std::env::var("APPIMAGE") {
+        return appimage;
     }
     exe.map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "dotlink".into())
 }
