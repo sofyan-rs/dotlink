@@ -198,7 +198,7 @@ switches to the plain microphone.
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | Method | StatusNotifierItem over D-Bus (`ksni`); a symbolic icon the panel recolours (white pixmap as fallback), text-only menu | notification area (`tray-icon`); left click opens the window, menu on right click; the icon white or black with the taskbar's light/dark mode | ❌ |
-| Status | ✅ | ✅ Open, Send clipboard, Cast screen and Quit clicked through; closing the window says once that Dotlink keeps running | ❌ |
+| Status | ✅ GNOME (AppIndicator) and Hyprland (quickshell's tray); started before the bar at login, it registers once the tray appears | ✅ Open, Send clipboard, Cast screen and Quit clicked through; closing the window says once that Dotlink keeps running | ❌ |
 
 ### Start at login
 
@@ -219,7 +219,7 @@ switches to the plain microphone.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Window | GPUI; own title bar where the desktop doesn't decorate (GNOME) | GPUI with Windows decorations; app icon embedded (`app/build.rs`, `winresource`) | 🔧 GPUI |
+| Window | GPUI; where the desktop doesn't decorate (GNOME) its own title bar in libadwaita's look, with the buttons GNOME's `button-layout` asks for; Hyprland tiles it with its own border. Dark mode followed from the portal, also when started at login | GPUI with Windows decorations; app icon embedded (`app/build.rs`, `winresource`) | 🔧 GPUI |
 | Console | — | GUI subsystem: no console window; CLI commands print in the terminal they came from | — |
 | Closing the window | keeps running in the tray | same, with a one-time notification saying so | — |
 
@@ -235,39 +235,44 @@ switches to the plain microphone.
 - Code signing (Authenticode) for the installer and the exe; CI.
 - Offer more formats than NV12 if a camera app refuses it.
 
-**Linux**: retest after the Windows work changed shared code. On Fedora 44 (GNOME and
-Hyprland; no KDE machine at hand), with the phone's current debug or release build. Checked
-2026-10-24 on GNOME (Wayland) with the phone's debug build over USB, and Hyprland 0.56 nested:
+**Windows, retest after the Linux pass** (2026-10-24). These changed in shared or Windows
+code and were only built or type-checked on Linux. Rebuild (`cargo build -p dotlink
+-p dotlink-camera`, or the installer), and with the phone's current build:
+- [ ] Setup: the camera shows as outdated (the DLL changed); Fix reinstalls it.
+- [ ] Dotlink Camera offers 60 and 30 fps: OBS lists both, both play; a 30 fps phone at 60
+  just repeats frames.
+- [ ] The tray icon: monochrome dots, white on a dark taskbar, black on a light one, switching
+  live when the Windows mode changes (within ~3 s); same size as the icons next to it.
+- [ ] Pairing over USB: Pair a phone → Pair over USB (and `dotlink pair --usb`) opens the
+  pairing screen on the phone; the phone's own Pair with <PC> over USB pairs without a tap;
+  two phones at once.
+- [ ] Unpairing a connected phone (Devices → Forget, `dotlink unpair`) cuts it off within a
+  second, and the phone forgets the PC.
+- [ ] Devices: each connected phone's battery and charging state.
+- [ ] Setup's texts and order (the firewall first, the camera's "pick Dotlink Camera" line).
+- [ ] Shell: the phone's terminal PIN is per PC (Settings → Paired PC).
+
+**Linux** (Fedora 44, GNOME and Hyprland; no KDE machine at hand). Rechecked 2026-10-24 with
+an iQOO I2218 and a realme RMX5085 after the Windows work changed shared code:
 - [x] Build: `cargo build -p dotlink`, `--no-default-features`, `cargo test`, `cargo clippy`
-  (no warnings). Still to do: run `install.sh`.
-- [x] Pair (over the cable), files both ways (SHA-256 checked), clipboard both ways (X11 path
-  on GNOME), Shell (⏺ ⎿ ⏵, Nerd icons, powerline separators, box lines, colours, resize).
-- [x] Remote: pointer and typing checked on screen.
-- [x] USB link: plug in with USB debugging, the phone shows "USB cable"; unplug falls back to
-  Wi-Fi within a second, then files, clipboard, mic and Cast work over Wi-Fi; replug moves
-  back; Wi-Fi off on the phone, files still go over the cable.
+  (no warnings).
+- [x] Pair (over the cable), files both ways (SHA-256 checked), clipboard both ways, Shell
+  (⏺ ⎿ ⏵, Nerd icons, powerline separators, box lines, colours, resize), Remote.
+- [x] USB link: "USB cable" on the phone; unplugged, Wi-Fi within a second (files, clipboard,
+  mic, Cast); replugged, back to the cable; with the phone's Wi-Fi off, still over the cable.
 - [x] Pairing over USB from the PC and from the phone, two phones at once; unpairing cuts a
   connected phone off within a second.
-- [x] Cast: one phone over USB and over Wi-Fi (Wireless debugging), Stop, Stop while
-  connecting; two phones at once.
-- [x] Webcam ("Dotlink Camera" set up by Setup → Fix) and mic ("Dotlink Mic" records the
-  phone).
-- [x] The phone's tab rail in landscape.
-- [ ] Tray (the monochrome icon on GNOME's top bar, text menu), start at login entry, `dotlink
-  quit`, battery on the Devices page ✅; Setup page.
-- [ ] Hyprland: the window is tiled with Hyprland's border and no title bar of ours, the
-  clipboard uses `wl-paste --watch`, and the start-at-login hook is in `hyprland.lua` ✅;
-  the tray icon in a bar (Waybar or similar), and Dotlink starting at login.
-
-**Windows, after the Linux pass**: retest what changed. Written and type-checked (or built) on
-Linux, not run on Windows yet:
-- [ ] The tray icon: white on a dark taskbar, black on a light one, switching live.
-- [ ] Dotlink Camera at 60 and 30 fps (`RATES`): reinstall it with Setup → Fix, then pick 60
-  in OBS.
-- [ ] Pairing over USB, the battery on the Devices page, unpairing cutting a phone off.
+- [x] Cast over USB and Wi-Fi, Stop, Stop while connecting, two phones at once.
+- [x] Webcam and mic; the phone's tab rail in landscape; battery on the Devices page.
+- [x] Tray (monochrome icon, text menu), start at login, `dotlink quit`, Setup page.
+- [x] Hyprland: tiled window without our title bar, `wl-paste --watch`, started at login by the
+  `hyprland.lua` hook, tray in quickshell.
+- [ ] `scripts/install.sh` on a clean user.
 
 **macOS**
 - Build it first (Step 1 in [PORTING.md](PORTING.md)), then everything marked ❌ above.
 
 **Phone app**
 - Hide the Webcam and Mic switches when the PC reports it can't do them.
+- 60 fps webcam on phones whose cameras only reach 60 in high-speed mode: needs H.264 instead
+  of JPEG frames.

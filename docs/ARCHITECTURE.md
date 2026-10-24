@@ -179,6 +179,13 @@ request line in, one or more reply lines out.
   (`Streaming::claim`). Android 14+ only lets the app start them while it's on screen, so a
   request from the PC in the background becomes a notification with Start. Phones whose
   voice-processing input is silent outside a call (vivo / iQOO) fall back to the plain mic.
+  The phone offers 30 or 60 fps, only what the lens in use lists; the Windows camera offers
+  both rates and paces by the one the app picks.
+- **Battery.** The phone reports its level and charging state (`battery`); the Devices page
+  shows it for connected phones.
+- **Tray.** The logo's dots in one colour (`tray.rs`, `glyph`): a symbolic SVG the panel
+  recolours on Linux, white or black with the taskbar's mode on Windows. Started before the
+  bar at login (Hyprland), it registers once a tray appears.
 - **Latency.** Nothing queues behind a slow link. The phone sends a camera frame only when the
   socket is idle, mic audio in 10 ms chunks, with TCP_NODELAY and a Wi-Fi lock while linked.
   The PC hands ffmpeg only the newest frame (a `watch` channel, `mpjpeg` input), shrinks the
@@ -210,7 +217,9 @@ tray).
 Search for `TODO(windows)` and `TODO(macos)`; [PORTING.md](PORTING.md) is the plan, step by step, and [PLATFORM_FEATURES.md](PLATFORM_FEATURES.md) what each OS does today.
 
 Window decorations: GPUI asks for server-side decorations; where the compositor leaves them to
-the app (GNOME), the window draws gpui-component's `TitleBar` and a resizable border.
+the app (GNOME), the window draws its own title bar (`gui/title_bar.rs`: libadwaita's look, the
+buttons and sides from GNOME's `button-layout`, followed live) and gpui-component's resizable
+border.
 
 ## Files on disk
 

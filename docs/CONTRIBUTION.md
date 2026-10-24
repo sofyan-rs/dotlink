@@ -93,6 +93,9 @@ cargo run -p dotlink
 - **Windows.** The config folder comes from `%APPDATA%` and ignores `XDG_*`, so a second
   instance isn't possible yet. `cargo test -p dotlink-camera --test capture -- --ignored
   --nocapture` opens "Dotlink Camera" through the frame server like an app would.
+  From Linux, `rustup target add x86_64-pc-windows-msvc` then `cargo check -p dotlink-camera
+  --target x86_64-pc-windows-msvc` type-checks the camera DLL; the whole app needs MSVC's C
+  compiler (ring, aws-lc), so build it on Windows.
 - **Driving the phone from the PC.** With USB debugging, `adb shell input tap/swipe/text`
   and `adb exec-out screencap -p` test the app's side; the Remote and Shell keyboards accept
   `input text`. Use a new Shell tab for tests: the first one may be a session in use.

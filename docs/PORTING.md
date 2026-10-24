@@ -167,7 +167,7 @@ the menu) and send the same `TrayAction`s:
   `.regular` when the window opens, `.accessory` when it closes (the menu bar item stays).
   With `--background` start as `.accessory`.
 - Title bar: GPUI on macOS can use a transparent title bar with the traffic lights over the
-  sidebar. The GNOME `TitleBar` path in `window.rs` (client-side decorations) should not be
+  sidebar. The GNOME title bar (`title_bar.rs`, client-side decorations) should not be
   used there; check which branch macOS takes.
 
 ### Windows app behaviour

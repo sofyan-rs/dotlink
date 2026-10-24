@@ -23,7 +23,7 @@ Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on
 
 | | Needs | Tested on |
 |---|---|---|
-| **Phone** | Android 10 or newer; Cast over Wi-Fi needs Android 11+ | iQOO I2218, Android 16 |
+| **Phone** | Android 10 or newer; Cast over Wi-Fi needs Android 11+ | iQOO I2218, realme RMX5085 (Android 16) |
 | **Linux** | x86_64, a desktop with PipeWire; any Wayland or X11 desktop | Fedora 44: GNOME, KDE Plasma, Hyprland |
 | **Windows** | Windows 11, x64 (Windows 10 isn't supported) | Windows 11 Pro 26H2 (build 26300) |
 | **macOS** | not supported yet (planned: macOS 13 Ventura or newer) | — |
