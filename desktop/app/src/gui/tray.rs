@@ -112,14 +112,24 @@ fn write_icon() -> Option<(String, String)> {
 #[cfg(target_os = "linux")]
 pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
     use ksni::TrayMethods;
-    match (DotlinkTray { actions, icon: write_icon() }).spawn().await {
+    let icon = write_icon();
+    let tray = DotlinkTray { actions: actions.clone(), icon: icon.clone() };
+    match tray.spawn().await {
         Ok(handle) => {
             // Keep the D-Bus service alive for the app's lifetime.
             std::mem::forget(handle);
             true
         }
         Err(e) => {
-            tracing::info!("no tray icon: {e}");
+            // At login Dotlink can start before the bar's tray (Hyprland's exec-once runs
+            // everything at once): keep waiting, and the icon appears when the tray does.
+            // Until then the app behaves as without one (false), so closing the window still
+            // says Dotlink keeps running.
+            tracing::info!("no tray yet ({e}); waiting for one");
+            match (DotlinkTray { actions, icon }).assume_sni_available(true).spawn().await {
+                Ok(handle) => std::mem::forget(handle),
+                Err(e) => tracing::info!("no tray icon: {e}"),
+            }
             false
         }
     }
