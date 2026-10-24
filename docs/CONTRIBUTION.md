@@ -27,12 +27,24 @@ cargo test                                    # unit tests
 `scripts/install.sh` builds a release and installs it for the current user (binary, app menu
 entry, icon, autostart).
 
+On Windows: Rust with the MSVC toolchain, nothing else. `cargo build` builds the workspace,
+including `dotlink_camera.dll` (a development build finds it in `target/debug/deps/`). Setup's
+webcam Fix installs that DLL into Program Files; after changing the `camera` crate, run Fix again
+(Setup shows the camera as outdated). Fix stops the Camera Frame Server so the new DLL is the one
+loaded; an app using the camera loses it for a moment.
+
 ### Android
 
 ```sh
 cd android
-./gradlew installDebug     # build and install on the phone over adb
+./gradlew installDebug       # build and install on the phone over adb
+./gradlew assembleRelease    # app/build/outputs/apk/release/
 ```
+
+Release builds are signed with the key named in `android/keystore.properties` (`storeFile`,
+`storePassword`, `keyAlias`, `keyPassword`; never in git), and with the debug key without it.
+APKs signed with different keys can't update each other: switching means uninstalling once,
+which forgets the pairing.
 
 Some phones (ColorOS / realme, MIUI) refuse adb installs until you confirm a dialog on the
 phone, or turn off *Verify apps over USB* in Developer options.
@@ -41,10 +53,14 @@ phone, or turn off *Verify apps over USB* in Developer options.
 
 ```sh
 cargo install cargo-packager cargo-generate-rpm
-cd desktop
-NO_STRIP=1 cargo packager --release -f deb,appimage   # target/packages/
-cargo build --release -p dotlink && cargo generate-rpm -p app   # target/generate-rpm/
+cd desktop/app
+NO_STRIP=1 cargo packager --release -f deb,appimage   # Linux: target/packages/
+cargo packager --release -f nsis                      # Windows: target/packages/*-setup.exe
+cd .. && cargo build --release -p dotlink && cargo generate-rpm -p app   # target/generate-rpm/
 ```
+
+The Windows icon (`app/assets/dotlink.ico`) is drawn by `scripts/make-windows-icon.py`.
+`.github/workflows/release.yml` builds every package; run it by hand or push a `v*` tag.
 
 `NO_STRIP=1` works around linuxdeploy's `strip` being too old for current distros' libraries.
 Packages need the glibc they were built with or newer: build releases on the oldest distro you
@@ -75,6 +91,17 @@ cargo run -p dotlink
 - **Hyprland.** `hyprctl output create headless NAME` adds an invisible monitor; move the test
   window there and capture it with `grim -o NAME`. Remove it afterwards
   (`hyprctl output remove NAME`).
+- **Windows.** The config folder comes from `%APPDATA%` and ignores `XDG_*`, so a second
+  instance isn't possible yet. `cargo test -p dotlink-camera --test capture -- --ignored
+  --nocapture` opens "Dotlink Camera" through the frame server like an app would.
+  From Linux, `rustup target add x86_64-pc-windows-msvc` then `cargo check -p dotlink-camera
+  --target x86_64-pc-windows-msvc` type-checks the camera DLL; the whole app needs MSVC's C
+  compiler (ring, aws-lc), so build it on Windows. Some gpui APIs only exist on one OS (for
+  example `WindowButtonLayout::linux_default`), so after changing the GUI on Linux, build on
+  Windows too.
+- **Driving the phone from the PC.** With USB debugging, `adb shell input tap/swipe/text`
+  and `adb exec-out screencap -p` test the app's side; the Remote and Shell keyboards accept
+  `input text`. Use a new Shell tab for tests: the first one may be a session in use.
 
 ## Code style
 
@@ -101,13 +128,14 @@ cargo run -p dotlink
   so new messages must be optional.
 - **New thing the window shows:** expose it through `App::status()` and, if it changes,
   an `events::Event`; the window refreshes on events.
-- **New system requirement:** a check in `platform/linux/setup.rs`, fixable when it can be
-  installed or set up with one root command.
+- **New system requirement:** a check in `platform/<os>/setup.rs`, fixable when it can be
+  installed or set up with one root command (Linux) or one UAC prompt (Windows).
 
 ## Windows and macOS
 
-The stubs in `core/src/platform/windows` and `macos` were written on Linux and have not been
-compiled for those systems yet. [PORTING.md](PORTING.md) has the plan: the order of work, the APIs to use for each
+`core/src/platform/windows` is complete for Windows 11 and tested with a phone (see
+[PLATFORM_FEATURES.md](PLATFORM_FEATURES.md)). The `macos` stubs were written on Linux and have
+not been compiled there yet. [PORTING.md](PORTING.md) has the plan: the order of work, the APIs to use for each
 platform item, packaging and signing, and a checklist per OS.
 
 ## Commits

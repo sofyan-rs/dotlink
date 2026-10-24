@@ -9,6 +9,9 @@
 //! 4. Not paired with this PC's adb yet: pair once with the 6-digit code from the phone
 //!    (the pairing port is found over mDNS too, `_adb-tls-pairing._tcp`).
 //!
+//! Several phones can cast at once, each in its own scrcpy window; everything here is per
+//! paired device id.
+//!
 //! Uses the PC's `scrcpy` and `adb` when installed. Otherwise it downloads the official scrcpy
 //! release (which bundles adb) into Dotlink's data folder, checked against a pinned SHA-256.
 
@@ -18,6 +21,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::net::{IpAddr, SocketAddr};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -57,24 +61,70 @@ pub enum CastState {
 
 #[derive(Default)]
 pub struct Cast {
-    state: Mutex<Option<CastState>>,
+    /// Per device id; Idle phones aren't in it.
+    sessions: Mutex<HashMap<String, Session>>,
+    /// One scrcpy download at a time, when two phones start casting together.
+    installing: tokio::sync::Mutex<()>,
+    runs: std::sync::atomic::AtomicU64,
+}
+
+struct Session {
+    state: CastState,
     /// Stops the running scrcpy.
-    stop: Mutex<Option<oneshot::Sender<()>>>,
+    stop: Option<oneshot::Sender<()>>,
+    /// The adb serial scrcpy runs on, so another phone of the same model doesn't take it.
+    serial: Option<String>,
+    /// Which scrcpy run this is: one that ends after a newer one started leaves it alone.
+    run: u64,
 }
 
 impl Cast {
-    pub fn state(&self) -> CastState {
-        self.state.lock().unwrap().clone().unwrap_or(CastState::Idle)
+    pub fn state(&self, id: &str) -> CastState {
+        self.sessions.lock().unwrap().get(id).map(|s| s.state.clone()).unwrap_or(CastState::Idle)
+    }
+
+    /// Every phone that isn't Idle, by device id.
+    pub fn states(&self) -> HashMap<String, CastState> {
+        self.sessions.lock().unwrap().iter().map(|(id, s)| (id.clone(), s.state.clone())).collect()
+    }
+
+    /// adb serials the other phones are casting on.
+    fn serials_in_use(&self, except: &str) -> Vec<String> {
+        let sessions = self.sessions.lock().unwrap();
+        sessions.iter().filter(|(id, _)| *id != except).filter_map(|(_, s)| s.serial.clone()).collect()
     }
 }
 
-fn set(app: &App, state: CastState) {
-    *app.cast.state.lock().unwrap() = Some(state);
+fn set(app: &App, id: &str, state: CastState) {
+    {
+        let mut sessions = app.cast.sessions.lock().unwrap();
+        if state == CastState::Idle {
+            sessions.remove(id);
+        } else {
+            let session =
+                sessions.entry(id.to_string()).or_insert(Session { state: CastState::Idle, stop: None, serial: None, run: 0 });
+            if !matches!(state, CastState::Casting { .. }) {
+                session.serial = None;
+            }
+            session.state = state;
+        }
+    }
     app.emit(Event::Cast);
 }
 
-/// The phone to cast: `id` (device id or name), or the first one online.
-fn pick(app: &App, id: Option<&str>) -> Result<(String, PhoneInfo)> {
+/// Sets `state` only while attempt `run` still owns the phone's cast: after Stop (or a newer
+/// Cast) it's left alone. False when it no longer does.
+fn update(app: &App, id: &str, run: u64, state: CastState) -> bool {
+    let owned = app.cast.sessions.lock().unwrap().get(id).is_some_and(|s| s.run == run);
+    if owned {
+        set(app, id, state);
+    }
+    owned
+}
+
+/// The phone to cast: `id` (device id or name), or the first one online. Returns its device id,
+/// name and what it told us about itself.
+fn pick(app: &App, id: Option<&str>) -> Result<(String, String, PhoneInfo)> {
     let online = app.online_devices();
     let state = app.state.lock().unwrap();
     let dev = state
@@ -82,60 +132,101 @@ fn pick(app: &App, id: Option<&str>) -> Result<(String, PhoneInfo)> {
         .iter()
         .filter(|d| online.contains(&d.name))
         .find(|d| id.is_none_or(|id| d.id == id || d.name.eq_ignore_ascii_case(id)))
-        .ok_or_else(|| anyhow!("no phone connected"))?;
+        .ok_or_else(|| match id {
+            Some(id) => anyhow!("no connected phone called \"{id}\""),
+            None => anyhow!("no phone connected"),
+        })?;
     let info = app.phones.lock().unwrap().get(&dev.id).cloned().unwrap_or_default();
-    Ok((dev.name.clone(), info))
+    Ok((dev.id.clone(), dev.name.clone(), info))
 }
 
-/// Starts casting. Returns once scrcpy is up (or what's missing is known); the outcome is
-/// also in [Cast::state].
-pub async fn start(app: &Arc<App>, id: Option<&str>) -> Result<()> {
-    if matches!(
-        app.cast.state(),
-        CastState::Casting { .. } | CastState::Connecting { .. } | CastState::Installing { .. }
-    ) {
-        bail!("already casting");
+/// Starts casting. Returns once scrcpy is up ("casting"), Stop was pressed meanwhile
+/// ("cancelled"), or what's missing is known (the error); the outcome is also in [Cast::state].
+pub async fn start(app: &Arc<App>, id: Option<&str>) -> Result<&'static str> {
+    let (id, name, info) = pick(app, id)?;
+    let run = app.cast.runs.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    {
+        // Check and claim under one lock: two quick clicks start one scrcpy.
+        let mut sessions = app.cast.sessions.lock().unwrap();
+        if sessions.get(&id).is_some_and(|s| {
+            matches!(s.state, CastState::Casting { .. } | CastState::Connecting { .. } | CastState::Installing { .. })
+        }) {
+            bail!("already casting {name}");
+        }
+        sessions.insert(
+            id.clone(),
+            Session { state: CastState::Connecting { device: name.clone() }, stop: None, serial: None, run },
+        );
     }
-    let (name, info) = pick(app, id)?;
+    app.emit(Event::Cast);
+    // Stop while installing or connecting removes the session: every step below then finds
+    // it gone and gives up quietly.
+    const CANCELLED: Result<&str> = Ok("cancelled");
     if find_tool("scrcpy").is_none() {
-        set(app, CastState::Installing { device: name.clone() });
-        if let Err(e) = install().await {
-            set(app, CastState::Failed { device: name, error: format!("couldn't install scrcpy: {e:#}") });
-            return Err(e);
+        if !update(app, &id, run, CastState::Installing { device: name.clone() }) {
+            return CANCELLED;
+        }
+        let _one = app.cast.installing.lock().await;
+        // Another phone may have installed it while we waited.
+        if find_tool("scrcpy").is_none()
+            && let Err(e) = install().await
+        {
+            let error = format!("couldn't install scrcpy: {e:#}");
+            return if update(app, &id, run, CastState::Failed { device: name, error }) { Err(e) } else { CANCELLED };
         }
     }
-    set(app, CastState::Connecting { device: name.clone() });
-    match connect(&name, &info).await {
-        Ok((serial, usb)) => match launch(app, &name, &serial, usb).await {
-            Ok(()) => Ok(()),
+    if !update(app, &id, run, CastState::Connecting { device: name.clone() }) {
+        return CANCELLED;
+    }
+    let taken = app.cast.serials_in_use(&id);
+    let connected = connect(app, &id, &name, &info, &taken).await;
+    if !update(app, &id, run, CastState::Connecting { device: name.clone() }) {
+        return CANCELLED;
+    }
+    match connected {
+        Ok((serial, usb)) => match launch(app, &id, &name, &serial, usb, run).await {
+            Ok(true) => Ok("casting"),
+            Ok(false) => CANCELLED,
             Err(e) => {
-                set(app, CastState::Failed { device: name, error: format!("{e:#}") });
-                Err(e)
+                let error = format!("{e:#}");
+                if update(app, &id, run, CastState::Failed { device: name, error }) { Err(e) } else { CANCELLED }
             }
         },
         Err(Missing::WifiDebugging) => {
             // The phone shows a notification that opens the setting.
-            app.send_control(json!({ "t": "adb_wifi" }));
-            set(app, CastState::NeedsWifiDebugging { device: name.clone() });
+            app.send_control_to(Some(&id), json!({ "t": "adb_wifi" }));
+            update(app, &id, run, CastState::NeedsWifiDebugging { device: name.clone() });
             bail!("turn on Wireless debugging on {name} (it shows a notification), or plug it in over USB")
         }
         Err(Missing::Pairing) => {
-            set(app, CastState::NeedsPairing { device: name.clone() });
+            update(app, &id, run, CastState::NeedsPairing { device: name.clone() });
             bail!("pair {name} once: Wireless debugging → Pair device with pairing code, then enter the code")
         }
         Err(Missing::Other(e)) => {
-            set(app, CastState::Failed { device: name, error: format!("{e:#}") });
-            Err(e)
+            let error = format!("{e:#}");
+            if update(app, &id, run, CastState::Failed { device: name, error }) { Err(e) } else { CANCELLED }
         }
     }
 }
 
-pub fn stop(app: &App) {
-    if let Some(stop) = app.cast.stop.lock().unwrap().take() {
-        let _ = stop.send(());
-    }
-    if !matches!(app.cast.state(), CastState::Casting { .. }) {
-        set(app, CastState::Idle);
+/// Stops casting `id` (device id or name), or every phone for None.
+pub fn stop(app: &App, id: Option<&str>) {
+    let ids: Vec<String> = match id {
+        None => app.cast.states().into_keys().collect(),
+        Some(id) => {
+            let state = app.state.lock().unwrap();
+            let dev = state.devices.iter().find(|d| d.id == id || d.name.eq_ignore_ascii_case(id));
+            vec![dev.map_or_else(|| id.to_string(), |d| d.id.clone())]
+        }
+    };
+    for id in ids {
+        let stop = app.cast.sessions.lock().unwrap().get_mut(&id).and_then(|s| s.stop.take());
+        match stop {
+            // The scrcpy task sets Idle once scrcpy is gone.
+            Some(stop) => drop(stop.send(())),
+            // Failed or waiting for the user: Stop dismisses it.
+            None => set(app, &id, CastState::Idle),
+        }
     }
 }
 
@@ -146,7 +237,7 @@ pub async fn pair(app: &Arc<App>, id: Option<&str>, code: &str) -> Result<()> {
     if code.len() != 6 {
         bail!("the pairing code has 6 digits");
     }
-    let (name, info) = pick(app, id)?;
+    let (id, name, info) = pick(app, id)?;
     let ip = info.ip.context("don't know the phone's address yet")?;
     let addr = browse("_adb-tls-pairing._tcp.local.", ip, Duration::from_secs(4)).await.ok_or_else(|| {
         anyhow!("can't see {name} waiting to pair: open Wireless debugging → Pair device with pairing code on it")
@@ -155,7 +246,7 @@ pub async fn pair(app: &Arc<App>, id: Option<&str>, code: &str) -> Result<()> {
     if !out.to_lowercase().contains("success") {
         bail!("{}", last_line(&out).unwrap_or("pairing failed"));
     }
-    set(app, CastState::Idle);
+    set(app, &id, CastState::Idle);
     Ok(())
 }
 
@@ -171,15 +262,28 @@ impl From<anyhow::Error> for Missing {
     }
 }
 
-/// An adb serial for the phone, and whether it's over USB.
-async fn connect(name: &str, info: &PhoneInfo) -> Result<(String, bool), Missing> {
+/// An adb serial for the phone, and whether it's over USB. `taken`: serials other phones are
+/// casting on.
+async fn connect(
+    app: &App,
+    id: &str,
+    name: &str,
+    info: &PhoneInfo,
+    taken: &[String],
+) -> Result<(String, bool), Missing> {
     let model = adb_model(&info.model);
-    let devices = adb_devices().await?;
+    let devices: Vec<AdbDevice> = adb_devices().await?.into_iter().filter(|d| !taken.contains(&d.serial)).collect();
+    // Another connected phone of the same model: adb's model can't tell them apart, so only
+    // the phone's IP (Wi-Fi) identifies it.
+    let twin = !model.is_empty() && {
+        let phones = app.phones.lock().unwrap();
+        app.online_ids().iter().any(|other| other != id && phones.get(other).is_some_and(|p| adb_model(&p.model) == model))
+    };
     // Matched by model; a phone that hasn't told us its model (older app) can still use the
     // only device adb sees.
     let only_one = devices.len() == 1;
     let mine = |d: &&AdbDevice| if model.is_empty() { only_one } else { d.model == model };
-    if let Some(d) = devices.iter().filter(mine).max_by_key(|d| d.usb) {
+    if let Some(d) = devices.iter().filter(mine).filter(|_| !twin).max_by_key(|d| d.usb) {
         match d.state.as_str() {
             "device" => return Ok((d.serial.clone(), d.usb)),
             "unauthorized" => {
@@ -195,6 +299,11 @@ async fn connect(name: &str, info: &PhoneInfo) -> Result<(String, bool), Missing
     }
     let Some(addr) = browse("_adb-tls-connect._tcp.local.", ip, Duration::from_secs(3)).await else {
         // Not advertised: off, unless the phone says it's on (then mDNS is blocked).
+        if twin {
+            return Err(Missing::Other(anyhow!(
+                "another phone of the same model is connected, so {name} can only cast over Wi-Fi: turn on its Wireless debugging"
+            )));
+        }
         if info.adb_wifi {
             return Err(Missing::Other(anyhow!(
                 "Wireless debugging is on but {name} can't be found on the network (mDNS, UDP 5353 blocked?)"
@@ -215,10 +324,11 @@ async fn connect(name: &str, info: &PhoneInfo) -> Result<(String, bool), Missing
 }
 
 /// Runs scrcpy for `serial` until it exits or [stop] is called.
-async fn launch(app: &Arc<App>, name: &str, serial: &str, usb: bool) -> Result<()> {
+/// Runs scrcpy as attempt `run`. False when Stop came first (scrcpy is then ended at once).
+async fn launch(app: &Arc<App>, id: &str, name: &str, serial: &str, usb: bool, run: u64) -> Result<bool> {
     let config = app.config();
     let scrcpy = find_tool("scrcpy").context("scrcpy is not installed (see Setup)")?;
-    let mut cmd = Command::new(scrcpy);
+    let mut cmd = command(scrcpy);
     cmd.arg("--serial").arg(serial).arg("--window-title").arg(format!("{name} · Dotlink"));
     if config.cast_screen_off {
         cmd.arg("--turn-screen-off");
@@ -238,12 +348,29 @@ async fn launch(app: &Arc<App>, name: &str, serial: &str, usb: bool) -> Result<(
     }
     let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true).spawn()?;
     let mut stderr = child.stderr.take().unwrap();
+    // Ends scrcpy's whole process tree with the cast (see ProcessTree).
+    #[cfg(windows)]
+    let tree = child.id().and_then(crate::platform::ProcessTree::new);
     let (stop_tx, stop_rx) = oneshot::channel();
-    *app.cast.stop.lock().unwrap() = Some(stop_tx);
-    set(app, CastState::Casting { device: name.to_string(), usb });
+    // Hand over the stop under the same lock that checks for Stop, so neither is missed.
+    let owned = match app.cast.sessions.lock().unwrap().get_mut(id) {
+        Some(session) if session.run == run => {
+            session.state = CastState::Casting { device: name.to_string(), usb };
+            session.stop = Some(stop_tx);
+            session.serial = Some(serial.to_string());
+            true
+        }
+        _ => false,
+    };
+    if !owned {
+        // kill_on_drop (and on Windows the job object) end it.
+        tracing::info!("cast of {name} cancelled");
+        return Ok(false);
+    }
+    app.emit(Event::Cast);
     tracing::info!("casting {name} ({serial})");
     let app = app.clone();
-    let name = name.to_string();
+    let (id, name) = (id.to_string(), name.to_string());
     tokio::spawn(async move {
         let started = Instant::now();
         let mut err = String::new();
@@ -257,13 +384,19 @@ async fn launch(app: &Arc<App>, name: &str, serial: &str, usb: bool) -> Result<(
                 None
             }
         };
-        app.cast.stop.lock().unwrap().take();
+        #[cfg(windows)]
+        drop(tree);
         tracing::info!("cast of {name} ended");
+        // Stopped and cast again meanwhile: the new run owns the state.
+        if app.cast.sessions.lock().unwrap().get(&id).is_none_or(|s| s.run != run) {
+            return;
+        }
         // Closing the window is a normal end; failing within seconds is an error to show.
         let failed = status.is_some_and(|s| !s.success()) && started.elapsed() < Duration::from_secs(5);
         let error = err.lines().rev().find(|l| l.contains("ERROR")).map(|l| l.trim().to_string());
         set(
             &app,
+            &id,
             match (failed, error) {
                 (true, Some(error)) => CastState::Failed { device: name, error },
                 (true, None) => CastState::Failed { device: name, error: "scrcpy stopped".into() },
@@ -271,7 +404,22 @@ async fn launch(app: &Arc<App>, name: &str, serial: &str, usb: bool) -> Result<(
             },
         );
     });
-    Ok(())
+    Ok(true)
+}
+
+/// Serials of the phones plugged in over USB that allow debugging from this PC.
+pub(crate) async fn usb_serials() -> Result<Vec<String>> {
+    Ok(usb_phones().await?.into_iter().map(|(serial, _)| serial).collect())
+}
+
+/// `(serial, model)` of the phones plugged in over USB that allow debugging from this PC.
+pub(crate) async fn usb_phones() -> Result<Vec<(String, String)>> {
+    Ok(adb_devices()
+        .await?
+        .into_iter()
+        .filter(|d| d.usb && d.state == "device")
+        .map(|d| (d.serial, d.model.replace('_', " ")))
+        .collect())
 }
 
 struct AdbDevice {
@@ -301,6 +449,9 @@ async fn adb_devices() -> Result<Vec<AdbDevice>> {
                 }
                 usb |= p.starts_with("usb:");
             }
+            // Windows' adb prints no `usb:` field. Network serials are `ip:port` or the mDNS
+            // name (`adb-…._adb-tls-connect._tcp`); anything else is plugged in.
+            usb |= !serial.contains(':') && !serial.contains("._adb-tls") && !serial.starts_with("emulator-");
             Some(AdbDevice { serial, state, model, usb })
         })
         .collect())
@@ -312,12 +463,22 @@ fn adb_model(model: &str) -> String {
 }
 
 /// Runs adb and returns stdout + stderr.
-async fn adb(args: &[&str]) -> Result<String> {
+pub(crate) async fn adb(args: &[&str]) -> Result<String> {
     let adb = find_tool("adb").context("adb is not installed (see Setup)")?;
-    let out = tokio::time::timeout(Duration::from_secs(20), Command::new(adb).args(args).stdin(Stdio::null()).output())
+    let out = tokio::time::timeout(Duration::from_secs(20), command(adb).args(args).stdin(Stdio::null()).output())
         .await
         .context("adb took too long")??;
     Ok(format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+}
+
+/// A command for adb or scrcpy. On Windows without a console window: they are console
+/// programs (scrcpy opens its own window besides).
+fn command(program: PathBuf) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    cmd
 }
 
 fn last_line(s: &str) -> Option<&str> {
@@ -365,11 +526,12 @@ fn scrcpy_asset() -> Option<(String, &'static str)> {
         ("linux", "x86_64") => ("linux-x86_64", "9f969d30cc574816077edecda65719c1c70b0aee1df1ba5fa00779ac07b8fd6e"),
         ("macos", "aarch64") => ("macos-aarch64", "33611e51977a8289e2e124b220f727895181ef2eb9060e0987a4dc2db9cf0d6b"),
         ("macos", "x86_64") => ("macos-x86_64", "31a5467a9e907f162b093267cbbab1276b15c6e709c2ea8159566a8d165beb50"),
-        // TODO(windows): the .zip builds need unzipping (`zip` crate) and `scrcpy.exe`:
-        // ("windows", "x86_64") => win64, b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5
+        ("windows", "x86_64") => ("win64", "b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5"),
+        ("windows", "aarch64") => ("winarm64", "16c3fc2068df64946f670e3504b4752073ebae47a416a45b46e79a5ab19c689b"),
         _ => return None,
     };
-    Some((format!("scrcpy-{target}-{SCRCPY_VERSION}.tar.gz"), sha))
+    let ext = if cfg!(windows) { "zip" } else { "tar.gz" };
+    Some((format!("scrcpy-{target}-{SCRCPY_VERSION}.{ext}"), sha))
 }
 
 /// Where the downloaded scrcpy (and its adb) live.
@@ -404,12 +566,17 @@ pub async fn install() -> Result<()> {
         let tmp = dir.with_extension("part");
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp)?;
-        tar::Archive::new(flate2::read::GzDecoder::new(&data[..])).unpack(&tmp)?;
+        if asset.ends_with(".zip") {
+            zip::ZipArchive::new(std::io::Cursor::new(&data[..]))?.extract(&tmp)?;
+        } else {
+            tar::Archive::new(flate2::read::GzDecoder::new(&data[..])).unpack(&tmp)?;
+        }
         // The archive holds one folder (scrcpy-linux-x86_64-v5.0.1/); keep its contents.
+        let scrcpy = if cfg!(windows) { "scrcpy.exe" } else { "scrcpy" };
         let inner = std::fs::read_dir(&tmp)?
             .flatten()
             .map(|e| e.path())
-            .find(|p| p.join("scrcpy").is_file())
+            .find(|p| p.join(scrcpy).is_file())
             .context("unexpected archive layout")?;
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::rename(&inner, &dir)?;
@@ -431,9 +598,15 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
         return Some(found);
     }
     if name == "adb" {
+        // Android Studio's default SDK location on each OS.
         let sdk = std::env::var_os("ANDROID_HOME").map(PathBuf::from).or_else(|| {
-            dirs::home_dir()
-                .map(|h| h.join(if cfg!(target_os = "macos") { "Library/Android/sdk" } else { "Android/Sdk" }))
+            if cfg!(windows) {
+                dirs::data_local_dir().map(|d| d.join("Android/Sdk"))
+            } else if cfg!(target_os = "macos") {
+                dirs::home_dir().map(|h| h.join("Library/Android/sdk"))
+            } else {
+                dirs::home_dir().map(|h| h.join("Android/Sdk"))
+            }
         });
         if let Some(adb) = sdk.map(|s| s.join("platform-tools").join(&exe)).filter(|p| p.is_file()) {
             return Some(adb);

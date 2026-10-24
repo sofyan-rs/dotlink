@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dotlink.DotlinkApp
+import com.dotlink.link.CameraStreamer
 import com.dotlink.link.LinkService
 import com.dotlink.link.LinkState
 import com.dotlink.ui.Choice
@@ -67,7 +69,9 @@ fun CameraScreen() {
     val rotation by link.cameraRotation.collectAsStateWithLifecycle()
     val mirror by link.cameraMirror.collectAsStateWithLifecycle()
     val frame by link.cameraFrame.collectAsStateWithLifecycle()
-    var summary by remember { mutableStateOf(summary(prefs.fullHd, prefs.fps)) }
+    /** The rates this lens can do: 60 fps only where it lists a range that high. */
+    val rates = remember(front) { CameraStreamer.supportedFps(context, front) }
+    var summary by remember { mutableStateOf(summary(prefs.fullHd, CameraStreamer.effectiveFps(context, prefs.frontCamera, prefs.fps))) }
 
     val permission =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -85,7 +89,7 @@ fun CameraScreen() {
 
     /** A running stream restarts so the PC gets the new camera or size. */
     fun changed() {
-        summary = summary(prefs.fullHd, prefs.fps)
+        summary = summary(prefs.fullHd, CameraStreamer.effectiveFps(context, prefs.frontCamera, prefs.fps))
         if (link.cameraOn.value) LinkService.send(context, LinkService.ACTION_CAMERA_RESTART)
     }
 
@@ -188,9 +192,14 @@ fun CameraScreen() {
                 changed()
             }
             Spacer(Modifier.height(Dotline.space.s2))
-            Choice(listOf("15 fps", "30 fps"), if (prefs.fps == 15) 0 else 1) {
-                prefs.fps = if (it == 0) 15 else 30
-                changed()
+            // Only what this lens can do; switching lens rebuilds the choice. The saved rate stays
+            // as chosen, so 60 comes back on a lens that has it.
+            key(front) {
+                val shown = rates.indexOfLast { it <= prefs.fps }.coerceAtLeast(0)
+                Choice(rates.map { "$it fps" }, shown) {
+                    prefs.fps = rates[it]
+                    changed()
+                }
             }
             Hint("Pick \"Dotlink Camera\" in your call, browser or OBS. The PC fits every rotation into its fixed size.")
         }

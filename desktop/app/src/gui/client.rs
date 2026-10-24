@@ -10,6 +10,7 @@ use dotlink_core::ipc;
 use futures::channel::{mpsc, oneshot};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -28,7 +29,15 @@ pub struct Status {
     /// Phone streaming the camera / mic right now.
     pub camera: Option<String>,
     pub mic: Option<String>,
-    pub cast: CastState,
+    /// Device id → its cast, for the phones that aren't Idle.
+    #[serde(default)]
+    pub casts: HashMap<String, CastState>,
+}
+
+impl Status {
+    pub fn cast(&self, id: &str) -> CastState {
+        self.casts.get(id).cloned().unwrap_or(CastState::Idle)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -37,6 +46,18 @@ pub struct DeviceInfo {
     pub name: String,
     pub online: bool,
     pub paired_at: u64,
+    /// Connected through the USB cable rather than Wi-Fi.
+    #[serde(default)]
+    pub usb: bool,
+    /// While connected, from phone apps that report it.
+    #[serde(default)]
+    pub battery: Option<Battery>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+pub struct Battery {
+    pub level: u8,
+    pub charging: bool,
 }
 
 /// What the watch connection reports to the window.
@@ -115,13 +136,19 @@ impl Client {
         ok_text(self.call(json!({ "cmd": "media", "kind": kind, "on": on, "to": to })))
     }
 
-    /// Starts or stops casting the phone screen.
-    pub fn cast(&self, on: bool) -> impl Future<Output = Result<String>> + use<> {
-        ok_text(self.call(json!({ "cmd": "cast", "on": on })))
+    /// Starts or stops casting a phone's screen (by device id; None: the first phone online, or
+    /// every cast for stop).
+    pub fn cast(&self, on: bool, id: Option<&str>) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "cast", "on": on, "id": id })))
     }
 
-    pub fn cast_pair(&self, code: &str) -> impl Future<Output = Result<String>> + use<> {
-        ok_text(self.call(json!({ "cmd": "cast_pair", "code": code })))
+    pub fn cast_pair(&self, id: &str, code: &str) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "cast_pair", "id": id, "code": code })))
+    }
+
+    /// Opens the pairing link `uri` on the phones plugged in over USB.
+    pub fn pair_usb(&self, uri: &str) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "pair_usb", "uri": uri })))
     }
 
     pub fn unpair(&self, id: &str) -> impl Future<Output = Result<String>> + use<> {
@@ -193,6 +220,6 @@ impl Client {
     }
 }
 
-fn ok_text(call: impl Future<Output = Result<Value>>) -> impl Future<Output = Result<String>> {
-    async move { Ok(call.await?["ok"].as_str().unwrap_or("done").to_string()) }
+async fn ok_text(call: impl Future<Output = Result<Value>>) -> Result<String> {
+    Ok(call.await?["ok"].as_str().unwrap_or("done").to_string())
 }

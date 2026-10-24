@@ -56,6 +56,7 @@ async fn start(ui: Option<mpsc::UnboundedSender<UiRequest>>) -> Result<(Arc<App>
 async fn serve(app: Arc<App>, identity: tls::Identity) -> Result<()> {
     // Always watched; `clipboard_sync` is checked per change so the setting applies live.
     tokio::spawn(platform::clipboard::watch(app.clone()));
+    tokio::spawn(crate::usb::watch(app.clone()));
     let _mdns = advertise(&app).map_err(|e| tracing::warn!("mDNS disabled: {e}")).ok();
 
     let pem = axum_server::tls_rustls::RustlsConfig::from_pem(identity.cert_pem, identity.key_pem).await?;
@@ -96,9 +97,19 @@ async fn terminate() {
     }
 }
 
-#[cfg(not(unix))]
+/// The console window closing, logoff or shutdown (sent to processes with a console; a GUI
+/// process gets WM_ENDSESSION instead and simply exits).
+#[cfg(windows)]
 async fn terminate() {
-    std::future::pending().await
+    use tokio::signal::windows::{ctrl_close, ctrl_logoff, ctrl_shutdown};
+    match (ctrl_close(), ctrl_logoff(), ctrl_shutdown()) {
+        (Ok(mut close), Ok(mut logoff), Ok(mut shutdown)) => tokio::select! {
+            _ = close.recv() => {}
+            _ = logoff.recv() => {}
+            _ = shutdown.recv() => {}
+        },
+        _ => std::future::pending().await,
+    }
 }
 
 /// Announces `_dotlink._tcp` so the phone can find the PC after its IP changes.

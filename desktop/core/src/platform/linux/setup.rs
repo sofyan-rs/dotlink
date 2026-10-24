@@ -15,6 +15,32 @@ pub fn checks(port: u16) -> Vec<Check> {
         out.push(Check { id: id.into(), feature: feature.into(), title: title.into(), ok, detail, fixable })
     };
 
+    // Network: only firewalld can be checked without root.
+    if firewalld_running() {
+        let open = firewalld_allows(port);
+        check(
+            "firewall",
+            "Network",
+            &format!("Firewall allows port {port}/tcp and mDNS"),
+            open,
+            if open {
+                String::new()
+            } else {
+                "firewalld blocks the phone. Opens the port and mDNS in the permanent config.".into()
+            },
+            !open,
+        );
+    } else if which("ufw") {
+        check(
+            "ufw",
+            "Network",
+            "Firewall (ufw)",
+            true,
+            format!("If ufw is active:  sudo ufw allow {port}/tcp && sudo ufw allow 5353/udp"),
+            false,
+        );
+    }
+
     // Remote
     let uinput = std::fs::OpenOptions::new().write(true).open("/dev/uinput").is_ok();
     check(
@@ -55,7 +81,11 @@ pub fn checks(port: u16) -> Vec<Check> {
         "Webcam",
         "\"Dotlink Camera\" device",
         has_cam,
-        if has_cam { String::new() } else { "Creates the device now and at every boot.".into() },
+        if has_cam {
+            format!("In your app, pick \"{}\" as the camera.", super::media::CAMERA_LABEL)
+        } else {
+            "Creates the device now and at every boot.".into()
+        },
         !has_cam && module,
     );
 
@@ -66,7 +96,7 @@ pub fn checks(port: u16) -> Vec<Check> {
         "Microphone",
         "PipeWire (pw-cat)",
         pw,
-        if pw { String::new() } else { install_hint("pw-cat") },
+        if pw { "In your app, pick \"Dotlink Mic\" as the microphone.".into() } else { install_hint("pw-cat") },
         !pw && can_install("pw-cat"),
     );
 
@@ -75,7 +105,7 @@ pub fn checks(port: u16) -> Vec<Check> {
     let downloadable = crate::cast::can_install();
     let missing = |what: &str| {
         if downloadable {
-            format!("Fix downloads scrcpy with adb (18 MB, from GitHub). Or {}", install_hint(what).to_lowercase())
+            format!("Fix downloads scrcpy with adb (from GitHub). Or {}", install_hint(what).to_lowercase())
         } else {
             install_hint(what)
         }
@@ -124,31 +154,6 @@ pub fn checks(port: u16) -> Vec<Check> {
         !notify && can_install("notify-send"),
     );
 
-    // Network: only firewalld can be checked without root.
-    if firewalld_running() {
-        let open = firewalld_allows(port);
-        check(
-            "firewall",
-            "Network",
-            &format!("Firewall allows port {port}/tcp and mDNS"),
-            open,
-            if open {
-                String::new()
-            } else {
-                "firewalld blocks the phone. Opens the port in the permanent config.".into()
-            },
-            !open,
-        );
-    } else if which("ufw") {
-        check(
-            "ufw",
-            "Network",
-            "Firewall (ufw)",
-            true,
-            format!("If ufw is active:  sudo ufw allow {port}/tcp && sudo ufw allow 5353/udp"),
-            false,
-        );
-    }
     out
 }
 

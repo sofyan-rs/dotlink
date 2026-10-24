@@ -16,12 +16,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +40,9 @@ import com.dotlink.DotlinkApp
 import com.dotlink.link.LinkService
 import com.dotlink.link.LinkState
 import com.dotlink.ui.dotline.BottomNav
+import com.dotlink.ui.dotline.LocalNavRail
+import com.dotlink.ui.dotline.NavRail
+import com.dotlink.ui.dotline.NavRailMinWidth
 import com.dotlink.ui.dotline.DotlineIcons
 import com.dotlink.ui.dotline.DotlineSnackbarHost
 import com.dotlink.ui.dotline.MainTab
@@ -124,61 +131,76 @@ private fun DotlinkRoot(
     var addingPc by rememberSaveable { mutableStateOf(false) }
     // Pairing or choosing a PC: no tabs (and no tab bar under the snackbar).
     val fullScreen = state is LinkState.Unpaired || addingPc || pairLink != null || choosePc
-    Box(Modifier.fillMaxSize().background(Dotline.colors.bg)) {
-        if (state is LinkState.Unpaired) {
-            PairScreen(initialLink = pairLink, onPaired = {
-                onPairLinkUsed()
-                LinkService.send(context)
-            })
-        } else if (addingPc || pairLink != null) {
-            fun close() {
-                addingPc = false
-                onPairLinkUsed()
-            }
-            PairScreen(
-                initialLink = pairLink,
-                onPaired = {
-                    close()
-                    // The new PC is the active one now: leave the old one.
-                    LinkService.send(context, LinkService.ACTION_SWITCH)
-                },
-                onCancel = ::close,
-            )
-        } else if (choosePc) {
-            ChoosePcScreen(
-                onChoose = { id ->
-                    // Active first, so the service connects straight to it.
-                    link.switchTo(id)
+    BoxWithConstraints(Modifier.fillMaxSize().background(Dotline.colors.bg)) {
+        // Landscape or a wide screen: the tabs on the left instead of along the bottom.
+        val rail = !fullScreen && (maxWidth > maxHeight || maxWidth >= NavRailMinWidth)
+        CompositionLocalProvider(LocalNavRail provides rail) {
+            if (state is LinkState.Unpaired) {
+                PairScreen(initialLink = pairLink, onPaired = {
+                    onPairLinkUsed()
                     LinkService.send(context)
-                },
-                onAddPc = { addingPc = true },
-            )
-        } else {
-            var tab by rememberSaveable { mutableStateOf(MainTab.Link) }
-            when (tab) {
-                MainTab.Link -> LinkScreen(onOpenTab = { tab = it }, onAddPc = { addingPc = true })
-                MainTab.Remote -> RemoteScreen()
-                MainTab.Shell -> ShellScreen()
-                MainTab.Camera -> CameraScreen()
-                MainTab.Settings -> SettingsScreen()
-            }
-            // The keyboard needs the room in Remote and Shell; the tabs come back when it closes.
-            if (!WindowInsets.isImeVisible) {
-                BottomNav(
-                    tabs = MainTab.entries,
-                    selectedTab = tab,
-                    onTabClick = { tab = it },
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                })
+            } else if (addingPc || pairLink != null) {
+                fun close() {
+                    addingPc = false
+                    onPairLinkUsed()
+                }
+                PairScreen(
+                    initialLink = pairLink,
+                    onPaired = {
+                        close()
+                        // The new PC is the active one now: leave the old one.
+                        LinkService.send(context, LinkService.ACTION_SWITCH)
+                    },
+                    onCancel = ::close,
                 )
+            } else if (choosePc) {
+                ChoosePcScreen(
+                    onChoose = { id ->
+                        // Active first, so the service connects straight to it.
+                        link.switchTo(id)
+                        LinkService.send(context)
+                    },
+                    onAddPc = { addingPc = true },
+                )
+            } else {
+                var tab by rememberSaveable { mutableStateOf(MainTab.Link) }
+                val screen: @Composable () -> Unit = {
+                    when (tab) {
+                        MainTab.Link -> LinkScreen(onOpenTab = { tab = it }, onAddPc = { addingPc = true })
+                        MainTab.Remote -> RemoteScreen()
+                        MainTab.Shell -> ShellScreen()
+                        MainTab.Camera -> CameraScreen()
+                        MainTab.Settings -> SettingsScreen()
+                    }
+                }
+                if (rail) {
+                    // The rail stays with the keyboard open: it takes width, not height.
+                    Row(Modifier.fillMaxSize()) {
+                        NavRail(tabs = MainTab.entries, selectedTab = tab, onTabClick = { tab = it })
+                        Box(Modifier.weight(1f).fillMaxHeight()) { screen() }
+                    }
+                } else {
+                    screen()
+                }
+                // The keyboard needs the room in Remote and Shell; the tabs come back when it closes.
+                if (!rail && !WindowInsets.isImeVisible) {
+                    BottomNav(
+                        tabs = MainTab.entries,
+                        selectedTab = tab,
+                        onTabClick = { tab = it },
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    )
+                }
             }
+            DotlineSnackbarHost(
+                hostState = snackbar,
+                icon = DotlineIcons.Monitor,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = if (fullScreen) Dotline.space.s4 else bottomNavHeight()),
+            )
         }
-        DotlineSnackbarHost(
-            hostState = snackbar,
-            icon = DotlineIcons.Monitor,
-            modifier =
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = if (fullScreen) Dotline.space.s4 else bottomNavHeight()),
-        )
     }
 }

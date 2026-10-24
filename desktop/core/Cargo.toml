@@ -32,12 +32,33 @@ flate2 = "1.1.10"
 tar = "0.4.46"
 ureq = "3.5.0"
 toml = "1.1.8"
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.13.2"
 libc = "0.2"
 # Clipboard change events (XFixes) instead of polling the X11 clipboard.
 x11rb = { version = "0.13.2", features = ["xfixes"] }
+
+[target.'cfg(windows)'.dependencies]
+# "Dotlink Camera": the frame file and class id shared with the camera DLL.
+dotlink-camera = { path = "../camera" }
+windows = { version = "0.62.2", features = ["Win32_Media_MediaFoundation", "Win32_System_Com"] }
+# The named pipe's security descriptor (SDDL as UTF-16).
+widestring = "1.2.1"
+winreg = "0.56.0"
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+cpal = "0.18.2"
+zune-jpeg = "0.5.15"
 
 # TODO(windows, macos): native notifications. notify-rust covers both.
 [target.'cfg(not(target_os = "linux"))'.dependencies]

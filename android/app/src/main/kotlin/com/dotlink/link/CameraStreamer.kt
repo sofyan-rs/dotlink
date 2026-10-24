@@ -3,9 +3,17 @@ package com.dotlink.link
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
+import android.util.Range
 import android.util.Size
 import android.view.Surface
 import android.util.Log
+import androidx.annotation.OptIn
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -47,6 +55,8 @@ class CameraStreamer(
     private var camera: Camera? = null
     private val controls = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var lastLog = 0L
+    /** Frames sent since [lastLog], for the log's fps. */
+    private var sentSinceLog = 0
     private var lastPreview = 0L
     private var socket: WebSocket? = null
 
@@ -112,13 +122,18 @@ class CameraStreamer(
         }, ContextCompat.getMainExecutor(context))
     }
 
+    @OptIn(ExperimentalCamera2Interop::class)
     private fun bind(
         p: ProcessCameraProvider,
         w: Int,
         h: Int,
     ) {
         val prefs = link.prefs
-        val minInterval = 1000L / prefs.fps
+        val cam = if (prefs.frontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+        // CameraX runs analysis at the camera's default rate (about 30 fps); 60 has to be asked
+        // for, as an auto-exposure range the camera lists. Without one, the best it has.
+        val fpsRange = frameRate(p, cam, prefs.fps)
+        val minInterval = 1000L / fpsRange.upper.coerceAtMost(prefs.fps)
         val selector =
             ResolutionSelector
                 .Builder()
@@ -126,7 +141,7 @@ class CameraStreamer(
                 .setResolutionStrategy(
                     ResolutionStrategy(Size(maxOf(w, h), minOf(w, h)), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER),
                 ).build()
-        val a =
+        val builder =
             ImageAnalysis
                 .Builder()
                 .setResolutionSelector(selector)
@@ -134,7 +149,8 @@ class CameraStreamer(
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                 .setOutputImageRotationEnabled(true)
                 .setTargetRotation(surfaceRotation(link.cameraRotation.value))
-                .build()
+        Camera2Interop.Extender(builder).setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
+        val a = builder.build()
         a.setAnalyzer(executor) { image ->
             image.use {
                 val ws = socket ?: return@use
@@ -150,9 +166,12 @@ class CameraStreamer(
                 jpeg.reset()
                 bmp.compress(Bitmap.CompressFormat.JPEG, 75, jpeg)
                 ws.send(jpeg.bytes())
+                sentSinceLog++
                 if (now - lastLog > 2000) {
+                    val fps = sentSinceLog * 1000f / (now - lastLog)
                     lastLog = now
-                    Log.d("Dotlink", "camera frame ${bmp.width}x${bmp.height} jpeg=${jpeg.size()}B")
+                    sentSinceLog = 0
+                    Log.d("Dotlink", "camera frame ${bmp.width}x${bmp.height} jpeg=${jpeg.size()}B %.1f fps (camera $fpsRange)".format(fps))
                 }
                 // The preview shows exactly this frame (~12 fps is plenty for framing the shot), as
                 // a small copy of its own: the reused bitmaps change under the UI otherwise.
@@ -164,7 +183,6 @@ class CameraStreamer(
             }
         }
         analysis = a
-        val cam = if (prefs.frontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
         try {
             p.unbindAll()
             camera = p.bindToLifecycle(owner, cam, a)
@@ -183,6 +201,26 @@ class CameraStreamer(
                 c.cameraControl.setZoomRatio(ratio.coerceIn(zoom?.minZoomRatio ?: 1f, zoom?.maxZoomRatio ?: 1f))
             }
         }
+    }
+
+    /**
+     * The camera's auto-exposure range for [fps]: fixed `[fps, fps]` when it has one (a steady
+     * rate), else the range reaching highest without going over, else `[fps, fps]` as asked.
+     */
+    @OptIn(ExperimentalCamera2Interop::class)
+    private fun frameRate(
+        p: ProcessCameraProvider,
+        selector: CameraSelector,
+        fps: Int,
+    ): Range<Int> {
+        val ranges =
+            runCatching {
+                val info = selector.filter(p.availableCameraInfos).firstOrNull()
+                info?.let { Camera2CameraInfo.from(it).getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) }
+            }.getOrNull().orEmpty().toList()
+        return ranges.firstOrNull { it.lower == fps && it.upper == fps }
+            ?: ranges.filter { it.upper <= fps }.maxWithOrNull(compareBy<Range<Int>> { it.upper }.thenBy { it.lower })
+            ?: Range(fps, fps)
     }
 
     /** The frame's RGBA pixels, in a bitmap reused from frame to frame when the rows are unpadded. */
@@ -238,6 +276,49 @@ class CameraStreamer(
             executor.shutdown()
             onStopped(error)
         }
+    }
+
+    companion object {
+        /** The frame rates the Camera tab can offer. */
+        private val RATES = listOf(30, 60)
+
+        /**
+         * The highest frame rate the front or back camera lists (CONTROL_AE ranges; the same
+         * camera CameraX's default selector picks). Front and back often differ. 30 when it
+         * can't be read. High-speed modes don't count: Android only gives those to preview and
+         * video-encoder outputs, not to the frames this app reads.
+         */
+        fun maxFps(
+            context: Context,
+            front: Boolean,
+        ): Int =
+            runCatching {
+                val manager = context.getSystemService(CameraManager::class.java)
+                val facing = if (front) CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK
+                val id = manager.cameraIdList.first { manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == facing }
+                val ranges = manager.getCameraCharacteristics(id).get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES).orEmpty()
+                Log.d("Dotlink", "camera ${if (front) "front" else "back"} ($id) fps ranges: ${ranges.joinToString()}")
+                ranges.maxOf { it.upper }
+            }.getOrElse {
+                Log.w("Dotlink", "camera ${if (front) "front" else "back"}: can't read its frame rates ($it), assuming 30")
+                30
+            }
+
+        /** The rates of [RATES] this camera can do; at least the lowest, even if it does less. */
+        fun supportedFps(
+            context: Context,
+            front: Boolean,
+        ): List<Int> {
+            val max = maxFps(context, front)
+            return RATES.filter { it <= max }.ifEmpty { RATES.take(1) }
+        }
+
+        /** What the camera really sends for the chosen rate. */
+        fun effectiveFps(
+            context: Context,
+            front: Boolean,
+            chosen: Int,
+        ): Int = minOf(chosen, maxFps(context, front))
     }
 }
 

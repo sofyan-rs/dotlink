@@ -4,12 +4,16 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.database.ContentObserver
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -18,6 +22,7 @@ import android.provider.Settings
 import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.dotlink.DotlinkApp
 import com.dotlink.R
 import kotlinx.coroutines.CompletableDeferred
@@ -50,6 +55,7 @@ import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import javax.net.SocketFactory
@@ -135,7 +141,13 @@ class Link(
     /** Last text that went through the link either way, so we don't bounce it back. */
     @Volatile private var lastClip: String? = null
 
-    val host: String? get() = prefs.lastHost
+    /** The address the link uses right now; [USB_HOST] over the cable. */
+    @Volatile private var currentHost: String? = null
+
+    val host: String? get() = currentHost ?: prefs.lastHost
+
+    /** Connected through the USB cable (`adb reverse` on the PC) rather than Wi-Fi. */
+    val viaUsb: Boolean get() = currentHost == USB_HOST
 
     // ---------- HTTP ----------
 
@@ -144,7 +156,7 @@ class Link(
 
     private fun url(
         path: String,
-        host: String = prefs.lastHost ?: prefs.hosts.first(),
+        host: String = currentHost ?: prefs.lastHost ?: prefs.hosts.first(),
     ): String {
         val h = if (host.contains(':')) "[$host]" else host
         return "https://$h:${prefs.port}$path"
@@ -180,7 +192,8 @@ class Link(
                         .toString()
                         .toRequestBody("application/json".toMediaType())
                 var lastError: Throwable? = null
-                for (host in hosts) {
+                // The cable first: works without Wi-Fi when the PC has set up `adb reverse`.
+                for (host in listOf(USB_HOST) + hosts) {
                     val h = if (host.contains(':')) "[$host]" else host
                     try {
                         pinned.newCall(Request.Builder().url("https://$h:$port/pair").post(body).build()).execute().use { res ->
@@ -194,7 +207,7 @@ class Link(
                                     name = json.optString("server_name", uri.getQueryParameter("n") ?: "PC"),
                                     serverId = serverId,
                                     hosts = hosts,
-                                    lastHost = host,
+                                    lastHost = if (host == USB_HOST) hosts.first() else host,
                                     port = port,
                                     fingerprint = fp,
                                     token = json.getString("token"),
@@ -211,6 +224,58 @@ class Link(
                 throw lastError ?: IllegalStateException("PC not reachable")
             }
         }
+
+    // ---------- pairing over the cable ----------
+
+    /** Set while this phone waits for the PC on the cable to send back a pairing link. */
+    @Volatile private var usbPairNonce: String? = null
+
+    /**
+     * The name of the Dotlink PC on the other end of a USB cable (`adb reverse` set up), or
+     * null. The certificate can't be pinned yet (nothing is paired), so nothing secret is
+     * sent on this connection: see [requestUsbPairing].
+     */
+    suspend fun usbPc(): String? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                probeClient.newCall(Request.Builder().url("https://$USB_HOST:$DEFAULT_PORT/pair/usb").build()).execute().use { res ->
+                    if (res.isSuccessful) JSONObject(res.body!!.string()).optString("name").ifEmpty { "PC" } else null
+                }
+            }.getOrNull()
+        }
+
+    /**
+     * Asks the PC on the cable to pair. It doesn't answer with the code: it opens the
+     * pairing link in this app through adb (only possible from a PC this phone allowed USB
+     * debugging for), carrying our nonce, and [UsbPairReceiver] hands it to the pair screen, which pairs without a tap.
+     */
+    suspend fun requestUsbPairing(): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val nonce = UUID.randomUUID().toString().replace("-", "")
+                usbPairNonce = nonce
+                val body = JSONObject().put("nonce", nonce).toString().toRequestBody("application/json".toMediaType())
+                probeClient
+                    .newBuilder()
+                    .readTimeout(30, TimeUnit.SECONDS) // the PC runs adb before answering
+                    .build()
+                    .newCall(Request.Builder().url("https://$USB_HOST:$DEFAULT_PORT/pair/usb").post(body).build())
+                    .execute()
+                    .use { res -> if (!res.isSuccessful) error(res.body?.string().orEmpty().ifBlank { "PC answered ${res.code}" }) }
+            }.onFailure { usbPairNonce = null }
+        }
+
+    /** The link the PC sent back for [requestUsbPairing]; the pair screen pairs with it. */
+    val usbPairLink = MutableStateFlow<String?>(null)
+
+    /** From [UsbPairReceiver]: kept only when it answers this phone's own request. */
+    fun offerUsbPairLink(link: String) {
+        val nonce = usbPairNonce ?: return
+        if (runCatching { Uri.parse(link.trim()).getQueryParameter("r") == nonce }.getOrDefault(false)) {
+            usbPairNonce = null
+            usbPairLink.value = link
+        }
+    }
 
     /** Forgets the active PC. Another paired PC, if any, becomes active (not connected yet). */
     fun unpair() {
@@ -250,6 +315,81 @@ class Link(
         choosePc.value = false
         controlJob = scope.launch { controlLoop() }
         watchDebugSettings()
+        watchUsb()
+        watchBattery()
+    }
+
+    private var batteryReceiver: BroadcastReceiver? = null
+
+    /** The battery as last sent: (percent, charging). Null until sent on this connection. */
+    @Volatile private var sentBattery: Pair<Int, Boolean>? = null
+
+    /**
+     * Tells the PC the battery level and whether it's charging (`battery`), for its Devices
+     * page. ACTION_BATTERY_CHANGED comes every few seconds for voltage and temperature alone,
+     * so only a new percentage or charging state is sent.
+     */
+    private fun watchBattery() {
+        if (batteryReceiver != null) return
+        val receiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(
+                    context: Context,
+                    intent: Intent,
+                ) = sendBattery(intent)
+            }
+        ContextCompat.registerReceiver(app, receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+        batteryReceiver = receiver
+    }
+
+    /** Sends the battery from [intent] (the sticky one when null) if it changed, or [force]d. */
+    private fun sendBattery(
+        intent: Intent? = null,
+        force: Boolean = false,
+    ) {
+        val battery =
+            intent ?: ContextCompat.registerReceiver(app, null, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+                ?: return
+        val level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+        if (level < 0 || scale <= 0) return
+        val percent = level * 100 / scale
+        val status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+        // Full while plugged in counts as charging: the phone is on power.
+        val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+        val now = percent to charging
+        if (!force && now == sentBattery) return
+        val ws = control ?: return
+        if (ws.send(JSONObject().put("t", "battery").put("level", percent).put("charging", charging).toString())) sentBattery = now
+    }
+
+    private var usbReceiver: BroadcastReceiver? = null
+
+    /**
+     * Retries right away when a USB cable is plugged in, instead of after the offline backoff
+     * (up to 30 s): the PC sets up `adb reverse` within a few seconds of seeing the phone.
+     * Already online over Wi-Fi, the control loop's own probe moves the link to the cable.
+     */
+    private fun watchUsb() {
+        if (usbReceiver != null) return
+        val receiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(
+                    context: Context,
+                    intent: Intent,
+                ) {
+                    if (!intent.getBooleanExtra("connected", false)) return
+                    scope.launch {
+                        repeat(4) {
+                            delay(2_000)
+                            if (state.value !is LinkState.Online) kicks.trySend(Unit)
+                        }
+                    }
+                }
+            }
+        // A system broadcast (sticky, hidden from the SDK constants); delivered to unexported receivers too.
+        ContextCompat.registerReceiver(app, receiver, IntentFilter(USB_STATE), ContextCompat.RECEIVER_NOT_EXPORTED)
+        usbReceiver = receiver
     }
 
     private var debugObserver: ContentObserver? = null
@@ -307,6 +447,8 @@ class Link(
             val host = resolveHost()
             if (host != null) {
                 val closed = CompletableDeferred<Unit>()
+                // The token this connection uses: a 401 for it says nothing about a newer one.
+                val token = prefs.token
                 val ws =
                     http().newWebSocket(
                         request("/ws/control", host).build(),
@@ -334,17 +476,38 @@ class Link(
                                 t: Throwable,
                                 response: Response?,
                             ) {
-                                if (response?.code == 401) revoked()
+                                if (response?.code == 401) revoked(token)
                                 closed.complete(Unit)
                             }
                         },
                     )
                 control = ws
+                currentHost = host
+                // On Wi-Fi, switch to the cable as soon as it's plugged in.
+                val upgrade =
+                    if (host == USB_HOST) {
+                        null
+                    } else {
+                        scope.launch {
+                            while (isActive) {
+                                delay(USB_PROBE_MS)
+                                if (ping(USB_HOST)) {
+                                    Log.i(TAG, "USB link available, switching")
+                                    ws.close(1000, "switching to USB")
+                                    closed.complete(Unit)
+                                    kicks.trySend(Unit)
+                                    break
+                                }
+                            }
+                        }
+                    }
                 try {
                     closed.await()
                 } finally {
+                    upgrade?.cancel()
                     ws.cancel()
                     control = null
+                    currentHost = null
                 }
             }
             if (!prefs.paired) break
@@ -354,9 +517,9 @@ class Link(
         }
     }
 
-    /** First reachable address: the last good one, the ones from pairing, then mDNS. */
+    /** First reachable address: the USB cable, the last good one, the ones from pairing, then mDNS. */
     private suspend fun resolveHost(): String? {
-        val candidates = (listOfNotNull(prefs.lastHost) + prefs.hosts).distinct()
+        val candidates = (listOf(USB_HOST) + listOfNotNull(prefs.lastHost) + prefs.hosts).distinct()
         for (h in candidates) if (ping(h)) return h
         val found = Discovery.find(app, prefs.serverId) ?: return null
         if (!ping(found)) return null
@@ -367,22 +530,33 @@ class Link(
     private fun ping(host: String): Boolean =
         try {
             val quick = http().newBuilder().connectTimeout(1500, TimeUnit.MILLISECONDS).readTimeout(3, TimeUnit.SECONDS).build()
+            val token = prefs.token
             quick.newCall(request("/ping", host).build()).execute().use { res ->
-                if (res.code == 401) revoked()
-                if (res.isSuccessful) prefs.lastHost = host
+                if (res.code == 401) revoked(token)
+                // The cable isn't an address to come back to over Wi-Fi.
+                if (res.isSuccessful && host != USB_HOST) prefs.lastHost = host
                 res.isSuccessful
             }
         } catch (_: Exception) {
             false
         }
 
-    /** The PC forgot this phone (`dotlink unpair`). */
-    private fun revoked() {
-        val name = prefs.serverName
+    /**
+     * The PC forgot this phone (`dotlink unpair`): it refused [token]. Forgets the PC holding
+     * that token, not simply the active one. A reply to an old request can arrive after the
+     * phone switched PCs or paired again (a new token), and must not remove those.
+     */
+    private fun revoked(token: String?) {
+        val pc = prefs.pcs.find { it.token == token } ?: return
+        if (pc.id != prefs.active?.id) {
+            prefs.removePc(pc.id)
+            notices.tryEmit("${pc.name} forgot this phone")
+            return
+        }
         prefs.clearPairing()
         client = null
         state.value = if (prefs.paired) LinkState.Offline else LinkState.Unpaired
-        notices.tryEmit("$name forgot this phone")
+        notices.tryEmit("${pc.name} forgot this phone")
     }
 
     private fun onControl(text: String) {
@@ -394,6 +568,7 @@ class Link(
                 msg.optString("os").takeIf { it.isNotEmpty() }?.let { prefs.pcOs = it }
                 state.value = LinkState.Online(name)
                 sendInfo()
+                sendBattery(force = true)
             }
             "adb_wifi" -> adbWifiRequests.tryEmit(Unit)
             "clip" -> setPhoneClipboard(msg.optString("text"))
@@ -663,6 +838,51 @@ class Link(
 
     companion object {
         private const val TAG = "Dotlink"
+
+        /**
+         * This phone's loopback: with USB debugging allowed, the PC runs `adb reverse` for its
+         * port, and connections here reach it through the cable. The pinned certificate still
+         * decides whether it is the right PC.
+         */
+        const val USB_HOST = "127.0.0.1"
+
+        /** The PC's default port; `adb reverse` maps the same port on the phone. */
+        private const val DEFAULT_PORT = 47390
+
+        /**
+         * For [usbPc] / [requestUsbPairing] only: accepts any certificate, because before
+         * pairing there is none to pin. Only a nonce goes over it, never a secret.
+         */
+        private val probeClient: OkHttpClient by lazy {
+            val tm =
+                object : X509TrustManager {
+                    override fun checkClientTrusted(
+                        chain: Array<out X509Certificate>,
+                        authType: String,
+                    ) = throw CertificateException("client certs not used")
+
+                    override fun checkServerTrusted(
+                        chain: Array<out X509Certificate>,
+                        authType: String,
+                    ) = Unit
+
+                    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+                }
+            val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(tm), null) }
+            OkHttpClient
+                .Builder()
+                .sslSocketFactory(ssl.socketFactory, tm)
+                .hostnameVerifier { _, _ -> true }
+                .connectTimeout(2, TimeUnit.SECONDS)
+                .readTimeout(3, TimeUnit.SECONDS)
+                .build()
+        }
+
+        /** How often a Wi-Fi link checks whether the cable has become available. */
+        private const val USB_PROBE_MS = 5_000L
+
+        /** UsbManager.ACTION_USB_STATE: a cable was plugged in or out. */
+        private const val USB_STATE = "android.hardware.usb.action.USB_STATE"
 
         /** Settings.Global.ADB_WIFI_ENABLED, hidden from the public SDK. */
         private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"

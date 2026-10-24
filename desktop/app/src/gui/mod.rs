@@ -9,19 +9,19 @@
 //! Closing the window keeps the app (and the phone connection) running; Quit in the tray or
 //! in Settings stops it.
 //!
-//! TODO(windows, macos):
+//! TODO(macos):
 //! - [ ] Tray: see tray.rs.
-//! - [ ] macOS: an app menu (About, Quit ⌘Q) via `cx.set_menus`, and reopening the window when
-//!       the Dock icon is clicked (`cx.on_reopen`). Hide the Dock icon while only in the menu bar.
-//! - [ ] Windows: check gpui-platform's features (x11/wayland are Linux only; the Windows
-//!       backend may want `windows-manifest`), and the window icon from assets/dotlink.svg.
-//! - [ ] Packaging: .msi/NSIS (Windows), signed + notarized .app in a .dmg (macOS). See the
-//!       `[package.metadata.packager]` section in Cargo.toml.
+//! - [ ] An app menu (About, Quit ⌘Q) via `cx.set_menus`, and reopening the window when
+//!   the Dock icon is clicked (`cx.on_reopen`). Hide the Dock icon while only in the menu bar.
+//!
+//! TODO(windows, macos): packaging: .msi/NSIS (Windows), signed + notarized .app in a .dmg
+//! (macOS). See the `[package.metadata.packager]` section in Cargo.toml.
 
 mod assets;
 mod client;
 mod model;
 mod theme;
+mod title_bar;
 mod tray;
 mod window;
 
@@ -95,8 +95,14 @@ pub fn run(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
             gpui_component::init(cx);
             theme::load_fonts(cx);
             theme::apply(None, cx);
+            #[cfg(target_os = "linux")]
+            theme::follow_portal(cx);
             let model = Model::new(client, owns_service, cx);
             model.update(cx, |m, _| m.has_tray = has_tray);
+            #[cfg(windows)]
+            if has_tray {
+                tray::follow_taskbar_theme(cx);
+            }
             // With the window closed (tray actions), messages go to the desktop instead.
             cx.subscribe(&model, |_, notice: &model::Notice, cx| {
                 if cx.global::<State>().window.is_none() {
@@ -122,6 +128,14 @@ pub fn run(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
                         "Your phone stays connected. Open Dotlink again to show the window; Quit is in Settings.",
                     );
                 }
+                // Windows users expect closing the window to quit the app: say once that it didn't.
+                if cfg!(windows) && has_tray && !state.told_still_running {
+                    state.told_still_running = true;
+                    dotlink_core::platform::notify(
+                        "Dotlink is still running",
+                        "Your phone stays connected. Dotlink is in the notification area; Quit is in its menu.",
+                    );
+                }
             })
             .detach();
 
@@ -144,10 +158,10 @@ fn show_window(cx: &mut App) {
         let state = cx.global::<State>();
         (state.window, state.model.clone())
     };
-    if let Some(handle) = existing {
-        if handle.update(cx, |_, window, _| window.activate_window()).is_ok() {
-            return;
-        }
+    if let Some(handle) = existing
+        && handle.update(cx, |_, window, _| window.activate_window()).is_ok()
+    {
+        return;
     }
     let bounds = Bounds::centered(None, size(px(1040.), px(740.)), cx);
     let options = WindowOptions {
@@ -241,8 +255,17 @@ fn listen_tray(mut rx: futures::channel::mpsc::UnboundedReceiver<TrayAction>, cx
                         .detach();
                     }
                     TrayAction::SendClipboard => model.update(cx, |m, cx| m.send_clipboard(cx)),
-                    // Needing pairing shows on the Devices page.
-                    TrayAction::Cast => model.update(cx, |m, cx| m.set_cast(true, cx)),
+                    // With several phones online, the Devices page asks which one. Needing
+                    // pairing shows there too.
+                    TrayAction::Cast => {
+                        let online = model.read(cx).online_names().len();
+                        if online > 1 {
+                            model.update(cx, |m, _| m.page = Page::Devices);
+                            show_window(cx);
+                        } else {
+                            model.update(cx, |m, cx| m.set_cast(true, None, cx));
+                        }
+                    }
                     TrayAction::Quit => quit(cx),
                 }
             });

@@ -186,7 +186,11 @@ private fun Subline(
                 subline,
                 style = Dotline.type.data,
                 color = if (error) Dotline.colors.accentText else Dotline.colors.inkMuted,
-                maxLines = 1,
+                // Wraps instead of clipping (the Remote hint is longer than a narrow phone);
+                // weight(fill = false) leaves the status room on the same line.
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
             )
         }
         if (subline != null && status != null) {

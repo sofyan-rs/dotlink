@@ -3,7 +3,7 @@
 //! - Wayland compositors with the data-control protocol (Hyprland, Sway, niri, KDE, COSMIC…):
 //!   `wl-paste --watch` / `wl-copy`, event driven.
 //! - Everything else (GNOME on Wayland, any X11 session): the X11 clipboard through `arboard`,
-//!   polled twice a second. On GNOME this goes through XWayland, which Mutter keeps in sync
+//!   read when XFixes reports a new owner (polled where XFixes is missing). On GNOME this goes through XWayland, which Mutter keeps in sync
 //!   with the Wayland clipboard.
 
 use super::super::polling_clipboard::shared as x11;

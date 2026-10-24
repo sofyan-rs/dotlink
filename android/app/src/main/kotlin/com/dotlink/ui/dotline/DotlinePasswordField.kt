@@ -79,6 +79,8 @@ fun DotlinePasswordField(
     onPasswordVisibleChange: ((Boolean) -> Unit)?,
     modifier: Modifier = Modifier,
     trailing: (@Composable () -> Unit)? = null,
+    /** Grey hint shown while the field is empty, like [DotlineTextField]'s. */
+    placeholder: String? = null,
     helperText: String? = null,
     errorText: String? = null,
     enabled: Boolean = true,
@@ -126,8 +128,8 @@ fun DotlinePasswordField(
                 decorator = { innerTextField ->
                     FieldBox(
                         innerTextField = innerTextField,
-                        showPlaceholder = false,
-                        placeholder = null,
+                        showPlaceholder = placeholder != null && state.text.isEmpty(),
+                        placeholder = placeholder,
                         placeholderStyle = textStyle,
                         leadingIcon = null,
                         suffix = null,

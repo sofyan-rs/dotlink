@@ -8,7 +8,7 @@ default-run = "dotlink"
 [features]
 default = ["gui"]
 # The window and the tray icon. `--no-default-features` builds the headless daemon + CLI only.
-gui = ["dep:gpui", "dep:gpui-platform", "dep:gpui-component", "dep:gpui-kit-assets", "dep:ksni"]
+gui = ["dep:gpui", "dep:gpui-platform", "dep:gpui-component", "dep:gpui-kit-assets", "dep:ksni", "dep:ashpd", "dep:tray-icon"]
 
 [dependencies]
 dotlink-core = { path = "../core" }
@@ -24,14 +24,28 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 # GPUI (Zed's UI framework) as published by gpui-kit, and its component library.
 gpui = { package = "gpui-pre", version = "=0.3.9", optional = true }
-gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9", optional = true, features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9", optional = true, features = ["font-kit", "runtime_shaders"] }
 gpui-component = { version = "0.8.0", optional = true }
 gpui-kit-assets = { version = "0.8.0", optional = true }
 
 # Tray icon. Linux: StatusNotifierItem over D-Bus (KDE, Waybar, GNOME with AppIndicator).
-# TODO(windows, macos): use the `tray-icon` crate there (menu bar item on macOS).
+# Windows: `tray-icon` below. TODO(macos): `tray-icon` there too (menu bar item).
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.7", optional = true }
+# The desktop's light/dark setting, read again when gpui's one try at login came too early.
+# Same version and runtime (async-io) as gpui's own use, so nothing new is built.
+ashpd = { version = "0.13", optional = true, default-features = false, features = ["async-io", "settings"] }
+# X11 and Wayland backends only exist on Linux; the same crate as above, with more features.
+gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9", optional = true, features = ["x11", "wayland"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
+# Tray icon in the notification area.
+tray-icon = { version = "0.21", optional = true }
+
+[target.'cfg(windows)'.build-dependencies]
+# The .exe's icon (Explorer, taskbar, Alt-Tab).
+winresource = "0.1"
 
 # `cargo packager --release` (cargo install cargo-packager) builds the installers into
 # desktop/target/packages. Linux: .deb, AppImage, pacman PKGBUILD. On new distros (Fedora 44)
@@ -41,10 +55,14 @@ product-name = "Dotlink"
 identifier = "dev.dotlink.Dotlink"
 description = "Link your Android phone with this PC: files, clipboard, remote, shell, webcam, mic"
 category = "Utility"
-before-packaging-command = "cargo build --release -p dotlink"
+# dotlink-camera: the Windows webcam DLL (an empty library elsewhere).
+before-packaging-command = "cargo build --release -p dotlink -p dotlink-camera"
 out-dir = "../target/packages"
 binaries = [{ path = "dotlink", main = true }]
-icons = ["assets/icons/*.png"]
+icons = ["assets/icons/*.png", "assets/dotlink.ico"]
+# Windows: the camera DLL next to dotlink.exe (Setup installs it for the frame server). The
+# pattern matches nothing on Linux.
+resources = ["../target/release/dotlink_camera.dll"]
 
 [package.metadata.packager.deb]
 depends = ["libxkbcommon-x11-0", "libnotify-bin", "pipewire-bin", "ffmpeg"]
@@ -53,7 +71,12 @@ depends = ["libxkbcommon-x11-0", "libnotify-bin", "pipewire-bin", "ffmpeg"]
 desktop-template = "assets/dev.dotlink.Dotlink.desktop"
 
 # TODO(macos): signing-identity, notarization, minimum-system-version; an .icns from assets/icons.
-# TODO(windows): nsis / wix settings (install mode per user, firewall rule for the port).
+# Windows: `cargo packager --release -f nsis` (NSIS is downloaded by cargo-packager). A per-user
+# install, no admin; Setup adds the firewall rule and the camera with one UAC prompt each.
+# TODO(windows): Authenticode signing (`[package.metadata.packager.windows]` signing-command).
+[package.metadata.packager.nsis]
+installer-mode = "currentUser"
+installer-icon = "assets/dotlink.ico"
 
 # `cargo generate-rpm -p app` (cargo install cargo-generate-rpm), after
 # `cargo build --release -p dotlink`. Writes desktop/target/generate-rpm/dotlink-*.rpm.

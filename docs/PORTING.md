@@ -1,7 +1,8 @@
 # Porting the desktop app to Windows and macOS
 
-Linux is complete and is the reference. The Windows and macOS modules exist, but they were
-written on Linux and **have never been compiled on those systems**. This page is the plan:
+Linux is complete and is the reference. **Windows 11 is done**: every step below, tested with
+a phone; what's left there is code signing and running CI. The macOS module was written on
+Linux and **has never been compiled there**. This page is the plan:
 what already works in principle, what each OS still needs, in which order, and how to test
 it. [ARCHITECTURE.md](ARCHITECTURE.md) explains the pieces; this page assumes it.
 
@@ -13,21 +14,21 @@ The Android app needs no changes: it already reads the PC's OS from `hello` (`os
 
 | Piece | Where | Windows | macOS |
 |---|---|---|---|
-| Service, pairing, files, mDNS, TLS | `core/src/server.rs`, `service.rs` | portable, untested | portable, untested |
-| Control socket (CLI ↔ service ↔ window) | `core/src/ipc.rs` | named pipe, **needs a user-only ACL** | Unix socket in `$TMPDIR` |
-| Shell | `core/src/term.rs` (portable-pty) | ConPTY + `powershell.exe` | login shell |
+| Service, pairing, files, mDNS, TLS | `core/src/server.rs`, `service.rs` | done, tested with a phone | portable, untested |
+| Control socket (CLI ↔ service ↔ window) | `core/src/ipc.rs` | named pipe `dotlink-<SID>`, user-only ACL | Unix socket in `$TMPDIR` |
+| Shell | `core/src/term.rs` (portable-pty) | ConPTY + `pwsh.exe` or `powershell.exe` | login shell |
 | Clipboard | `platform/polling_clipboard.rs` (arboard, 500 ms poll) | works | works |
-| Notifications | `notify-rust` | text only, no buttons | text only, no buttons |
+| Notifications | `notify-rust` | toasts under `dev.dotlink.Dotlink` (registered in HKCU), Open / Show in folder | text only, no buttons |
 | Open file / Show in folder | `platform/{windows,macos}/mod.rs` | `explorer` | `open`, `open -R` |
-| Window | `app/src/gui/` (GPUI) | Cargo features need gating | Cargo features need gating |
-| Tray | `app/src/gui/tray.rs` | **TODO** | **TODO** (menu bar) |
-| Remote (mouse + keyboard) | `Input` | **TODO** (SendInput) | **TODO** (CGEvent + Accessibility) |
-| Start at login | `autostart` | **TODO** (Run key) | **TODO** (SMAppService / LaunchAgent) |
-| Setup checks | `setup` | **TODO** (firewall) | **TODO** (Accessibility, Local Network) |
-| Cast (scrcpy) | `core/src/cast.rs` | **TODO**: download is .zip | download works (tar.gz) |
-| Webcam | `CameraHub` | **TODO**: virtual camera | **TODO**: Camera Extension |
-| Microphone | `MicSink` | **TODO**: virtual audio device | **TODO**: virtual audio device |
-| Installer | `app/Cargo.toml` packager section | **TODO**: NSIS/MSI | **TODO**: signed .app in .dmg |
+| Window | `app/src/gui/` (GPUI) | done (icon embedded by `app/build.rs`) | Cargo features gated, untested |
+| Tray | `app/src/gui/tray.rs` | done (`tray-icon`) | **TODO** (menu bar) |
+| Remote (mouse + keyboard) | `Input` | done (SendInput) | **TODO** (CGEvent + Accessibility) |
+| Start at login | `autostart` | done (Run key, honours Task Manager) | **TODO** (SMAppService / LaunchAgent) |
+| Setup checks | `setup` | done (firewall rule, Public network, input, camera, VB-CABLE, adb/scrcpy, notifications) | **TODO** (Accessibility, Local Network) |
+| Cast (scrcpy) | `core/src/cast.rs` | done (.zip download, SDK adb) | download works (tar.gz) |
+| Webcam | `CameraHub` | done (Windows 11 virtual camera, `desktop/camera` DLL) | **TODO**: Camera Extension |
+| Microphone | `MicSink` | done (plays into VB-CABLE through WASAPI) | **TODO**: virtual audio device |
+| Installer | `app/Cargo.toml` packager section | done (NSIS setup .exe, per user; not signed yet) | **TODO**: signed .app in .dmg |
 
 `platform::features()` tells the window what to show. Each OS starts with `remote`,
 `camera` and `mic` set to `false`; turn a flag on in the same commit that makes the feature
@@ -38,7 +39,8 @@ work.
 Each step leaves a usable app, so it can ship after any of them.
 
 1. **It builds.** CI for both OSes (below), then `cargo build -p dotlink` and `cargo test`
-   until they're clean. Expect small fixes: the stubs were never type-checked there.
+   until they're clean. Expect small fixes: the stubs were never type-checked there, and some
+   gpui APIs are Linux-only (`WindowButtonLayout::linux_default` broke the Windows build once).
 2. **Core works.** Pair a phone, send files both ways, clipboard both ways, Shell. Fix the
    named-pipe ACL (Windows) before anything leaves your machine.
 3. **Feels native.** Tray / menu bar, start at login, notifications under the app's name,
@@ -57,27 +59,22 @@ There is no CI yet. Add `.github/workflows/desktop.yml` with a matrix of `ubuntu
 cargo build -p dotlink
 cargo build -p dotlink --no-default-features   # service + CLI only, no GPUI
 cargo test
-cargo clippy -p dotlink -- -D warnings
+cargo clippy -p dotlink -- -D warnings   # clean on Linux
 ```
 
 Ubuntu needs the GPUI libraries listed in [CONTRIBUTION.md](CONTRIBUTION.md#desktop-rust).
 CI can't test the hardware parts, but it keeps the stubs compiling while Linux moves on.
 
-### Things that will need fixing on the first build
+### Fixed on the first Windows build
 
-- **GPUI features** (`app/Cargo.toml`): `gpui-platform` is pulled in with `x11` and
-  `wayland` for every OS. Move those two into a
-  `[target.'cfg(target_os = "linux")'.dependencies]` entry of the same crate and keep
+- **GPUI features** (`app/Cargo.toml`): `x11` and `wayland` are only enabled on Linux;
   `font-kit` / `runtime_shaders` for all. `runtime_shaders` compiles the Metal shaders at run
   time, so macOS builds don't need full Xcode, only the Command Line Tools.
-- **Windows console.** A GUI app linked as a console program opens a black console window,
-  and a `windows_subsystem = "windows"` program has no stdout for the CLI. Use
-  `#![cfg_attr(windows, windows_subsystem = "windows")]` in `app/src/main.rs` and, for CLI
-  commands, `AttachConsole(ATTACH_PARENT_PROCESS)` so `dotlink status` in a terminal still
-  prints.
-- **Shutdown.** `service.rs::terminate()` waits forever off Unix. `dotlink quit` (over the
-  control socket) still works. On Windows also stop on `tokio::signal::windows::ctrl_close`
-  / `ctrl_shutdown`, and on macOS keep the Unix SIGTERM path.
+- **Windows console.** `app/src/main.rs` is a `windows_subsystem = "windows"` program (no
+  black console window) and calls `AttachConsole(ATTACH_PARENT_PROCESS)` for CLI commands, so
+  `dotlink devices` in a terminal still prints.
+- **Shutdown.** `service.rs::terminate()` stops on SIGTERM (Linux, macOS) and on
+  `ctrl_close` / `ctrl_logoff` / `ctrl_shutdown` (Windows).
 
 ## Step 2: core
 
@@ -141,25 +138,24 @@ used (its ACL is already user-only); revisit it only if the config dir becomes c
   `NSBonjourServices` = `_dotlink._tcp`, `_adb-tls-connect._tcp`, `_adb-tls-pairing._tcp`,
   or browsing fails silently (Cast won't find the phone). This only applies to a bundled
   `.app`; `cargo run` from Terminal inherits Terminal's permission.
-- `mdns-sd` binds UDP 5353 next to the OS's own responder (Windows 10+ and mDNSResponder on
+- `mdns-sd` binds UDP 5353 next to the OS's own responder (Windows 11 and mDNSResponder on
   macOS). Check that the phone still finds the PC after its IP changes.
 
 ## Step 3: feels native
 
 ### Tray / menu bar
 
-`app/src/gui/tray.rs` returns `false` off Linux. Use the `tray-icon` crate (with `muda` for
-the menu) and send the same `TrayAction`s:
+`app/src/gui/tray.rs` returns `false` on macOS (Linux uses `ksni`, Windows `tray-icon`). Use
+the `tray-icon` crate there too (with `muda` for the menu) and send the same `TrayAction`s:
 
 - Create it on the main thread after GPUI has started (inside `Application::run`). GPUI owns
   the run loop on both OSes; `tray-icon` only needs the main thread to pump messages, which
   GPUI does.
 - Menu events arrive on `MenuEvent::receiver()` / `TrayIconEvent::receiver()`; forward them
   into the existing `UnboundedSender<TrayAction>`. Left click on Windows opens the window.
-- Icons: Windows uses `assets/icons/32x32.png` (64 on high DPI). The macOS menu bar wants a
-  black-only **template** image (`with_icon_as_template(true)`) so it follows light/dark:
-  make `assets/tray-template.png` (22 pt, @2x at 44 px) from the dot glyph without the black
-  tile, like `android/.../drawable/ic_notification.xml`.
+- Icons: the tray icon is the logo's dots alone, drawn by `glyph()` in `tray.rs` (Windows:
+  white or black with the taskbar's mode). The macOS menu bar wants it as a black-only
+  **template** image (`with_icon_as_template(true)`, 22 pt, 44 px @2x) so it follows light/dark.
 - Once a tray exists, `has_tray` in `gui/mod.rs` is true and the "still running" notice goes
   away by itself.
 
@@ -172,7 +168,7 @@ the menu) and send the same `TrayAction`s:
   `.regular` when the window opens, `.accessory` when it closes (the menu bar item stays).
   With `--background` start as `.accessory`.
 - Title bar: GPUI on macOS can use a transparent title bar with the traffic lights over the
-  sidebar. The GNOME `TitleBar` path in `window.rs` (client-side decorations) should not be
+  sidebar. The GNOME title bar (`title_bar.rs`, client-side decorations) should not be
   used there; check which branch macOS takes.
 
 ### Windows app behaviour
@@ -237,7 +233,9 @@ Permissions:
 
 ## Setup checks (`setup::checks` / `fix`)
 
-Same `Check` struct as Linux; fixable ones get a Fix button.
+Same `Check` struct as Linux; fixable ones get a Fix button. The page shows a section per
+feature in the order the checks come, so every OS lists them as Network, Remote, Webcam,
+Microphone, Cast, Clipboard, Notifications (skipping what it has nothing for).
 
 **Windows**
 
@@ -245,8 +243,11 @@ Same `Check` struct as Linux; fixable ones get a Fix button.
 |---|---|---|---|
 | `firewall` | Network | an inbound TCP rule for the port exists (`netsh advfirewall firewall show rule name=Dotlink`) | `netsh advfirewall firewall add rule name=Dotlink dir=in action=allow protocol=TCP localport=<port> profile=private,domain` through an elevated `ShellExecuteW(…, "runas", …)` (one UAC prompt) |
 | `network_profile` | Network | the active Wi-Fi is Private (Public blocks the rule above) | not fixable: explain where to switch it |
-| `mic_driver` | Microphone | the virtual audio device is present (see Step 7) | link to the download |
-| `camera` | Webcam | Windows 11 22H2+ (or the fallback driver is installed) | not fixable |
+| `input` | Remote | always passes (SendInput); notes that elevated windows are out of reach | — |
+| `camera` | Webcam | the camera DLL is installed in Program Files and registered | installs it (one UAC prompt) |
+| `vb_cable` | Microphone | VB-CABLE's "CABLE Input" is present (see Step 7) | opens its download page |
+| `adb`, `scrcpy` | Cast | found on PATH or downloaded | downloads scrcpy with adb |
+| `notifications` | Notifications | toasts aren't switched off, globally (`PushNotifications\ToastEnabled`) or for Dotlink (`Notifications\Settings\<APP_ID>\Enabled`) | not fixable: explain where to turn them on |
 
 **macOS**
 
@@ -308,14 +309,10 @@ while apps are reading.
 
 ### Windows webcam
 
-- **Windows 11 (22H2+)**: `MFCreateVirtualCamera` registers a camera every app sees
-  (Teams, Zoom, browsers, OBS). It needs a **media source COM DLL** (a separate
-  `cdylib` crate, or C++), registered by the installer; the app passes it frames through
-  shared memory or a named pipe. The DLL decodes JPEG to NV12 (or the app does, with
-  `zune-jpeg`/`image`, so the DLL stays small).
-- **Windows 10**: no virtual camera API. A DirectShow source filter works for most desktop
-  apps (not for Windows Hello or UWP apps). [Softcam](https://github.com/tshino/softcam)
-  (MIT) is a ready-made one fed from user code. Decide whether Windows 10 is worth it.
+Done: `MFCreateVirtualCamera` (Windows 11) registers a camera every app sees (Teams, Zoom,
+browsers, OBS). Its **media source COM DLL** is the `desktop/camera` crate, installed and
+registered by Setup; Dotlink decodes the JPEG to NV12 (`zune-jpeg`) and passes it through a
+shared file. Windows 10 has no virtual camera API and isn't supported.
 
 ### Windows microphone
 
@@ -366,21 +363,22 @@ the dependency.
 
 ## Checklist
 
-Copy into an issue per OS and tick as you go.
-
-- [ ] CI builds and tests on this OS
-- [ ] `cargo build -p dotlink` and `--no-default-features` without warnings
-- [ ] Control socket private to the user (Windows ACL)
-- [ ] Pair, files both ways, clipboard both ways, Shell (incl. tab titles)
-- [ ] Graceful quit (tray, Settings, `dotlink quit`, OS shutdown)
-- [ ] Tray / menu bar with every `TrayAction`
-- [ ] App icon in the window, taskbar / Dock, notifications
-- [ ] Notifications under Dotlink's name, Open / Show in folder on received files
-- [ ] Start at login (`--background`)
-- [ ] Setup checks and fixes for this OS
-- [ ] Remote: move, click, drag, scroll, keys, combos, text
-- [ ] Cast: download scrcpy, USB and Wi-Fi
-- [ ] Installer, signed (and notarized on macOS)
-- [ ] Webcam
-- [ ] Microphone
-- [ ] README platform table and ARCHITECTURE updated, `features()` flags on
+| | Windows | macOS |
+|---|---|---|
+| CI builds and tests on this OS | workflow written, not run yet | |
+| `cargo build -p dotlink` and `--no-default-features` without warnings | ✅ | |
+| Control socket private to the user (Windows ACL) | ✅ | |
+| Pair, files both ways, clipboard both ways, Shell (incl. tab titles) | ✅ | |
+| Graceful quit (tray, Settings, `dotlink quit`, OS shutdown) | ✅ | |
+| Tray / menu bar with every `TrayAction` | ✅ | |
+| App icon in the window, taskbar / Dock, notifications | ✅ | |
+| Notifications under Dotlink's name, Open / Show in folder on received files | ✅ (buttons not clicked in a test) | |
+| Start at login (`--background`) | ✅ | |
+| Setup checks and fixes for this OS | ✅ | |
+| Remote: move, click, drag, scroll, keys, combos, text | ✅ | |
+| Cast: download scrcpy, USB and Wi-Fi | ✅ | |
+| Link over a USB cable | ✅ | |
+| Installer, signed (and notarized on macOS) | ✅ installer, not signed | |
+| Webcam | ✅ (Windows 11) | |
+| Microphone | ✅ (VB-CABLE) | |
+| README platform table and ARCHITECTURE updated, `features()` flags on | ✅ | |

@@ -1,6 +1,6 @@
 /**
- * Shown while no PC is paired, or to add another PC: scan the QR code from `dotlink pair`, or
- * paste its link.
+ * Shown while no PC is paired, or to add another PC: scan the QR code from `dotlink pair`,
+ * paste its link, or, with a USB cable to a PC running Dotlink, pair over the cable.
  */
 package com.dotlink.ui.pair
 
@@ -68,6 +68,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
@@ -98,7 +99,14 @@ fun PairScreen(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val pasted = rememberTextFieldState()
-    LaunchedEffect(initialLink) { if (initialLink != null) pasted.setTextAndPlaceCursorAtEnd(initialLink) }
+    /** The PC on the USB cable, if one answers (see [com.dotlink.link.Link.usbPc]). */
+    var usbPc by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            usbPc = link.usbPc()
+            delay(2000)
+        }
+    }
 
     fun pair(code: String) {
         if (busy) return
@@ -112,6 +120,39 @@ fun PairScreen(
                     onPaired()
                 }.onFailure { error = it.message ?: "Pairing failed" }
             busy = false
+        }
+    }
+
+    // A link from a QR scanner (or the PC's "Pair over USB") fills the field.
+    LaunchedEffect(initialLink) { if (initialLink != null) pasted.setTextAndPlaceCursorAtEnd(initialLink) }
+    // The PC answered our USB request: pair right away (we're still "busy" waiting for it).
+    LaunchedEffect(Unit) {
+        link.usbPairLink.collect { answer ->
+            if (answer == null) return@collect
+            link.usbPairLink.value = null
+            pasted.setTextAndPlaceCursorAtEnd(answer)
+            busy = false
+            pair(answer)
+        }
+    }
+
+    fun pairOverUsb() {
+        if (busy) return
+        busy = true
+        error = null
+        scope.launch {
+            // On success the PC opens the link here (the LaunchedEffect above pairs); until then,
+            // stay busy. Give up after a while in case it never arrives.
+            link.requestUsbPairing().onFailure {
+                error = it.message ?: "Pairing over USB failed"
+                busy = false
+            }.onSuccess {
+                delay(15_000)
+                if (busy) {
+                    busy = false
+                    error = "The PC didn't send the code. Scan it instead."
+                }
+            }
         }
     }
 
@@ -162,19 +203,40 @@ fun PairScreen(
             ListRow(title = "Pair a phone", subtitle = "Or run dotlink pair · the code lasts 5 minutes", leadingIcon = DotlineIcons.Scan)
         }
         Spacer(Modifier.height(Dotline.space.s5))
-        PrimaryButton(
-            text = if (busy) "Pairing…" else "Scan QR code",
-            icon = DotlineIcons.Scan,
-            enabled = !busy,
-            onClick = {
-                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                    scanning = true
-                } else {
-                    cameraPermission.launch(Manifest.permission.CAMERA)
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
+        val scan = {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                scanning = true
+            } else {
+                cameraPermission.launch(Manifest.permission.CAMERA)
+            }
+        }
+        val cablePc = usbPc
+        if (cablePc != null) {
+            // On the cable: one tap, nothing to scan.
+            PrimaryButton(
+                text = if (busy) "Pairing…" else "Pair with $cablePc over USB",
+                icon = DotlineIcons.Link,
+                enabled = !busy,
+                onClick = ::pairOverUsb,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(Dotline.space.s2))
+            SecondaryButton(
+                text = "Scan QR code",
+                icon = DotlineIcons.Scan,
+                enabled = !busy,
+                onClick = scan,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            PrimaryButton(
+                text = if (busy) "Pairing…" else "Scan QR code",
+                icon = DotlineIcons.Scan,
+                enabled = !busy,
+                onClick = scan,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         Spacer(Modifier.height(Dotline.space.s5))
         DotlineTextField(
             state = pasted,

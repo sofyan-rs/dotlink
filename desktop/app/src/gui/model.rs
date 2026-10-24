@@ -99,10 +99,8 @@ impl Model {
                 // Rewrite the entries each start, so they follow the app if it moved (or were
                 // written with a wrong path by an older version).
                 let on = platform::autostart::enabled();
-                if on {
-                    if let Err(e) = platform::autostart::set(true) {
-                        tracing::warn!("autostart: {e:#}");
-                    }
+                if on && let Err(e) = platform::autostart::set(true) {
+                    tracing::warn!("autostart: {e:#}");
                 }
                 on
             },
@@ -342,17 +340,20 @@ impl Model {
         .detach();
     }
 
-    /// Starts or stops casting the phone screen. Errors that the cast state already explains
-    /// (Wireless debugging off, needs pairing) aren't repeated as toasts.
-    pub fn set_cast(&mut self, on: bool, cx: &mut Context<Self>) {
-        let call = self.client.cast(on);
+    /// Starts or stops casting a phone's screen (None: the first phone online). Errors that the
+    /// cast state already explains (Wireless debugging off, needs pairing) aren't repeated as
+    /// toasts.
+    pub fn set_cast(&mut self, on: bool, id: Option<String>, cx: &mut Context<Self>) {
+        let call = self.client.cast(on, id.as_deref());
         cx.spawn(async move |this, cx| {
             let result = call.await;
             this.update(cx, |this, cx| {
                 this.refresh(cx);
                 if let Err(e) = result {
                     let explained = this.status.as_ref().is_some_and(|s| {
-                        matches!(s.cast, CastState::NeedsWifiDebugging { .. } | CastState::NeedsPairing { .. })
+                        s.casts.iter().filter(|(cast_id, _)| id.as_ref().is_none_or(|id| id == *cast_id)).any(
+                            |(_, c)| matches!(c, CastState::NeedsWifiDebugging { .. } | CastState::NeedsPairing { .. }),
+                        )
                     });
                     if !explained {
                         this.notice(capitalize(&format!("{e:#}")), true, cx);
@@ -364,15 +365,15 @@ impl Model {
         .detach();
     }
 
-    /// Pairs with the phone's Wireless debugging, then casts.
-    pub fn pair_cast(&mut self, code: String, cx: &mut Context<Self>) {
-        let call = self.client.cast_pair(&code);
+    /// Pairs with the phone's Wireless debugging, then casts it.
+    pub fn pair_cast(&mut self, id: String, code: String, cx: &mut Context<Self>) {
+        let call = self.client.cast_pair(&id, &code);
         cx.spawn(async move |this, cx| {
             let result = call.await;
             this.update(cx, |this, cx| match result {
                 Ok(_) => {
                     this.notice("Paired. Casting…", false, cx);
-                    this.set_cast(true, cx);
+                    this.set_cast(true, Some(id), cx);
                 }
                 Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
             })
@@ -406,6 +407,21 @@ impl Model {
     /// The camera/mic was asked to start a moment ago and the phone hasn't begun yet.
     pub fn is_starting(&self, kind: &str) -> bool {
         self.starting.iter().any(|(k, at)| *k == kind && at.elapsed() < START_WAIT)
+    }
+
+    /// Opens the current pairing link on the phones on the cable; the result is a toast.
+    pub fn pair_usb(&mut self, cx: &mut Context<Self>) {
+        let Pairing::Waiting { uri, .. } = &self.pairing else { return };
+        let call = self.client.pair_usb(uri);
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| match result {
+                Ok(msg) => this.notice(msg, false, cx),
+                Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn unpair(&mut self, id: String, cx: &mut Context<Self>) {

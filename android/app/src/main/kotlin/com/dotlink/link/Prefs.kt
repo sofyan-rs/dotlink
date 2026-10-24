@@ -18,6 +18,8 @@ data class Pc(
     val token: String,
     /** The PC's OS from its hello ("linux", "windows", "macos"); empty until it says. */
     val os: String = "",
+    /** The Shell PIN this PC asks for (`terminal_pin` in its config); empty when it asks none. */
+    val terminalPin: String = "",
 ) {
     fun toJson(): JSONObject =
         JSONObject()
@@ -30,6 +32,7 @@ data class Pc(
             .put("fingerprint", fingerprint)
             .put("token", token)
             .put("os", os)
+            .put("terminal_pin", terminalPin)
 
     companion object {
         fun fromJson(o: JSONObject) =
@@ -43,6 +46,7 @@ data class Pc(
                 fingerprint = o.getString("fingerprint"),
                 token = o.getString("token"),
                 os = o.optString("os"),
+                terminalPin = o.optString("terminal_pin"),
             )
     }
 }
@@ -64,6 +68,7 @@ class Prefs(
 
     init {
         migrateSinglePc()
+        migrateTerminalPin()
     }
 
     /** Random id for this phone; the PC uses it to replace the old token when re-pairing. */
@@ -92,7 +97,9 @@ class Prefs(
 
     /** Adds [pc] (replacing an older pairing with the same PC) and makes it the active one. */
     fun addPc(pc: Pc) {
-        pcs = pcs.filter { it.id != pc.id } + pc
+        // Re-pairing the same PC keeps its Shell PIN: the PIN lives on the PC, not in the pairing.
+        val pin = pc.terminalPin.ifEmpty { pcs.find { it.id == pc.id }?.terminalPin.orEmpty() }
+        pcs = pcs.filter { it.id != pc.id } + pc.copy(terminalPin = pin)
         activeId = pc.id
     }
 
@@ -117,6 +124,13 @@ class Prefs(
         get() = active?.os.orEmpty()
         set(v) = updateActive { it.copy(os = v) }
 
+    /** The active PC's Shell PIN. Each PC sets its own, so it is kept per PC. */
+    val terminalPin: String get() = active?.terminalPin.orEmpty()
+
+    fun setTerminalPin(pcId: String, pin: String) {
+        pcs = pcs.map { if (it.id == pcId) it.copy(terminalPin = pin) else it }
+    }
+
     // Settings
     /** What the PCs call this phone; empty means the system device name. */
     var phoneName: String
@@ -128,8 +142,9 @@ class Prefs(
     var fullHd: Boolean
         get() = sp.getBoolean("full_hd", false)
         set(v) = sp.edit { putBoolean("full_hd", v) }
+    /** Webcam frame rate: 30 or 60. Older versions offered 15, which now reads as 30. */
     var fps: Int
-        get() = sp.getInt("fps", 30)
+        get() = if (sp.getInt("fps", 30) >= 60) 60 else 30
         set(v) = sp.edit { putInt("fps", v) }
     /** Webcam picture rotation in degrees (0, 90, 180, 270). 90 = landscape, the old default. */
     var rotation: Int
@@ -143,9 +158,6 @@ class Prefs(
     var autoClipboard: Boolean
         get() = sp.getBoolean("auto_clipboard", true)
         set(v) = sp.edit { putBoolean("auto_clipboard", v) }
-    var terminalPin: String
-        get() = sp.getString("terminal_pin", "")!!
-        set(v) = sp.edit { putString("terminal_pin", v) }
     var terminalFontSize: Int
         get() = sp.getInt("terminal_font", 13)
         set(v) = sp.edit { putInt("terminal_font", v) }
@@ -167,6 +179,13 @@ class Prefs(
         val id = active?.id ?: return
         pcs = pcs.filter { it.id != id }
         activeId = pcs.firstOrNull()?.id
+    }
+
+    /** Older versions kept one Shell PIN for every PC: give it to each PC paired then. */
+    private fun migrateTerminalPin() {
+        val pin = sp.getString("terminal_pin", null) ?: return
+        if (pin.isNotEmpty()) pcs = pcs.map { if (it.terminalPin.isEmpty()) it.copy(terminalPin = pin) else it }
+        sp.edit { remove("terminal_pin") }
     }
 
     /** Older versions kept one PC in separate keys. */

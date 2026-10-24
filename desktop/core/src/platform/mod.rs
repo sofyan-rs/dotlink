@@ -13,8 +13,8 @@
 //! | `autostart::{enabled, set}` | start with the desktop session |
 //! | `setup::{checks, fix}` | permissions and system pieces the features need |
 //!
-//! Linux is complete. Windows and macOS are stubs that report "not supported yet" (written on
-//! Linux, never compiled there yet); their TODO comments say what to build.
+//! Linux is complete, and so is Windows (Windows 11). macOS is stubs that report "not supported
+//! yet" (written on Linux, never compiled there yet); their TODO comments say what to build.
 
 #[cfg(target_os = "linux")]
 mod linux;

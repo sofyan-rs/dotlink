@@ -1,5 +1,6 @@
 /**
- * BottomNav: the tab bar at the bottom of the main screens.
+ * BottomNav: the tab bar at the bottom of the main screens; [NavRail], the same tabs as a
+ * vertical pill on the left in landscape and on wide screens ([LocalNavRail]).
  *
  * 5 tabs: LINK, REMOTE, SHELL, CAMERA, SETTINGS ([MainTab]). Styled after Nothing OS 5.0: a floating
  * pill (`navBar`) with icons only, floating over the screen. The active tab sits in a circle
@@ -22,12 +23,20 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -41,6 +50,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -139,13 +149,85 @@ fun <T : BottomNavTab> BottomNav(
 }
 
 /**
+ * The tabs are a [NavRail] on the left rather than a [BottomNav]: set by the main screen in
+ * landscape and on wide screens (tablets, unfolded foldables), where a bottom bar would take
+ * height that's short, or sit far from the hand.
+ */
+val LocalNavRail = staticCompositionLocalOf { false }
+
+/** Landscape, or at least this wide: the tabs go to a rail on the left. */
+val NavRailMinWidth = 600.dp
+
+/**
  * How tall the bottom nav is from the screen's bottom edge: the pill, its margins and the
  * system navigation bar. Tab screens keep this much space free at the end of their lists.
+ * With a [NavRail] there is no bar at the bottom; only the system navigation bar's space.
  */
 @Composable
-fun bottomNavHeight(): Dp =
-    Dotline.size.tabBarHeight + Dotline.space.s3 * 2 +
-        WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+fun bottomNavHeight(): Dp {
+    val system = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    return if (LocalNavRail.current) system else Dotline.size.tabBarHeight + Dotline.space.s3 * 2 + system
+}
+
+/**
+ * The tabs as a vertical pill, centred on the left edge: the same pill, circle and items as
+ * [BottomNav], turned upright. Content sits to its right, so it needs no fade behind it.
+ */
+@Composable
+fun <T : BottomNavTab> NavRail(
+    tabs: List<T>,
+    selectedTab: T,
+    onTabClick: (T) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier =
+            modifier
+                .fillMaxHeight()
+                .background(Dotline.colors.bg)
+                // Clear of the status bar, a cutout on the left, and the system buttons when
+                // they sit on this side in landscape.
+                .windowInsetsPadding(
+                    WindowInsets.statusBars
+                        .union(WindowInsets.navigationBars)
+                        .union(WindowInsets.displayCutout)
+                        .only(WindowInsetsSides.Start + WindowInsetsSides.Vertical),
+                ).padding(horizontal = Dotline.space.s3),
+        contentAlignment = Alignment.Center,
+    ) {
+        val selectedIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
+        val circleOffset by animateDpAsState(
+            targetValue = (ItemSize + ItemGap) * selectedIndex,
+            animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
+            label = "railCircleOffset",
+        )
+        Box(
+            Modifier
+                .width(Dotline.size.tabBarHeight)
+                .background(Dotline.colors.navBar, Dotline.radius.pill)
+                .padding(PillPadding),
+        ) {
+            Box(
+                Modifier
+                    .offset { IntOffset(0, circleOffset.roundToPx()) }
+                    .size(ItemSize)
+                    .background(Dotline.colors.navSelected, CircleShape),
+            )
+            Column(
+                modifier = Modifier.selectableGroup(),
+                verticalArrangement = Arrangement.spacedBy(ItemGap),
+            ) {
+                tabs.forEach { tab ->
+                    BottomNavItem(
+                        tab = tab,
+                        selected = tab == selectedTab,
+                        onClick = { onTabClick(tab) },
+                    )
+                }
+            }
+        }
+    }
+}
 
 /** Space between the pill's edge and the circle of the active tab. */
 private val PillPadding = 6.dp
@@ -200,6 +282,15 @@ private fun BottomNavPreviewContent() {
 private fun BottomNavDarkPreview() {
     DotlinkTheme(dark = true) {
         Box(Modifier.background(Dotline.colors.bg).padding(16.dp)) { BottomNavPreviewContent() }
+    }
+}
+
+@Preview(name = "Rail", widthDp = 120, heightDp = 420)
+@Composable
+private fun NavRailPreview() {
+    DotlinkTheme(dark = true) {
+        var selected by remember { mutableStateOf(MainTab.Remote) }
+        NavRail(tabs = MainTab.entries, selectedTab = selected, onTabClick = { selected = it })
     }
 }
 

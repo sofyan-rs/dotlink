@@ -20,6 +20,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dotlink.DotlinkApp
+import com.dotlink.link.CameraStreamer
 import com.dotlink.link.LinkService
 import com.dotlink.link.LinkState
 import com.dotlink.link.Transfer
@@ -93,7 +94,7 @@ fun LinkScreen(
             titleClickLabel = "Change PC",
             subline =
                 when (state) {
-                    is LinkState.Online -> "${link.host}:${link.prefs.port}"
+                    is LinkState.Online -> if (link.viaUsb) "USB cable" else "${link.host}:${link.prefs.port} · Wi-Fi"
                     LinkState.Connecting -> "Connecting…"
                     LinkState.Disconnected -> "Disconnected · tap ↻ to reconnect"
                     else -> "Offline · retrying"
@@ -128,7 +129,8 @@ fun LinkScreen(
                         listOf(
                             if (prefs.fullHd) "1080p" else "720p",
                             if (prefs.frontCamera) "front" else "back",
-                            "${prefs.fps} fps",
+                            // What is really sent: a camera that tops out at 30 does 30.
+                            "${remember(prefs.frontCamera, prefs.fps) { CameraStreamer.effectiveFps(context, prefs.frontCamera, prefs.fps) }} fps",
                             "${prefs.rotation}°" + if (prefs.mirror) " mirrored" else "",
                         ).joinToString(" · "),
                     subtitleIsData = true,

@@ -46,8 +46,12 @@ pub struct PhoneInfo {
     pub adb_wifi: bool,
     /// Developer options are on.
     pub dev_options: bool,
-    /// Where its control connection comes from.
+    /// Where its control connection comes from (its Wi-Fi address; USB links don't change it).
     pub ip: Option<IpAddr>,
+    /// Control connections over the USB cable (`adb reverse`, seen as 127.0.0.1).
+    pub usb: usize,
+    /// Battery percent and whether it's charging, from its `battery` message (newer apps).
+    pub battery: Option<(u8, bool)>,
 }
 
 /// Where a file or clipboard goes: one phone, or every connected phone.
@@ -82,8 +86,14 @@ pub struct App {
     pub hostname: String,
     pub state: Mutex<State>,
     pairing: Mutex<Option<Pairing>>,
+    /// One-time codes handed out over USB (`POST /pair/usb`), one per request, so several
+    /// phones can pair at once without touching the code the window shows: (secret, expiry).
+    usb_pairings: Mutex<Vec<(String, Instant)>>,
     /// Messages for the phones: (device id, or None for every phone; JSON text).
     control_tx: broadcast::Sender<(Option<String>, String)>,
+    /// Device ids just unpaired: their control connections close, so the phone reconnects,
+    /// is refused (401) and forgets this PC right away.
+    revoked_tx: broadcast::Sender<String>,
     /// Device id → number of open control connections.
     online: Mutex<HashMap<String, usize>>,
     offers: Mutex<HashMap<String, Offer>>,
@@ -121,7 +131,9 @@ impl App {
             hostname,
             state: Mutex::new(state),
             pairing: Mutex::new(None),
+            usb_pairings: Mutex::new(Vec::new()),
             control_tx: broadcast::channel(64).0,
+            revoked_tx: broadcast::channel(16).0,
             online: Mutex::new(HashMap::new()),
             offers: Mutex::new(HashMap::new()),
             last_clip: Mutex::new(String::new()),
@@ -215,6 +227,13 @@ impl App {
                     "paired_at": d.paired_at,
                     "model": phones.get(&d.id).map(|p| p.model.clone()),
                     "adb_wifi": phones.get(&d.id).map(|p| p.adb_wifi),
+                    "usb": phones.get(&d.id).is_some_and(|p| p.usb > 0),
+                    // Only while connected: an old reading would look current.
+                    "battery": phones
+                        .get(&d.id)
+                        .and_then(|p| p.battery)
+                        .filter(|_| online.get(&d.id).copied().unwrap_or(0) > 0)
+                        .map(|(level, charging)| json!({ "level": level, "charging": charging })),
                 })
             })
             .collect()
@@ -235,7 +254,7 @@ impl App {
             "camera": self.streams.lock().unwrap().get("camera"),
             "mic": self.streams.lock().unwrap().get("mic"),
             "has_ui": self.ui.lock().unwrap().is_some(),
-            "cast": self.cast.state(),
+            "casts": self.cast.states(),
         })
     }
 
@@ -342,6 +361,11 @@ impl App {
         let _ = self.control_tx.send((device.map(str::to_string), msg.to_string()));
     }
 
+    /// Device ids of the phones connected right now.
+    pub fn online_ids(&self) -> Vec<String> {
+        self.online.lock().unwrap().iter().filter(|(_, n)| **n > 0).map(|(id, _)| id.clone()).collect()
+    }
+
     pub fn online_devices(&self) -> Vec<String> {
         let online = self.online.lock().unwrap();
         let state = self.state.lock().unwrap();
@@ -365,15 +389,33 @@ impl App {
         let (tx, rx) = oneshot::channel();
         *self.pairing.lock().unwrap() =
             Some(Pairing { secret: secret.clone(), expires: Instant::now() + PAIRING_TTL, done: Some(tx) });
-        let hosts = local_ips().join(",");
-        let uri = format!(
-            "dotlink://pair?h={hosts}&p={}&fp={}&c={secret}&n={}&id={}",
+        (self.pairing_uri(&secret), rx)
+    }
+
+    /// A one-time code for a phone asking over USB, and its link. Separate from the window's
+    /// code, so it stays valid, and one per phone, so phones pairing at once don't use up each
+    /// other's.
+    fn usb_pairing_uri(&self) -> Option<String> {
+        let mut codes = self.usb_pairings.lock().unwrap();
+        codes.retain(|(_, expires)| *expires > Instant::now());
+        // A bound on what a flood of requests can pile up; plenty for the phones on a hub.
+        if codes.len() >= 16 {
+            return None;
+        }
+        let secret = random_hex(16);
+        codes.push((secret.clone(), Instant::now() + PAIRING_TTL));
+        Some(self.pairing_uri(&secret))
+    }
+
+    fn pairing_uri(&self, secret: &str) -> String {
+        format!(
+            "dotlink://pair?h={}&p={}&fp={}&c={secret}&n={}&id={}",
+            local_ips().join(","),
             self.port,
             self.fingerprint,
             url_encode(&self.name()),
             self.server_id()
-        );
-        (uri, rx)
+        )
     }
 
     /// Offers files to a phone (`to`: its name or id) or, for None, to every connected phone.
@@ -444,6 +486,7 @@ impl App {
         for s in self.terms.lock().unwrap().remove(&dev.id).unwrap_or_default().into_values() {
             s.kill();
         }
+        let _ = self.revoked_tx.send(dev.id.clone());
         self.emit(Event::Devices);
         Ok(dev.name)
     }
@@ -452,6 +495,7 @@ impl App {
 pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/pair", post(pair))
+        .route("/pair/usb", get(usb_pair_probe).post(usb_pair_request))
         .route("/ping", get(ping))
         .route("/ws/control", get(ws_control))
         .route("/ws/input", get(ws_input))
@@ -498,10 +542,18 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
     let done = {
         let mut pairing = app.pairing.lock().unwrap();
         let valid = pairing.as_ref().is_some_and(|p| p.expires > Instant::now() && ct_eq(&p.secret, &req.secret));
-        if !valid {
-            return (StatusCode::FORBIDDEN, "pairing code expired or wrong").into_response();
+        if valid {
+            pairing.take().and_then(|mut p| p.done.take())
+        } else {
+            // A code handed out over USB: used once, like the window's.
+            let mut codes = app.usb_pairings.lock().unwrap();
+            let now = Instant::now();
+            let Some(i) = codes.iter().position(|(c, expires)| *expires > now && ct_eq(c, &req.secret)) else {
+                return (StatusCode::FORBIDDEN, "pairing code expired or wrong").into_response();
+            };
+            codes.swap_remove(i);
+            None
         }
-        pairing.take().and_then(|mut p| p.done.take())
     };
     let token = random_hex(32);
     let name: String = req.device_name.chars().take(64).collect();
@@ -526,6 +578,55 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
     app.emit(Event::Devices);
     notify("Phone paired", &format!("{name} can now connect to this PC"));
     Json(json!({ "token": token, "server_id": app.server_id(), "server_name": app.name() })).into_response()
+}
+
+/// Through `adb reverse` the phone connects from this PC's loopback.
+fn from_cable(peer: &SocketAddr) -> bool {
+    match peer.ip() {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(v6.is_loopback(), |v4| v4.is_loopback()),
+        v4 => v4.is_loopback(),
+    }
+}
+
+/// The phone's pair screen asks, over the cable, whether a Dotlink PC is on the other end.
+async fn usb_pair_probe(AxState(app): AxState<Arc<App>>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+    if !from_cable(&peer) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    Json(json!({ "name": app.name(), "id": app.server_id() })).into_response()
+}
+
+#[derive(Deserialize)]
+struct UsbPairReq {
+    /// Echoed back in the link (`r=`), so the phone knows it asked and pairs without a tap.
+    nonce: String,
+}
+
+/// The phone asks to pair over the cable. The secret never goes back on this connection
+/// (any app on the phone can reach `127.0.0.1` while the cable is in): the PC opens the link
+/// in Dotlink through adb, which only works for phones that allowed this PC's USB debugging.
+async fn usb_pair_request(
+    AxState(app): AxState<Arc<App>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<UsbPairReq>,
+) -> Response {
+    if !from_cable(&peer) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if !(1..=64).contains(&req.nonce.len()) || !req.nonce.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return (StatusCode::BAD_REQUEST, "bad nonce").into_response();
+    }
+    let Some(uri) = app.usb_pairing_uri() else {
+        return (StatusCode::TOO_MANY_REQUESTS, "Too many pairing requests, wait a moment").into_response();
+    };
+    let uri = format!("{uri}&r={}", req.nonce);
+    match crate::usb::open_pairing(&uri, true).await {
+        Ok(phones) => {
+            tracing::info!("usb: pairing link opened on {} at the phone's request", phones.join(", "));
+            Json(json!({ "ok": true })).into_response()
+        }
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, format!("{e:#}")).into_response(),
+    }
 }
 
 async fn ping(AxState(app): AxState<Arc<App>>, Authed(_): Authed) -> Json<Value> {
@@ -554,16 +655,32 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(v6)),
         v4 => v4,
     };
-    app.phones.lock().unwrap().entry(dev.id.clone()).or_default().ip = Some(ip);
+    // Through `adb reverse` the phone connects from this PC's loopback.
+    let usb = ip.is_loopback();
+    {
+        let mut phones = app.phones.lock().unwrap();
+        let phone = phones.entry(dev.id.clone()).or_default();
+        if usb {
+            phone.usb += 1;
+        } else {
+            phone.ip = Some(ip);
+        }
+    }
     *app.online.lock().unwrap().entry(dev.id.clone()).or_default() += 1;
     app.emit(Event::Devices);
-    tracing::info!("{} connected", dev.name);
+    tracing::info!("{} connected{}", dev.name, if usb { " over USB" } else { "" });
     let (mut tx, mut rx) = socket.split();
     let mut events = app.control_tx.subscribe();
+    let mut revoked = app.revoked_tx.subscribe();
     let hello = app.hello();
     let _ = tx.send(Message::Text(hello.to_string().into())).await;
     loop {
         tokio::select! {
+            id = revoked.recv() => match id {
+                Ok(id) if id == dev.id => break,
+                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            },
             ev = events.recv() => match ev {
                 Ok((Some(to), _)) if to != dev.id => continue,
                 Ok((_, text)) => if tx.send(Message::Text(text.into())).await.is_err() { break },
@@ -588,20 +705,27 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                         }
                         app.emit(Event::Devices);
                     }
+                    if v["t"] == "battery"
+                        && let Some(level) = v["level"].as_u64()
+                    {
+                        let charging = v["charging"].as_bool().unwrap_or(false);
+                        app.phones.lock().unwrap().entry(dev.id.clone()).or_default().battery =
+                            Some((level.min(100) as u8, charging));
+                        app.emit(Event::Devices);
+                    }
                     if v["t"] == "media" && v["state"] == "needs_tap" {
                         let kind = v["kind"].as_str().unwrap_or("camera").to_string();
                         app.emit(Event::MediaPrompt { device: dev.name.clone(), kind });
                     }
-                    if v["t"] == "clip" {
-                        if let Some(text) = v["text"].as_str() {
-                            if app.remember_clip(text) {
-                                let chars = text.chars().count();
-                                tracing::info!("clipboard from {} ({chars} chars)", dev.name);
-                                match clipboard::set(text).await {
-                                    Ok(()) => app.emit(Event::Clipboard { to_phone: false, device: dev.name.clone(), chars }),
-                                    Err(e) => tracing::warn!("clipboard: {e}"),
-                                }
-                            }
+                    if v["t"] == "clip"
+                        && let Some(text) = v["text"].as_str()
+                        && app.remember_clip(text)
+                    {
+                        let chars = text.chars().count();
+                        tracing::info!("clipboard from {} ({chars} chars)", dev.name);
+                        match clipboard::set(text).await {
+                            Ok(()) => app.emit(Event::Clipboard { to_phone: false, device: dev.name.clone(), chars }),
+                            Err(e) => tracing::warn!("clipboard: {e}"),
                         }
                     }
                 }
@@ -612,6 +736,9 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
     }
     if let Some(n) = app.online.lock().unwrap().get_mut(&dev.id) {
         *n = n.saturating_sub(1);
+    }
+    if usb && let Some(phone) = app.phones.lock().unwrap().get_mut(&dev.id) {
+        phone.usb = phone.usb.saturating_sub(1);
     }
     app.emit(Event::Devices);
     tracing::info!("{} disconnected", dev.name);
@@ -911,10 +1038,10 @@ async fn save_upload(app: &App, name: &str, sha: Option<&str>, body: Body, progr
             progress.add(chunk.len() as u64);
         }
         file.flush().await?;
-        if let Some(expected) = sha {
-            if !hex::encode(hasher.finalize()).eq_ignore_ascii_case(expected) {
-                bail!("checksum mismatch");
-            }
+        if let Some(expected) = sha
+            && !hex::encode(hasher.finalize()).eq_ignore_ascii_case(expected)
+        {
+            bail!("checksum mismatch");
         }
         Ok(())
     }

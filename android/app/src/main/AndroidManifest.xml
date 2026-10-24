@@ -80,6 +80,16 @@
             android:taskAffinity=""
             android:theme="@style/Theme.Dotlink.Translucent" />
 
+        <!-- Exported so `adb shell am broadcast` from the PC reaches it; it acts only on a link
+             carrying the nonce of this phone's own request (UsbPairReceiver). -->
+        <receiver
+            android:name=".link.UsbPairReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.dotlink.android.USB_PAIR" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name=".link.LinkService"
             android:exported="false"

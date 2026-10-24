@@ -4,6 +4,10 @@
 //! `dotlink` opens the app (window + tray, the service runs inside it). `dotlink daemon` runs
 //! the service alone, without a window. The other subcommands talk to whichever is running.
 
+// Windows: a GUI program, so opening the app shows no console window. The CLI subcommands
+// borrow the console of the terminal they were started from (`attach_console`).
+#![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
+
 #[cfg(feature = "gui")]
 mod gui;
 
@@ -28,7 +32,11 @@ enum Cmd {
     /// Run the service without a window (for `exec-once`, servers, or no tray).
     Daemon,
     /// Show a QR code to pair a phone.
-    Pair,
+    Pair {
+        /// Also open the link on the phones plugged in over USB (USB debugging on): no scanning.
+        #[arg(long)]
+        usb: bool,
+    },
     /// Send files to the connected phones.
     Send {
         /// Only to this phone (name or id); every connected phone without it.
@@ -61,8 +69,11 @@ enum Cmd {
         #[arg(long)]
         to: Option<String>,
     },
-    /// Show the phone's screen on the PC (scrcpy, over USB or Wi-Fi). `stop` ends it.
+    /// Show a phone's screen on the PC (scrcpy, over USB or Wi-Fi). `stop` ends it.
     Cast {
+        /// The phone (name or id); without it, the first one connected (`stop`: every cast).
+        #[arg(long, global = true)]
+        to: Option<String>,
         #[command(subcommand)]
         action: Option<CastCmd>,
     },
@@ -85,6 +96,7 @@ enum OnOff {
 }
 
 fn main() -> Result<()> {
+    attach_console();
     let cli = Cli::parse();
     init_logging();
     let rt = tokio::runtime::Runtime::new()?;
@@ -106,6 +118,18 @@ fn open_app(rt: tokio::runtime::Runtime, _background: bool) -> Result<()> {
     rt.block_on(dotlink_core::service::run(None, None))
 }
 
+/// A `windows_subsystem = "windows"` program starts without stdout; started from a terminal,
+/// print there (`dotlink devices`, `--help`, logs). Started from the Start menu there is no
+/// parent console and nothing changes.
+#[cfg(all(windows, feature = "gui"))]
+fn attach_console() {
+    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+}
+
+#[cfg(not(all(windows, feature = "gui")))]
+fn attach_console() {}
+
 fn init_logging() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -118,12 +142,21 @@ fn init_logging() {
 async fn command(cmd: Cmd) -> Result<()> {
     match cmd {
         Cmd::Daemon => unreachable!(),
-        Cmd::Pair => {
+        Cmd::Pair { usb } => {
             ipc::request(json!({ "cmd": "pair" }), |v| {
                 if let Some(uri) = v["uri"].as_str() {
                     print_qr(uri);
                     println!("\nScan this with the Dotlink app (valid for 5 minutes).");
                     println!("Or paste this link in the app:\n{uri}\n\nWaiting for the phone…");
+                    if usb {
+                        // A second request while this one waits for the phone to pair.
+                        let req = json!({ "cmd": "pair_usb", "uri": uri });
+                        tokio::spawn(async move {
+                            if let Err(e) = simple(req).await {
+                                eprintln!("USB: {e:#}");
+                            }
+                        });
+                    }
                 } else if let Some(name) = v["paired"].as_str() {
                     println!("Paired with {name}.");
                 } else if let Some(e) = v["error"].as_str() {
@@ -143,9 +176,13 @@ async fn command(cmd: Cmd) -> Result<()> {
         Cmd::Clip { to } => simple(json!({ "cmd": "clip", "to": to })).await,
         Cmd::Unpair { device } => simple(json!({ "cmd": "unpair", "id": device })).await,
         Cmd::Quit => simple(json!({ "cmd": "quit" })).await,
-        Cmd::Cast { action: None } => simple(json!({ "cmd": "cast", "on": true })).await,
-        Cmd::Cast { action: Some(CastCmd::Stop) } => simple(json!({ "cmd": "cast", "on": false })).await,
-        Cmd::Cast { action: Some(CastCmd::Pair { code }) } => simple(json!({ "cmd": "cast_pair", "code": code })).await,
+        Cmd::Cast { to, action: None } => simple(json!({ "cmd": "cast", "on": true, "id": to })).await,
+        Cmd::Cast { to, action: Some(CastCmd::Stop) } => {
+            simple(json!({ "cmd": "cast", "on": false, "id": to })).await
+        }
+        Cmd::Cast { to, action: Some(CastCmd::Pair { code }) } => {
+            simple(json!({ "cmd": "cast_pair", "code": code, "id": to })).await
+        }
         Cmd::Camera { state, to } => {
             simple(json!({ "cmd": "media", "kind": "camera", "on": matches!(state, OnOff::On), "to": to })).await
         }

@@ -120,15 +120,13 @@ fn run(cmds: mpsc::Receiver<Cmd>) {
             }
             Ok(Cmd::Changed) | Err(mpsc::RecvTimeoutError::Timeout) => {
                 // Poll: other apps changed the clipboard?
-                if let Ok(text) = cb.get_text() {
-                    if last.as_deref() != Some(text.as_str()) {
-                        let first = last.is_none();
-                        last = Some(text.clone());
-                        if !first {
-                            if let Some(me) = SHARED.get() {
-                                me.subscribers.lock().unwrap().retain(|s| s.send(text.clone()).is_ok());
-                            }
-                        }
+                if let Ok(text) = cb.get_text()
+                    && last.as_deref() != Some(text.as_str())
+                {
+                    let first = last.is_none();
+                    last = Some(text.clone());
+                    if !first && let Some(me) = SHARED.get() {
+                        me.subscribers.lock().unwrap().retain(|s| s.send(text.clone()).is_ok());
                     }
                 }
             }
@@ -173,10 +171,10 @@ mod xfixes {
         EVENTS.store(true, Ordering::Relaxed);
         tracing::debug!("clipboard: following XFixes selection events");
         loop {
-            if let Event::XfixesSelectionNotify(_) = conn.wait_for_event()? {
-                if changes.send(Cmd::Changed).is_err() {
-                    return Ok(());
-                }
+            if let Event::XfixesSelectionNotify(_) = conn.wait_for_event()?
+                && changes.send(Cmd::Changed).is_err()
+            {
+                return Ok(());
             }
         }
     }

@@ -1,5 +1,6 @@
 /**
- * The SETTINGS tab: clipboard, remote and shell options, the paired PC, theme and about.
+ * The SETTINGS tab: clipboard, where received files go, remote and shell options, the paired
+ * PC, theme and about.
  */
 package com.dotlink.ui.settings
 
@@ -15,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -95,6 +97,19 @@ fun SettingsScreen() {
             Hint("PC → phone is automatic. Phone → PC: open Dotlink, use Share → Dotlink, or the notification button.")
         }
 
+        Section("Received files") {
+            ListGroup {
+                ListRow(
+                    title = "Saved to",
+                    // Fixed: Link.download writes through MediaStore into Downloads/Dotlink.
+                    subtitle = "Download/Dotlink",
+                    subtitleIsData = true,
+                    leadingIcon = DotlineIcons.Folder,
+                )
+            }
+            Hint("Files from the PC always go here; open it in your Files app. This can't be changed yet.")
+        }
+
         Section("Remote") {
             val speeds = listOf(1.0f, 1.4f, 2.0f)
             Choice(listOf("Slow", "Normal", "Fast"), speeds.indexOfFirst { it >= prefs.pointerSpeed }.coerceAtLeast(0)) {
@@ -107,17 +122,6 @@ fun SettingsScreen() {
             Choice(listOf("Small", "Medium", "Large"), sizes.indexOf(prefs.terminalFontSize).coerceAtLeast(0)) {
                 prefs.terminalFontSize = sizes[it]
             }
-            Spacer(Modifier.height(Dotline.space.s3))
-            val pin = rememberTextFieldState(prefs.terminalPin)
-            var show by remember { mutableStateOf(false) }
-            LaunchedEffect(pin) { snapshotFlow { pin.text.toString() }.collect { prefs.terminalPin = it } }
-            DotlinePasswordField(
-                state = pin,
-                label = "Terminal PIN",
-                passwordVisible = show,
-                onPasswordVisibleChange = { show = it },
-                helperText = "Only if a terminal PIN is set in Dotlink on the PC",
-            )
         }
 
         Section("Paired PC") {
@@ -135,6 +139,25 @@ fun SettingsScreen() {
                     subtitle = (listOfNotNull(prefs.lastHost) + prefs.hosts).distinct().joinToString(", ") + " · port ${prefs.port}",
                     subtitleIsData = true,
                     leadingIcon = DotlineIcons.Link,
+                )
+            }
+            Spacer(Modifier.height(Dotline.space.s3))
+            // Each PC has its own PIN: a fresh field (and save target) per PC, so switching PCs
+            // never writes one PC's PIN into another.
+            val pcId = prefs.active?.id
+            key(pcId) {
+                val pin = rememberTextFieldState(prefs.terminalPin)
+                var show by remember { mutableStateOf(false) }
+                LaunchedEffect(pin) {
+                    snapshotFlow { pin.text.toString() }.drop(1).collect { if (pcId != null) prefs.setTerminalPin(pcId, it) }
+                }
+                DotlinePasswordField(
+                    state = pin,
+                    label = "Terminal PIN",
+                    placeholder = "No PIN",
+                    passwordVisible = show,
+                    onPasswordVisibleChange = { show = it },
+                    helperText = "Each PC has its own. Only needed if ${prefs.serverName}'s Dotlink sets a terminal PIN.",
                 )
             }
             Spacer(Modifier.height(Dotline.space.s4))
@@ -182,7 +205,7 @@ fun SettingsScreen() {
             var about by remember { mutableStateOf(false) }
             val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
             ListGroup {
-                // TODO: link these once there is an update feed and an issue tracker.
+                // TODO: link this once there is an update feed.
                 ListRow(
                     title = "Check for updates",
                     leadingIcon = DotlineIcons.Refresh,
@@ -193,7 +216,7 @@ fun SettingsScreen() {
                 ListRow(
                     title = "Report a bug or suggestion",
                     leadingIcon = DotlineIcons.Bug,
-                    onClick = {},
+                    onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/sofyan-rs/dotlink/issues"))) },
                     trailing = { ListRowChevron() },
                 )
                 ListDivider()

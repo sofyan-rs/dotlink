@@ -117,9 +117,11 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
     let mode: ThemeMode = match choice() {
         1 => ThemeMode::Light,
         2 => ThemeMode::Dark,
-        _ => match window.as_ref() {
-            Some(w) => w.appearance().into(),
-            None => cx.window_appearance().into(),
+        _ => match (portal_dark(), window.as_ref()) {
+            (Some(true), _) => ThemeMode::Dark,
+            (Some(false), _) => ThemeMode::Light,
+            (None, Some(w)) => w.appearance().into(),
+            (None, None) => cx.window_appearance().into(),
         },
     };
     Theme::change(mode, window, cx);
@@ -167,4 +169,65 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
         t.title_bar_border = p.line;
         t.drop_target = p.accent.opacity(0.08);
     });
+}
+
+/// The desktop's light/dark setting as [follow_portal] last read it: 0 not yet, 1 light, 2 dark.
+static PORTAL: AtomicU8 = AtomicU8::new(0);
+
+fn portal_dark() -> Option<bool> {
+    match PORTAL.load(Ordering::Relaxed) {
+        0 => None,
+        v => Some(v == 2),
+    }
+}
+
+/// Linux: gpui asks the desktop portal for light/dark once, at startup. Started at login
+/// (Hyprland's exec), we can come up before the portal does; gpui then stays light for good and
+/// misses later changes too. So read it here as well, retrying until the portal answers, and
+/// follow its changes from then on.
+#[cfg(target_os = "linux")]
+pub fn follow_portal(cx: &mut App) {
+    use ashpd::desktop::settings::{ColorScheme, Settings};
+    use futures::StreamExt;
+    use std::time::Duration;
+
+    let (tx, mut rx) = futures::channel::mpsc::unbounded::<bool>();
+    let timer = cx.background_executor().clone();
+    cx.background_executor()
+        .spawn(async move {
+            let dark = |s: ColorScheme| s == ColorScheme::PreferDark;
+            // About two minutes, then give up: gpui's own reading is all there is.
+            for _ in 0..60 {
+                if let Ok(settings) = Settings::new().await
+                    && let Ok(scheme) = settings.color_scheme().await
+                {
+                    if tx.unbounded_send(dark(scheme)).is_err() {
+                        return;
+                    }
+                    if let Ok(mut changes) = settings.receive_color_scheme_changed().await {
+                        while let Some(scheme) = changes.next().await {
+                            if tx.unbounded_send(dark(scheme)).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    return;
+                }
+                timer.timer(Duration::from_secs(2)).await;
+            }
+            tracing::debug!("no answer from the desktop portal; light/dark is gpui's guess");
+        })
+        .detach();
+    cx.spawn(async move |cx| {
+        while let Some(dark) = rx.next().await {
+            let v = if dark { 2 } else { 1 };
+            if PORTAL.swap(v, Ordering::Relaxed) != v {
+                cx.update(|cx| {
+                    apply(None, cx);
+                    cx.refresh_windows();
+                });
+            }
+        }
+    })
+    .detach();
 }
