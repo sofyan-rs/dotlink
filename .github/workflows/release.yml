@@ -156,7 +156,11 @@ jobs:
           path: artifacts
       # The Linux artifact keeps its folders (packages/, generate-rpm/): flatten everything.
       - name: Files
-        run: mkdir dist && find artifacts -type f -exec mv -t dist {} +
+        # GitHub turns "~" in asset names into "." (the .rpm's 0.1.0~beta.1); rename first, so the
+        # notes name the files as published.
+        run: |
+          mkdir dist && find artifacts -type f -exec mv -t dist {} +
+          for f in dist/*~*; do [ -e "$f" ] && mv "$f" "${f//\~/.}"; done; true
       - name: Release notes
         run: |
           NOTES=".github/release-notes/$TAG.md"
