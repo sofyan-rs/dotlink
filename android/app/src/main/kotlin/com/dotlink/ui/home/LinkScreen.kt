@@ -20,6 +20,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dotlink.DotlinkApp
+import com.dotlink.link.CameraStreamer
 import com.dotlink.link.LinkService
 import com.dotlink.link.LinkState
 import com.dotlink.link.Transfer
@@ -128,7 +129,8 @@ fun LinkScreen(
                         listOf(
                             if (prefs.fullHd) "1080p" else "720p",
                             if (prefs.frontCamera) "front" else "back",
-                            "${prefs.fps} fps",
+                            // What is really sent: a camera that tops out at 30 does 30.
+                            "${remember(prefs.frontCamera, prefs.fps) { CameraStreamer.effectiveFps(context, prefs.frontCamera, prefs.fps) }} fps",
                             "${prefs.rotation}°" + if (prefs.mirror) " mirrored" else "",
                         ).joinToString(" · "),
                     subtitleIsData = true,

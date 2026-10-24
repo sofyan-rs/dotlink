@@ -5,12 +5,13 @@
 //! - `Activator` (IMFActivate): what the class factory hands out; creates the source.
 //! - `MediaSource` (IMFMediaSourceEx + IMFGetService + IKsControl + IMFSampleAllocatorControl,
 //!   and its own attributes): one stream, live.
-//! - `MediaStream` (IMFMediaStream2 + IKsControl + attributes): NV12 at a fixed size and 30 fps.
+//! - `MediaStream` (IMFMediaStream2 + IKsControl + attributes): NV12 at a fixed size, at 60 or
+//!   30 fps (the app picks; 60 first).
 //!   Frames come from Dotlink through the shared file ([crate::shared]); a dark frame stands in
 //!   until it has written one.
 //!
 //! RequestSample only queues the request; a worker thread delivers each sample on the next
-//! 30 fps tick, so the frame server gets a steady rate without being blocked.
+//! tick of the chosen rate, so the frame server gets a steady rate without being blocked.
 
 use crate::shared::{self, FrameReader};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -23,7 +24,9 @@ use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{IClassFactory, IClassFactory_Impl};
 use windows::core::*;
 
-const FPS: u32 = 30;
+/// The frame rates offered, preferred first. Phones send up to 60; one that sends 30 shows each
+/// frame twice at 60. Some apps (calls, Windows Hello) want 30, so it stays on the list.
+const RATES: [u32; 2] = [60, 30];
 const DEFAULT_SIZE: (u32, u32) = (1280, 720);
 /// HRESULT_FROM_WIN32(ERROR_SET_NOT_FOUND): "no such property set", for every IKsControl call.
 const SET_NOT_FOUND: HRESULT = HRESULT(0x8007_0492_u32 as i32);
@@ -327,10 +330,10 @@ impl MediaSource {
         let attrs = attributes()?;
         unsafe {
             activator_attrs.CopyAllItems(&attrs)?;
-            // The profiles Windows Hello and the Camera app look for; one stream, up to 30 fps.
+            // The profiles Windows Hello and the Camera app look for; one stream, up to 60 fps.
             let profiles = MFCreateSensorProfileCollection()?;
             let profile = MFCreateSensorProfile(&KSCAMERAPROFILE_Legacy, 0, PCWSTR::null())?;
-            profile.AddProfileFilter(0, w!("((RES==;FRT<=30,1;SUT==))"))?;
+            profile.AddProfileFilter(0, w!("((RES==;FRT<=60,1;SUT==))"))?;
             profiles.AddProfile(&profile)?;
             attrs.SetUnknown(&MF_DEVICEMFT_SENSORPROFILE_COLLECTION, &profiles)?;
         }
@@ -583,23 +586,14 @@ impl MediaStream {
                 MFFrameSourceTypes_Color.0 as u32,
             )?;
 
-            let t = MFCreateMediaType()?;
-            t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-            t.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)?;
-            t.SetUINT64(&MF_MT_FRAME_SIZE, ((size.0 as u64) << 32) | size.1 as u64)?;
-            t.SetUINT64(&MF_MT_FRAME_RATE, ((FPS as u64) << 32) | 1)?;
-            t.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1u64 << 32) | 1)?;
-            t.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
-            t.SetUINT32(&MF_MT_ALL_SAMPLES_INDEPENDENT, 1)?;
-            t.SetUINT32(&MF_MT_DEFAULT_STRIDE, size.0)?;
-            t.SetUINT32(&MF_MT_SAMPLE_SIZE, shared::frame_len(size.0, size.1) as u32)?;
-            t.SetUINT32(
-                &MF_MT_AVG_BITRATE,
-                shared::frame_len(size.0, size.1) as u32 * 8 * FPS,
-            )?;
-            t
+            RATES
+                .iter()
+                .map(|&fps| video_type(size, fps))
+                .collect::<Result<Vec<_>>>()?
         };
-        let descriptor = unsafe { MFCreateStreamDescriptor(0, &[Some(media_type.clone())])? };
+        let types: Vec<Option<IMFMediaType>> = media_type.iter().cloned().map(Some).collect();
+        let media_type = media_type[0].clone();
+        let descriptor = unsafe { MFCreateStreamDescriptor(0, &types)? };
         unsafe {
             descriptor
                 .GetMediaTypeHandler()?
@@ -738,14 +732,42 @@ impl MediaStream {
         }
         unsafe {
             sample.SetSampleTime(MFGetSystemTime())?;
-            sample.SetSampleDuration(10_000_000 / FPS as i64)?;
+            sample.SetSampleDuration(10_000_000 / current_fps(&self.descriptor) as i64)?;
         }
         Ok(sample)
     }
 }
 
-/// The delivery thread: one sample per request, no faster than 30 fps, with Dotlink's newest
-/// frame (or the last one it had, or a dark frame).
+/// NV12 at `size` and `fps`.
+fn video_type(size: (u32, u32), fps: u32) -> Result<IMFMediaType> {
+    unsafe {
+        let t = MFCreateMediaType()?;
+        t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+        t.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)?;
+        t.SetUINT64(&MF_MT_FRAME_SIZE, ((size.0 as u64) << 32) | size.1 as u64)?;
+        t.SetUINT64(&MF_MT_FRAME_RATE, ((fps as u64) << 32) | 1)?;
+        t.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1u64 << 32) | 1)?;
+        t.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+        t.SetUINT32(&MF_MT_ALL_SAMPLES_INDEPENDENT, 1)?;
+        t.SetUINT32(&MF_MT_DEFAULT_STRIDE, size.0)?;
+        t.SetUINT32(&MF_MT_SAMPLE_SIZE, shared::frame_len(size.0, size.1) as u32)?;
+        t.SetUINT32(&MF_MT_AVG_BITRATE, shared::frame_len(size.0, size.1) as u32 * 8 * fps)?;
+        Ok(t)
+    }
+}
+
+/// The frame rate of the format the app chose (SetCurrentMediaType); the first offered until then.
+fn current_fps(descriptor: &IMFStreamDescriptor) -> u32 {
+    unsafe { descriptor.GetMediaTypeHandler().and_then(|h| h.GetCurrentMediaType()) }
+        .and_then(|t| unsafe { t.GetUINT64(&MF_MT_FRAME_RATE) })
+        .ok()
+        .map(|rate| ((rate >> 32) as u32, (rate & 0xFFFF_FFFF) as u32))
+        .filter(|&(num, den)| num > 0 && den > 0)
+        .map_or(RATES[0], |(num, den)| (num / den).clamp(1, RATES[0]))
+}
+
+/// The delivery thread: one sample per request, no faster than the chosen rate, with Dotlink's
+/// newest frame (or the last one it had, or a dark frame).
 fn deliver(stream: &ComObject<MediaStream>, requests: Receiver<Send_<Option<IUnknown>>>) {
     let size = stream.size;
     let mut frame = vec![0u8; shared::frame_len(size.0, size.1)];
@@ -753,9 +775,10 @@ fn deliver(stream: &ComObject<MediaStream>, requests: Receiver<Send_<Option<IUnk
     let mut scratch = frame.clone();
     let mut reader: Option<FrameReader> = None;
     let mut last_open = Instant::now() - Duration::from_secs(10);
-    let period = Duration::from_secs(1) / FPS;
     let mut next = Instant::now();
     while let Ok(Send_(token)) = requests.recv() {
+        // Read each time: the app may switch formats between starts.
+        let period = Duration::from_secs(1) / current_fps(&stream.descriptor);
         let now = Instant::now();
         if next > now {
             std::thread::sleep(next - now);
@@ -926,9 +949,9 @@ mod tests {
             unsafe { buffer.Unlock().unwrap() };
             assert_eq!(got, pattern);
         }
-        // Four samples at 30 fps: paced, not instant.
+        // Four samples at 60 fps (the default format): paced, not instant.
         assert!(
-            started.elapsed() >= Duration::from_millis(90),
+            started.elapsed() >= Duration::from_millis(45),
             "{:?}",
             started.elapsed()
         );
