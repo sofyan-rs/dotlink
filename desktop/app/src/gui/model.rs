@@ -6,6 +6,7 @@ use dotlink_core::cast::CastState;
 use dotlink_core::config::Config;
 use dotlink_core::events::{Event, Transfer};
 use dotlink_core::platform::{self, Check};
+use dotlink_core::update::{self, Release};
 use futures::StreamExt;
 use gpui::{App, AppContext, Context, Entity, EventEmitter};
 use std::collections::VecDeque;
@@ -71,7 +72,23 @@ pub struct Model {
     /// in bursts, e.g. a phone connecting sends Devices twice).
     refreshing: bool,
     refresh_again: bool,
+    pub update: UpdateState,
+    /// The version the last "is available" toast was about, so the periodic check says it once.
+    update_announced: Option<String>,
 }
+
+pub enum UpdateState {
+    Idle,
+    Checking,
+    UpToDate,
+    Available(Release),
+    /// Downloading, with progress 0.0–1.0.
+    Downloading(Release, f32),
+    Failed(String),
+}
+
+/// The tray app runs for days: look for updates this often (and shortly after starting).
+const UPDATE_EVERY: std::time::Duration = std::time::Duration::from_secs(12 * 60 * 60);
 
 /// [Model::fixing] while "Fix all" runs.
 pub const FIX_ALL: &str = "*";
@@ -111,6 +128,20 @@ impl Model {
             stream_from: None,
             refreshing: false,
             refresh_again: false,
+            update: UpdateState::Idle,
+            update_announced: None,
+        });
+        model.update(cx, |_, cx| {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_secs(10)).await;
+                loop {
+                    if this.update(cx, |this, cx| this.check_update(false, cx)).is_err() {
+                        break;
+                    }
+                    cx.background_executor().timer(UPDATE_EVERY).await;
+                }
+            })
+            .detach();
         });
         let mut updates = client.watch();
         model.update(cx, |_, cx| {
@@ -247,6 +278,93 @@ impl Model {
                     Err(e) => this.notice(format!("{e:#}"), true, cx),
                 }
                 this.refresh_checks(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Looks for a newer release. `manual`: the user asked, so failures show; otherwise a found
+    /// update is announced once.
+    pub fn check_update(&mut self, manual: bool, cx: &mut Context<Self>) {
+        if matches!(self.update, UpdateState::Checking | UpdateState::Downloading(..)) {
+            return;
+        }
+        let before = std::mem::replace(&mut self.update, UpdateState::Checking);
+        if manual {
+            cx.notify();
+        }
+        let task = cx.background_executor().spawn(async move { update::check() });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.update = match result {
+                    Ok(Some(release)) => {
+                        if !manual && this.update_announced.as_deref() != Some(&release.version) {
+                            this.update_announced = Some(release.version.clone());
+                            this.notice(format!("Dotlink {} is available: Settings → About", release.version), false, cx);
+                        }
+                        UpdateState::Available(release)
+                    }
+                    Ok(None) => UpdateState::UpToDate,
+                    Err(e) if manual => UpdateState::Failed(format!("{e:#}")),
+                    // A quiet check failing (offline) shouldn't hide what was known.
+                    Err(e) => {
+                        tracing::info!("update check: {e:#}");
+                        match before {
+                            UpdateState::Checking | UpdateState::Downloading(..) => UpdateState::Idle,
+                            other => other,
+                        }
+                    }
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Downloads and starts the update, then quits (the update starts Dotlink again). Without a
+    /// file for this kind of install, opens the release page.
+    pub fn install_update(&mut self, cx: &mut Context<Self>) {
+        let UpdateState::Available(release) = &self.update else { return };
+        let release = release.clone();
+        let Some(asset) = release.asset.clone() else {
+            cx.open_url(&release.page_url);
+            return;
+        };
+        self.update = UpdateState::Downloading(release.clone(), 0.);
+        cx.notify();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<f32>();
+        let task = cx.background_executor().spawn(async move {
+            let path = update::download(&asset, |p| {
+                let _ = tx.unbounded_send(p);
+            })?;
+            update::launch(&path)
+        });
+        cx.spawn(async move |this, cx| {
+            while let Some(p) = rx.next().await {
+                let alive = this.update(cx, |this, cx| {
+                    if let UpdateState::Downloading(_, progress) = &mut this.update {
+                        // Repaint per percent, not per 64 KB.
+                        if (p * 100.) as u32 != (*progress * 100.) as u32 {
+                            *progress = p;
+                            cx.notify();
+                        }
+                    }
+                });
+                if alive.is_err() {
+                    return;
+                }
+            }
+            let result = task.await;
+            this.update(cx, |this, cx| match result {
+                Ok(()) => super::quit(cx),
+                Err(e) => {
+                    this.update = UpdateState::Available(release);
+                    this.notice(format!("Update failed: {e:#}"), true, cx);
+                    cx.notify();
+                }
             })
             .ok();
         })

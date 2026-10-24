@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -53,6 +54,9 @@ import com.dotlink.ui.dotline.SegmentedControl
 import com.dotlink.ui.dotline.SheetHeader
 import com.dotlink.ui.dotline.DotlineTextField
 import com.dotlink.ui.theme.Dotline
+import com.dotlink.update.UpdateState
+import com.dotlink.update.Updater
+import kotlinx.coroutines.launch
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
@@ -204,12 +208,27 @@ fun SettingsScreen() {
         Section("About") {
             var about by remember { mutableStateOf(false) }
             val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
+            val update by Updater.state.collectAsStateWithLifecycle()
+            val scope = rememberCoroutineScope()
             ListGroup {
-                // TODO: link this once there is an update feed.
                 ListRow(
                     title = "Check for updates",
+                    subtitle =
+                        when (val u = update) {
+                            UpdateState.Idle -> null
+                            UpdateState.Checking -> "Checking…"
+                            UpdateState.UpToDate -> "Dotlink is up to date"
+                            is UpdateState.Available -> "Dotlink ${u.release.version} is available"
+                            is UpdateState.Downloading -> "Downloading ${u.release.version}: ${(u.progress * 100).toInt()}%"
+                            is UpdateState.Failed -> u.message
+                        },
                     leadingIcon = DotlineIcons.Refresh,
-                    onClick = {},
+                    onClick = {
+                        when (val u = update) {
+                            is UpdateState.Available -> Updater.prompt.value = u.release
+                            else -> scope.launch { Updater.check(context, prompt = true) }
+                        }
+                    },
                     trailing = { ListRowChevron() },
                 )
                 ListDivider()

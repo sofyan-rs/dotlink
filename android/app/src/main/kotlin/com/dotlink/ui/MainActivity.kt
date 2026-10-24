@@ -57,6 +57,8 @@ import com.dotlink.ui.settings.SettingsScreen
 import com.dotlink.ui.shell.ShellScreen
 import com.dotlink.ui.theme.Dotline
 import com.dotlink.ui.theme.DotlinkTheme
+import com.dotlink.update.UpdateDialog
+import com.dotlink.update.Updater
 
 class MainActivity : ComponentActivity() {
     private val link get() = DotlinkApp.link
@@ -127,6 +129,8 @@ private fun DotlinkRoot(
     LaunchedEffect(Unit) {
         link.notices.collect { snackbar.showDotlineSnackbar(it, actionLabel = null) }
     }
+    LaunchedEffect(Unit) { Updater.checkOnStart(context) }
+    UpdateDialog()
     // Pairing another PC while one is paired already.
     var addingPc by rememberSaveable { mutableStateOf(false) }
     // Pairing or choosing a PC: no tabs (and no tab bar under the snackbar).
