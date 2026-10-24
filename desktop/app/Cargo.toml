@@ -77,6 +77,24 @@ desktop-template = "assets/dev.dotlink.Dotlink.desktop"
 [package.metadata.packager.nsis]
 installer-mode = "currentUser"
 installer-icon = "assets/dotlink.ico"
+# Updates (passive mode): Dotlink starts the installer and quits. Give it up to 15 s to be gone
+# before the installer's "is it running?" check, which aborts when killing a quitting Dotlink fails.
+preinstall-section = """
+Section WaitForDotlink
+  ${If} $PassiveMode == 1
+    StrCpy $R1 0
+    wait_for_dotlink:
+      nsis_tauri_utils::FindProcess "dotlink.exe"
+      Pop $R0
+      ${If} $R0 = 0
+      ${AndIf} $R1 < 30
+        Sleep 500
+        IntOp $R1 $R1 + 1
+        Goto wait_for_dotlink
+      ${EndIf}
+  ${EndIf}
+SectionEnd
+"""
 
 # `cargo generate-rpm -p app` (cargo install cargo-generate-rpm), after
 # `cargo build --release -p dotlink`. Writes desktop/target/generate-rpm/dotlink-*.rpm.

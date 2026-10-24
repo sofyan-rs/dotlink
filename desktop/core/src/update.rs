@@ -140,14 +140,30 @@ pub fn download(asset: &Asset, progress: impl Fn(f32)) -> Result<PathBuf> {
     Ok(dest)
 }
 
-/// Starts the update downloaded by [download]. The caller quits right after: the installer
-/// (Windows) or a small shell (AppImage) waits for this process to end, then starts Dotlink again.
+/// Starts the update downloaded by [download]. The caller quits right after: a hidden
+/// PowerShell (Windows) or a small shell (AppImage) waits for this process to end, then runs the
+/// installer or starts Dotlink again.
 pub fn launch(path: &std::path::Path) -> Result<()> {
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // The installer kills a running Dotlink, and gives up when that fails, which it does
+        // while Dotlink is still shutting down: start it only once this process is gone.
         // Passive: a progress bar only. /R starts Dotlink when done; /NS keeps the shortcuts as
         // they are (the first install made them).
-        std::process::Command::new(path).args(["/P", "/R", "/NS"]).spawn().context("can't start the installer")?;
-    } else {
+        let script = "Wait-Process -Id $env:DOTLINK_PID -Timeout 60 -ErrorAction SilentlyContinue; \
+                      Start-Process -FilePath $env:DOTLINK_SETUP -ArgumentList '/P','/R','/NS'";
+        std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script])
+            .env("DOTLINK_PID", std::process::id().to_string())
+            .env("DOTLINK_SETUP", path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .context("can't start the installer")?;
+    }
+    #[cfg(not(windows))]
+    {
         let pid = std::process::id().to_string();
         std::process::Command::new("sh")
             .args(["-c", r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$2" >/dev/null 2>&1"#, "sh", &pid])
