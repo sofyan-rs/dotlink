@@ -193,7 +193,7 @@ fun RemoteScreen() {
     ) {
         ScreenTitle(
             title = "Remote",
-            subline = if (state is LinkState.Online) "Tap to click · two fingers to scroll · hold to drag" else "Not connected",
+            subline = if (state is LinkState.Online) "Tap: click · two fingers: scroll · hold: drag" else "Not connected",
         )
         Spacer(Modifier.height(Dotline.space.s4))
         Touchpad(
@@ -278,13 +278,19 @@ private fun Touchpad(
                         }
                         val duration = System.currentTimeMillis() - start
                         when {
-                            dragging -> input.button("left", "up")
-                            travelled < slop * 2 && duration < TAP_MS + 150 ->
+                            dragging -> {
+                                haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
+                                input.button("left", "up")
+                            }
+                            travelled < slop * 2 && duration < TAP_MS + 150 -> {
+                                // A tick for a left click, a firmer one for right and middle.
+                                haptic.performHapticFeedback(if (maxPointers == 1) HapticFeedbackType.VirtualKey else HapticFeedbackType.ContextClick)
                                 when (maxPointers) {
                                     1 -> input.button("left", "click")
                                     2 -> input.button("right", "click")
                                     else -> input.button("middle", "click")
                                 }
+                            }
                         }
                     }
                 },
@@ -373,7 +379,10 @@ private fun KeyStrip(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         keyboardField()
-        modifiers.forEach { (label, key) -> KeyChip(label, active = key in mods) { onMod(key) } }
+        modifiers.forEach { (label, key) ->
+            val active = key in mods
+            KeyChip(label, active = active, feedback = if (active) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn) { onMod(key) }
+        }
         KEYS.forEach { (label, key) -> KeyChip(label) { onKey(key) } }
     }
 }
@@ -382,9 +391,11 @@ private fun KeyStrip(
 private fun KeyChip(
     label: String,
     active: Boolean = false,
+    feedback: HapticFeedbackType = HapticFeedbackType.KeyboardTap,
     onClick: () -> Unit,
 ) {
     val colors = Dotline.colors
+    val haptic = LocalHapticFeedback.current
     Box(
         modifier =
             Modifier
@@ -393,11 +404,14 @@ private fun KeyChip(
                 .clip(Dotline.radius.pill)
                 .background(if (active) colors.ink else colors.bg)
                 .border(Dotline.size.stroke, if (active) colors.ink else colors.lineStrong, Dotline.radius.pill)
-                .pointerInput(onClick) {
+                .pointerInput(onClick, feedback) {
                     awaitEachGesture {
                         awaitFirstDown()
                         val up = waitForUpOrCancellation()
-                        if (up != null) onClick()
+                        if (up != null) {
+                            haptic.performHapticFeedback(feedback)
+                            onClick()
+                        }
                     }
                 }.padding(horizontal = Dotline.space.s3),
         contentAlignment = Alignment.Center,
@@ -474,6 +488,7 @@ private fun KeyChipIcon(
     onClick: () -> Unit,
 ) {
     val colors = Dotline.colors
+    val haptic = LocalHapticFeedback.current
     Box(
         modifier =
             Modifier
@@ -484,7 +499,10 @@ private fun KeyChipIcon(
                 .pointerInput(onClick) {
                     awaitEachGesture {
                         awaitFirstDown()
-                        if (waitForUpOrCancellation() != null) onClick()
+                        if (waitForUpOrCancellation() != null) {
+                            haptic.performHapticFeedback(HapticFeedbackType.KeyboardTap)
+                            onClick()
+                        }
                     }
                 },
         contentAlignment = Alignment.Center,
