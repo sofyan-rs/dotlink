@@ -43,7 +43,7 @@ desktop/                 Rust workspace
   app/                   the `dotlink` binary
     src/main.rs          CLI; `dotlink` with no command opens the app
     src/gui/             window (GPUI + gpui-component), tray, theme
-    assets/              icons, desktop file, tray pixmaps, dotlink.ico
+    assets/              icons, desktop file, dotlink.ico (the tray icon is drawn in tray.rs)
     build.rs             Windows: embeds the icon in the .exe
   camera/                dotlink-camera: Windows 11 "Dotlink Camera", a media source DLL
                          the camera frame server loads (shared.rs: the frame file)

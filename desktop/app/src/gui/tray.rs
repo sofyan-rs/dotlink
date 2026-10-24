@@ -7,7 +7,11 @@
 //! Windows: the notification area, through `tray-icon`. It must be created on the main thread,
 //! whose message loop (GPUI's) then drives it.
 //!
-//! TODO(macos): `tray-icon` as a menu bar item, with a template image.
+//! The icon is the logo's dots alone, in one colour, like the system's own tray icons: the
+//! panel recolours it where it can (Linux, a symbolic SVG), or it is drawn white on a dark
+//! taskbar and black on a light one (Windows).
+//!
+//! TODO(macos): `tray-icon` as a menu bar item, with a template image ([glyph] in black).
 
 use futures::channel::mpsc::UnboundedSender;
 
@@ -21,11 +25,94 @@ pub enum TrayAction {
     Quit,
 }
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+/// The logo's dots on its 5×5 grid (column, row), as in assets/dotlink.svg; the red one is
+/// (2, 2), plain here.
+const DOTS: [(u8, u8); 15] =
+    [(0, 0), (1, 0), (2, 0), (0, 1), (2, 1), (0, 2), (1, 2), (2, 2), (3, 2), (4, 2), (2, 3), (4, 3), (2, 4), (3, 4), (4, 4)];
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+/// The dots in one colour on a transparent square of `size` pixels, as RGBA. In the logo a dot's
+/// diameter is 3/4 of the grid step. The grid takes 3/4 of the square, like the padding of
+/// other tray icons; edge to edge it looked too big next to them.
+fn glyph(size: u32, [r, g, b]: [u8; 3]) -> Vec<u8> {
+    let s = size as f32;
+    let margin = s / 8.;
+    // Five dots of diameter 0.75 step, four gaps of 0.25 step: 4.75 steps across.
+    let step = (s - 2. * margin) / 4.75;
+    let radius = step * 0.375;
+    let mut out = vec![0u8; (size * size * 4) as usize];
+    // 4×4 samples per pixel for smooth edges.
+    const N: u32 = 4;
+    for y in 0..size {
+        for x in 0..size {
+            let mut hits = 0;
+            for sy in 0..N {
+                for sx in 0..N {
+                    let px = x as f32 + (sx as f32 + 0.5) / N as f32;
+                    let py = y as f32 + (sy as f32 + 0.5) / N as f32;
+                    hits += DOTS.iter().any(|&(c, rw)| {
+                        let cx = margin + radius + c as f32 * step;
+                        let cy = margin + radius + rw as f32 * step;
+                        (px - cx).powi(2) + (py - cy).powi(2) <= radius * radius
+                    }) as u32;
+                }
+            }
+            let i = ((y * size + x) * 4) as usize;
+            out[i..i + 4].copy_from_slice(&[r, g, b, (hits * 255 / (N * N)) as u8]);
+        }
+    }
+    out
+}
+
+/// The dots as a symbolic SVG: KDE recolours `ColorScheme-Text`, GNOME and GTK panels recolour
+/// any icon whose name ends in `-symbolic`.
+#[cfg(target_os = "linux")]
+fn symbolic_svg() -> String {
+    let circles: String = DOTS
+        .iter()
+        .map(|&(c, r)| {
+            format!(
+                // Grid step 4, dot diameter 3 (3/4 of the step, as in the logo).
+                "<circle class=\"ColorScheme-Text\" fill=\"currentColor\" cx=\"{}\" cy=\"{}\" r=\"1.5\"/>",
+                1.5 + c as f32 * 4.,
+                1.5 + r as f32 * 4.
+            )
+        })
+        .collect();
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-3.2 -3.2 25.4 25.4\" width=\"16\" height=\"16\">\
+         <style id=\"current-color-scheme\">.ColorScheme-Text{{color:#dfdfdf}}</style>{circles}</svg>"
+    )
+}
+
+/// Writes the symbolic icon into a private folder the tray host is pointed at (IconThemePath),
+/// both loose and in a hicolor layout, as hosts look in either. Returns the folder and the
+/// icon's name, or None when it can't be written (the pixmap is used then).
+///
+/// The name carries a hash of the picture: GNOME Shell caches icons by name, and kept showing
+/// an old picture under the same name after it changed.
+#[cfg(target_os = "linux")]
+fn write_icon() -> Option<(String, String)> {
+    let dir = dotlink_core::config::runtime_dir().join("dotlink-icons");
+    let svg = symbolic_svg();
+    // FNV-1a: stable across builds, unlike std's hasher.
+    let hash = svg.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
+    let name = format!("dotlink-tray-{:08x}-symbolic", hash as u32);
+    let apps = dir.join("hicolor/scalable/apps");
+    // Earlier pictures go; only this one is left.
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&apps).ok()?;
+    std::fs::write(dir.join(format!("{name}.svg")), &svg).ok()?;
+    std::fs::write(apps.join(format!("{name}.svg")), &svg).ok()?;
+    Some((dir.to_string_lossy().into_owned(), name))
+}
+
 /// Starts the tray icon; false when there is no tray on this desktop.
 #[cfg(target_os = "linux")]
 pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
     use ksni::TrayMethods;
-    match (DotlinkTray { actions }).spawn().await {
+    match (DotlinkTray { actions, icon: write_icon() }).spawn().await {
         Ok(handle) => {
             // Keep the D-Bus service alive for the app's lifetime.
             std::mem::forget(handle);
@@ -70,15 +157,10 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
         return false;
     }
 
-    // The same picture as on Linux, ARGB to RGBA.
-    let argb = include_bytes!("../../assets/tray-32.argb");
-    let rgba: Vec<u8> = argb.as_chunks::<4>().0.iter().flat_map(|&[a, r, g, b]| [r, g, b, a]).collect();
-    let icon = match Icon::from_rgba(rgba, 32, 32) {
-        Ok(icon) => icon,
-        Err(e) => {
-            tracing::warn!("no tray icon: {e}");
-            return false;
-        }
+    let light = dotlink_core::platform::taskbar_is_light();
+    let Some(icon) = taskbar_icon(light) else {
+        tracing::warn!("no tray icon: couldn't make its picture");
+        return false;
     };
 
     let menu_actions = actions.clone();
@@ -102,8 +184,9 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
         .build()
     {
         Ok(tray) => {
-            // Removed from the notification area when dropped: keep it for the app's lifetime.
-            std::mem::forget(tray);
+            // Removed from the notification area when dropped: kept for the app's lifetime, on
+            // this (the main) thread, where follow_taskbar_theme recolours it.
+            TRAY.with(|t| *t.borrow_mut() = Some((tray, light)));
             true
         }
         Err(e) => {
@@ -111,6 +194,42 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
             false
         }
     }
+}
+
+/// The tray icon and whether it's drawn for a light taskbar.
+#[cfg(windows)]
+thread_local! {
+    static TRAY: std::cell::RefCell<Option<(tray_icon::TrayIcon, bool)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The dots in black for a light taskbar, white for a dark one. 32 px: Windows scales it down
+/// to 16 at 100 % and uses it as is at 200 %.
+#[cfg(windows)]
+fn taskbar_icon(light: bool) -> Option<tray_icon::Icon> {
+    let colour = if light { [0x1C, 0x1C, 0x1C] } else { [0xFF, 0xFF, 0xFF] };
+    tray_icon::Icon::from_rgba(glyph(32, colour), 32, 32).ok()
+}
+
+/// Follows a switch between light and dark taskbar (checked every few seconds: cheap, and
+/// the tray has no window of ours to get WM_SETTINGCHANGE on). Call on the main thread.
+#[cfg(windows)]
+pub fn follow_taskbar_theme(cx: &mut gpui::App) {
+    cx.spawn(async move |cx: &mut gpui::AsyncApp| {
+        loop {
+            cx.background_executor().timer(std::time::Duration::from_secs(3)).await;
+            let light = dotlink_core::platform::taskbar_is_light();
+            TRAY.with(|t| {
+                if let Some((tray, drawn_light)) = t.borrow_mut().as_mut()
+                    && *drawn_light != light
+                    && let Some(icon) = taskbar_icon(light)
+                    && tray.set_icon(Some(icon)).is_ok()
+                {
+                    *drawn_light = light;
+                }
+            });
+        }
+    })
+    .detach();
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
@@ -121,6 +240,8 @@ pub async fn start(_actions: UnboundedSender<TrayAction>) -> bool {
 #[cfg(target_os = "linux")]
 struct DotlinkTray {
     actions: UnboundedSender<TrayAction>,
+    /// The symbolic icon's folder and name, if it could be written.
+    icon: Option<(String, String)>,
 }
 
 #[cfg(target_os = "linux")]
@@ -149,12 +270,25 @@ impl ksni::Tray for DotlinkTray {
         "Dotlink".into()
     }
 
-    /// A pixmap rather than an icon name: it shows even when the icon isn't installed
-    /// (AppImage, running from the build dir).
+    fn icon_theme_path(&self) -> String {
+        self.icon.as_ref().map(|(dir, _)| dir.clone()).unwrap_or_default()
+    }
+
+    /// The symbolic icon, which the panel colours to match itself.
+    fn icon_name(&self) -> String {
+        self.icon.as_ref().map(|(_, name)| name.clone()).unwrap_or_default()
+    }
+
+    /// For hosts that don't find the icon by name: white, as most panels are dark (GNOME's
+    /// always is).
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        [(32, &include_bytes!("../../assets/tray-32.argb")[..]), (64, &include_bytes!("../../assets/tray-64.argb")[..])]
+        [22, 32, 48, 64]
             .into_iter()
-            .map(|(size, data)| ksni::Icon { width: size, height: size, data: data.to_vec() })
+            .map(|size| {
+                // ksni wants ARGB.
+                let argb = glyph(size, [0xFF, 0xFF, 0xFF]).as_chunks::<4>().0.iter().flat_map(|&[r, g, b, a]| [a, r, g, b]).collect();
+                ksni::Icon { width: size as i32, height: size as i32, data: argb }
+            })
             .collect()
     }
 
@@ -175,3 +309,4 @@ impl ksni::Tray for DotlinkTray {
         ]
     }
 }
+

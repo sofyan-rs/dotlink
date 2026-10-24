@@ -152,10 +152,9 @@ the menu) and send the same `TrayAction`s:
   GPUI does.
 - Menu events arrive on `MenuEvent::receiver()` / `TrayIconEvent::receiver()`; forward them
   into the existing `UnboundedSender<TrayAction>`. Left click on Windows opens the window.
-- Icons: Windows uses `assets/icons/32x32.png` (64 on high DPI). The macOS menu bar wants a
-  black-only **template** image (`with_icon_as_template(true)`) so it follows light/dark:
-  make `assets/tray-template.png` (22 pt, @2x at 44 px) from the dot glyph without the black
-  tile, like `android/.../drawable/ic_notification.xml`.
+- Icons: the tray icon is the logo's dots alone, drawn by `glyph()` in `tray.rs` (Windows:
+  white or black with the taskbar's mode). The macOS menu bar wants it as a black-only
+  **template** image (`with_icon_as_template(true)`, 22 pt, 44 px @2x) so it follows light/dark.
 - Once a tray exists, `has_tray` in `gui/mod.rs` is true and the "still running" notice goes
   away by itself.
 

@@ -97,6 +97,10 @@ pub fn run(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
             theme::apply(None, cx);
             let model = Model::new(client, owns_service, cx);
             model.update(cx, |m, _| m.has_tray = has_tray);
+            #[cfg(windows)]
+            if has_tray {
+                tray::follow_taskbar_theme(cx);
+            }
             // With the window closed (tray actions), messages go to the desktop instead.
             cx.subscribe(&model, |_, notice: &model::Notice, cx| {
                 if cx.global::<State>().window.is_none() {

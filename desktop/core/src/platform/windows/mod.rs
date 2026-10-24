@@ -96,6 +96,15 @@ fn register_app_id() {
     });
 }
 
+/// Whether the taskbar is light (Settings → Personalization → Colors, the Windows mode): the
+/// tray icon is drawn black on it, white otherwise.
+pub fn taskbar_is_light() -> bool {
+    winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        .and_then(|key| key.get_value::<u32, _>("SystemUsesLightTheme"))
+        .is_ok_and(|light| light != 0)
+}
+
 fn toast(title: &str, body: &str) -> notify_rust::Notification {
     register_app_id();
     let mut n = notify_rust::Notification::new();

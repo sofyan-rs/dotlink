@@ -196,7 +196,7 @@ switches to the plain microphone.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | StatusNotifierItem over D-Bus (`ksni`) | notification area (`tray-icon`); left click opens the window, menu on right click | ❌ |
+| Method | StatusNotifierItem over D-Bus (`ksni`); a symbolic icon the panel recolours (white pixmap as fallback), text-only menu | notification area (`tray-icon`); left click opens the window, menu on right click; the icon white or black with the taskbar's light/dark mode | ❌ |
 | Status | ✅ | ✅ Open, Send clipboard, Cast screen and Quit clicked through; closing the window says once that Dotlink keeps running | ❌ |
 
 ### Start at login
