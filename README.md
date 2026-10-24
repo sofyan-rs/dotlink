@@ -34,35 +34,35 @@ What has been tested per feature: [docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEAT
 
 ## Install
 
-Ready-made builds for every platform are on the
-[releases page](https://github.com/sofyan-rs/dotlink/releases). Dotlink checks for new releases
-by itself (Settings → About on the PC, Settings → Check for updates on the phone) and installs
-them on Windows, from the AppImage and on Android.
+Download the files from the [releases page](https://github.com/sofyan-rs/dotlink/releases).
+Dotlink checks for new releases by itself (Settings → About on the PC, Settings → Check for
+updates on the phone) and installs them on Windows, from the AppImage and on Android.
 
 ### Phone
 
-Install `Dotlink-<version>.apk` from the releases page, or build it:
+Install `Dotlink-<version>.apk` from the releases page (allow your browser or file manager to
+install apps when Android asks).
 
-```sh
-cd android && ./gradlew installDebug
-```
-
-Or copy `android/app/build/outputs/apk/debug/app-debug.apk` to the phone. A debug build can't be
-updated by a release APK (different signing key): uninstall it first.
+A debug build (`./gradlew installDebug`) can't be updated by a release APK, since they're signed
+with different keys: uninstall it first.
 
 ### Linux
 
-```sh
-scripts/install.sh --camera
-```
+Pick the package for your distro:
 
-It builds and installs `dotlink`, adds it to the app menu and starts it at login. It also checks
-what's missing for your distro (dnf, apt, pacman, zypper). `--camera` sets up the webcam device
-(asks for sudo); `--headless` builds without the window.
+| Distro | File | Install |
+|---|---|---|
+| Debian, Ubuntu, Mint, Pop!_OS | `dotlink_<version>_amd64.deb` | `sudo apt install ./dotlink_<version>_amd64.deb` |
+| Fedora, openSUSE | `dotlink-<version>-1.x86_64.rpm` | `sudo dnf install ./dotlink-<version>-1.x86_64.rpm` (openSUSE: `sudo zypper install`) |
+| Any other (Arch, …) | `dotlink_<version>_x86_64.AppImage` | `chmod +x` it and run it |
+
+Then open **Dotlink** from the app menu. The AppImage updates itself; for the `.deb` and `.rpm`,
+install the new package the same way.
 
 Needs: `ffmpeg`, PipeWire, `libnotify`, `v4l2loopback` for the webcam, and `wl-clipboard` on
-wlroots/KDE. Works on Hyprland, Sway, niri, KDE, GNOME and X11 desktops. Setup's fixes ask for your
-password through polkit (on Hyprland, run an agent such as `hyprpolkitagent`).
+wlroots/KDE (the packages pull in what their distro has; Setup tells what's still missing). Works
+on Hyprland, Sway, niri, KDE, GNOME and X11 desktops. Setup's fixes ask for your password through
+polkit (on Hyprland, run an agent such as `hyprpolkitagent`).
 
 Window managers that ignore autostart need one line:
 
@@ -72,10 +72,21 @@ Sway/i3    exec dotlink --background
 niri       spawn-at-startup "dotlink" "--background"
 ```
 
+**From source** instead:
+
+```sh
+scripts/install.sh --camera
+```
+
+It builds and installs `dotlink`, adds it to the app menu and starts it at login. It also checks
+what's missing for your distro (dnf, apt, pacman, zypper). `--camera` sets up the webcam device
+(asks for sudo); `--headless` builds without the window.
+
 ### Windows
 
-Run `dotlink_<version>_x64-setup.exe`: a per-user install (no administrator rights) with a
-Start menu entry. Build it yourself (Rust with MSVC, `cargo install cargo-packager`):
+Run `dotlink_<version>_x64-setup.exe` from the releases page: a per-user install (no
+administrator rights) with a Start menu entry. Updates install from Settings → About. To build it
+yourself (Rust with MSVC, `cargo install cargo-packager`):
 
 ```sh
 cd desktop/app && cargo packager --release -f nsis   # desktop/target/packages/
