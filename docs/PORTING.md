@@ -14,7 +14,7 @@ The Android app needs no changes: it already reads the PC's OS from `hello` (`os
 
 | Piece | Where | Windows | macOS |
 |---|---|---|---|
-| Service, pairing, files, mDNS, TLS | `core/src/server.rs`, `service.rs` | runs, untested with a phone | portable, untested |
+| Service, pairing, files, mDNS, TLS | `core/src/server.rs`, `service.rs` | done, tested with a phone | portable, untested |
 | Control socket (CLI ↔ service ↔ window) | `core/src/ipc.rs` | named pipe `dotlink-<SID>`, user-only ACL | Unix socket in `$TMPDIR` |
 | Shell | `core/src/term.rs` (portable-pty) | ConPTY + `pwsh.exe` or `powershell.exe` | login shell |
 | Clipboard | `platform/polling_clipboard.rs` (arboard, 500 ms poll) | works | works |
@@ -24,7 +24,7 @@ The Android app needs no changes: it already reads the PC's OS from `hello` (`os
 | Tray | `app/src/gui/tray.rs` | done (`tray-icon`) | **TODO** (menu bar) |
 | Remote (mouse + keyboard) | `Input` | done (SendInput) | **TODO** (CGEvent + Accessibility) |
 | Start at login | `autostart` | done (Run key, honours Task Manager) | **TODO** (SMAppService / LaunchAgent) |
-| Setup checks | `setup` | done (firewall rule, Public network, camera, VB-CABLE, adb/scrcpy) | **TODO** (Accessibility, Local Network) |
+| Setup checks | `setup` | done (firewall rule, Public network, input, camera, VB-CABLE, adb/scrcpy, notifications) | **TODO** (Accessibility, Local Network) |
 | Cast (scrcpy) | `core/src/cast.rs` | done (.zip download, SDK adb) | download works (tar.gz) |
 | Webcam | `CameraHub` | done (Windows 11 virtual camera, `desktop/camera` DLL) | **TODO**: Camera Extension |
 | Microphone | `MicSink` | done (plays into VB-CABLE through WASAPI) | **TODO**: virtual audio device |
@@ -58,27 +58,22 @@ There is no CI yet. Add `.github/workflows/desktop.yml` with a matrix of `ubuntu
 cargo build -p dotlink
 cargo build -p dotlink --no-default-features   # service + CLI only, no GPUI
 cargo test
-cargo clippy -p dotlink -- -D warnings
+cargo clippy -p dotlink -- -D warnings   # clean on Linux
 ```
 
 Ubuntu needs the GPUI libraries listed in [CONTRIBUTION.md](CONTRIBUTION.md#desktop-rust).
 CI can't test the hardware parts, but it keeps the stubs compiling while Linux moves on.
 
-### Things that will need fixing on the first build
+### Fixed on the first Windows build
 
-- **GPUI features** (`app/Cargo.toml`): `gpui-platform` is pulled in with `x11` and
-  `wayland` for every OS. Move those two into a
-  `[target.'cfg(target_os = "linux")'.dependencies]` entry of the same crate and keep
+- **GPUI features** (`app/Cargo.toml`): `x11` and `wayland` are only enabled on Linux;
   `font-kit` / `runtime_shaders` for all. `runtime_shaders` compiles the Metal shaders at run
   time, so macOS builds don't need full Xcode, only the Command Line Tools.
-- **Windows console.** A GUI app linked as a console program opens a black console window,
-  and a `windows_subsystem = "windows"` program has no stdout for the CLI. Use
-  `#![cfg_attr(windows, windows_subsystem = "windows")]` in `app/src/main.rs` and, for CLI
-  commands, `AttachConsole(ATTACH_PARENT_PROCESS)` so `dotlink status` in a terminal still
-  prints.
-- **Shutdown.** `service.rs::terminate()` waits forever off Unix. `dotlink quit` (over the
-  control socket) still works. On Windows also stop on `tokio::signal::windows::ctrl_close`
-  / `ctrl_shutdown`, and on macOS keep the Unix SIGTERM path.
+- **Windows console.** `app/src/main.rs` is a `windows_subsystem = "windows"` program (no
+  black console window) and calls `AttachConsole(ATTACH_PARENT_PROCESS)` for CLI commands, so
+  `dotlink devices` in a terminal still prints.
+- **Shutdown.** `service.rs::terminate()` stops on SIGTERM (Linux, macOS) and on
+  `ctrl_close` / `ctrl_logoff` / `ctrl_shutdown` (Windows).
 
 ## Step 2: core
 
@@ -238,7 +233,9 @@ Permissions:
 
 ## Setup checks (`setup::checks` / `fix`)
 
-Same `Check` struct as Linux; fixable ones get a Fix button.
+Same `Check` struct as Linux; fixable ones get a Fix button. The page shows a section per
+feature in the order the checks come, so every OS lists them as Network, Remote, Webcam,
+Microphone, Cast, Clipboard, Notifications (skipping what it has nothing for).
 
 **Windows**
 
@@ -246,8 +243,11 @@ Same `Check` struct as Linux; fixable ones get a Fix button.
 |---|---|---|---|
 | `firewall` | Network | an inbound TCP rule for the port exists (`netsh advfirewall firewall show rule name=Dotlink`) | `netsh advfirewall firewall add rule name=Dotlink dir=in action=allow protocol=TCP localport=<port> profile=private,domain` through an elevated `ShellExecuteW(…, "runas", …)` (one UAC prompt) |
 | `network_profile` | Network | the active Wi-Fi is Private (Public blocks the rule above) | not fixable: explain where to switch it |
-| `vb_cable` | Microphone | VB-CABLE's "CABLE Input" is present (see Step 7) | opens its download page |
+| `input` | Remote | always passes (SendInput); notes that elevated windows are out of reach | — |
 | `camera` | Webcam | the camera DLL is installed in Program Files and registered | installs it (one UAC prompt) |
+| `vb_cable` | Microphone | VB-CABLE's "CABLE Input" is present (see Step 7) | opens its download page |
+| `adb`, `scrcpy` | Cast | found on PATH or downloaded | downloads scrcpy with adb |
+| `notifications` | Notifications | toasts aren't switched off, globally (`PushNotifications\ToastEnabled`) or for Dotlink (`Notifications\Settings\<APP_ID>\Enabled`) | not fixable: explain where to turn them on |
 
 **macOS**
 

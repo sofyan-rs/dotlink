@@ -90,6 +90,10 @@ of it in one click (firewall port, webcam, remote access, scrcpy).
 1. On the PC: **Pair a phone** in Dotlink (or `dotlink pair`).
 2. On the phone: scan the QR code (or paste the link).
 
+With the phone on a USB cable (USB debugging on, this PC allowed), nothing needs scanning:
+tap **Pair with <PC> over USB** in the phone app, or click **Pair over USB** on the PC (or
+`dotlink pair --usb`) and tap **Pair** on the phone.
+
 That's it. The phone finds the PC again by itself when its address changes. One phone can be paired
 with several PCs: tap the PC's name at the top of the app to switch.
 
@@ -121,7 +125,7 @@ Dotlink).
 
 ```
 dotlink                              open the app
-dotlink pair                         show a pairing QR code
+dotlink pair [--usb]                 show a pairing QR code (--usb: open it on the phone on the cable)
 dotlink send [--to PHONE] FILE...    send files
 dotlink clip [--to PHONE]            send the PC clipboard
 dotlink devices                      list paired phones
@@ -148,6 +152,7 @@ terminal = true            # false turns the Shell off
 terminal_pin = ""          # require this PIN to open the Shell
 shell = ""                 # default: your login shell (Linux), pwsh or powershell (Windows)
 camera_size = "1920x1080"  # Dotlink Camera's fixed size
+camera_device = ""         # Linux: the v4l2loopback device (default: the one named Dotlink Camera)
 cast_screen_off = false    # turn the phone screen off while casting
 cast_audio = true          # play the phone's sound on the PC while casting
 cast_max_size = 0          # longest side of the cast in pixels (0: full resolution)

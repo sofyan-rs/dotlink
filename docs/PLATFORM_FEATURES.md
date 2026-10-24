@@ -61,7 +61,7 @@ for this PC. On Windows some phones also need their maker's USB driver for adb t
 
 | Feature | Wi-Fi (same network) | USB cable | Notes |
 |---|---|---|---|
-| Pairing | ✅ | ✅ | Over the cable the phone tries `127.0.0.1` first: under a second, against ~20 s over Wi-Fi with virtual adapters |
+| Pairing | ✅ | ✅ | Over the cable the phone tries `127.0.0.1` first: under a second, against ~20 s over Wi-Fi with virtual adapters. **Pair over USB** (`dotlink pair --usb`) opens the link on the phone through adb, so nothing is scanned (tested on Linux) |
 | Files, both ways | ✅ | ✅ | |
 | Clipboard, both ways | ✅ | ✅ | |
 | Shell | ✅ | ✅ | |
@@ -161,6 +161,15 @@ apps read, and a placeholder shows while the phone camera is off.
 | Requirements | v4l2loopback, ffmpeg | Windows 11 (build 22000+) | — |
 | Status | ✅ | ✅ the phone's picture in OBS (and any Media Foundation app), 1920×1080 NV12 at 30 fps, over Wi-Fi and USB | ❌ |
 
+Webcam frame rate: 30 or 60 fps, and the phone only offers what the lens in use can do (front
+and back are read separately, from the camera's auto-exposure ranges). Both test phones (iQOO
+I2218, realme RMX5085) top out at 30 on both lenses, so they show only 30. Their back cameras do
+have 60-120 fps high-speed modes, but Android only gives those to preview and video-encoder
+outputs, not to the frames the app reads and sends as JPEG; using them would mean sending H.264
+instead. The PC takes 60: Linux passes every frame through, and the Windows virtual camera
+offers 60 and 30 fps (`RATES` in `desktop/camera/src/source.rs`; type-checked, not yet run on
+Windows).
+
 ### Microphone (phone mic)
 
 The phone sends 16-bit PCM in 10 ms chunks; a short backlog is kept and older audio dropped,
@@ -226,17 +235,23 @@ switches to the plain microphone.
 - Offer more formats than NV12 if a camera app refuses it.
 
 **Linux**: retest after the Windows work changed shared code. On Fedora 44 (GNOME, KDE,
-Hyprland), with the phone's current debug or release build:
-- [ ] Build: `cargo build -p dotlink`, `--no-default-features`, `cargo test`; `install.sh`.
-- [ ] Pair, files both ways, clipboard both ways, Shell (new font fallbacks: ⏺ ⎿ ⏵, Nerd icons
-  one cell wide, powerline separators), Remote (typing fast no longer doubles letters).
-- [ ] USB link: plug in with USB debugging, the phone shows "USB cable"; Wi-Fi off still works;
-  unplug falls back to Wi-Fi, replug moves back; pairing over the cable.
-- [ ] Cast: one phone, Stop while connecting, several phones (`--to`), USB and Wi-Fi.
-- [ ] Webcam and mic (the phone's mic now falls back to the plain microphone when voice
-  processing is silent).
-- [ ] The phone's tab rail in landscape.
-- [ ] Setup, tray, start at login, Quit.
+Hyprland), with the phone's current debug or release build. Checked 2026-10-24 on GNOME
+(Wayland) with the phone's debug build over USB:
+- [x] Build: `cargo build -p dotlink`, `--no-default-features`, `cargo test`, `cargo clippy`
+  (no warnings). Still to do: run `install.sh`.
+- [x] Pair (over the cable), files both ways (SHA-256 checked), clipboard both ways (X11 path
+  on GNOME), Shell (⏺ ⎿ ⏵, Nerd icons, powerline separators, box lines, colours, resize).
+- [x] Remote: pointer and typing checked on screen.
+- [ ] USB link: plug in with USB debugging, the phone shows "USB cable" ✅; unplug falls back
+  to Wi-Fi within a second, then files, clipboard, mic and Cast work over Wi-Fi ✅; Wi-Fi off
+  on the phone, replug moves back.
+- [ ] Cast: one phone over USB and over Wi-Fi (Wireless debugging), Stop, Stop while
+  connecting ✅; several phones.
+- [ ] Webcam (needs Setup → Fix for the v4l2loopback device); mic ✅ ("Dotlink Mic" records
+  the phone).
+- [x] The phone's tab rail in landscape.
+- [ ] Tray (registered with GNOME's StatusNotifierWatcher), start at login entry, `dotlink
+  quit` ✅; Setup page, and KDE / Hyprland.
 
 **macOS**
 - Build it first (Step 1 in [PORTING.md](PORTING.md)), then everything marked ❌ above.

@@ -96,6 +96,7 @@ token's SHA-256.
 | Endpoint | Use |
 |---|---|
 | `POST /pair` | one-time secret from the QR code → token |
+| `GET /pair/usb`, `POST /pair/usb` | over the cable only (loopback): "is a Dotlink PC there?", and "send me the pairing link". The PC opens the link in the app through adb, never on this connection |
 | `GET /ping` | PC name and Shell settings |
 | `GET /ws/control` | long-lived JSON messages, both ways (below) |
 | `GET /ws/input` | Remote: pointer, scroll, keys, text |
@@ -133,6 +134,14 @@ the cable no more trusted than the network.
 
 ### Pairing and trust
 
+Over a USB cable the phone can ask instead: `POST /pair/usb` with a nonce, from the pair screen.
+Any app on the phone can reach `127.0.0.1` while the cable is in, so the PC doesn't answer
+with the secret; it sends the link, with `r=<nonce>` added, to Dotlink through `adb shell am
+broadcast` (`usb::open_pairing`), which only a PC this phone allowed USB debugging for can do.
+Every phone on the cable gets it; only the one whose request `r` matches pairs (without a tap),
+the others ignore it. Each request gets its own one-time code (`usb_pairings`, 5 minutes), so
+several phones can pair at once and the QR code on the PC's screen keeps working.
+
 `dotlink pair` (or the Pair page) makes a `dotlink://pair?h=…&p=…&fp=…&c=…` URI: the PC's
 addresses, port, certificate fingerprint and a one-time secret valid for 5 minutes. The phone
 pins `fp` and trades `c` for a token. When the PC's IP changes, the phone finds it again with
@@ -144,7 +153,7 @@ mDNS (`_dotlink._tcp`, matched by server id).
 `\\.\pipe\dotlink-<user SID>` with an ACL that only lets that user in. One JSON
 request line in, one or more reply lines out.
 
-`pair` · `send` · `clip` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` ·
+`pair` · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `send` · `clip` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` ·
 `cast_pair` · `watch` (event stream, see `events.rs`) · `show` · `quit`
 
 ## Features, briefly
