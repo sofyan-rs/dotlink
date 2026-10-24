@@ -205,7 +205,7 @@ fun SettingsScreen() {
             var about by remember { mutableStateOf(false) }
             val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
             ListGroup {
-                // TODO: link these once there is an update feed and an issue tracker.
+                // TODO: link this once there is an update feed.
                 ListRow(
                     title = "Check for updates",
                     leadingIcon = DotlineIcons.Refresh,
@@ -216,7 +216,7 @@ fun SettingsScreen() {
                 ListRow(
                     title = "Report a bug or suggestion",
                     leadingIcon = DotlineIcons.Bug,
-                    onClick = {},
+                    onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/sofyan-rs/dotlink/issues"))) },
                     trailing = { ListRowChevron() },
                 )
                 ListDivider()
