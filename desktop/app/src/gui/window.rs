@@ -1133,20 +1133,20 @@ impl MainView {
                         row(p)
                             .border_t_1()
                             .border_color(p.line)
-                            .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("Dotlink is made by Kurodev."))
+                            .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("Found a bug or have an idea?"))
                             .child(
-                                pill(p, "kurodev", "kurodev.org", Kind::Ghost)
-                                    .on_click(|_, _, cx| cx.open_url("https://kurodev.org")),
+                                pill(p, "report-bug", "Report a bug or suggestion", Kind::Ghost)
+                                    .on_click(|_, _, cx| cx.open_url("https://github.com/sofyan-rs/dotlink/issues")),
                             ),
                     )
                     .child(
                         row(p)
                             .border_t_1()
                             .border_color(p.line)
-                            .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("Found a bug or have an idea?"))
+                            .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("Dotlink is made by Kurodev."))
                             .child(
-                                pill(p, "report-bug", "Report a bug or suggestion", Kind::Ghost)
-                                    .on_click(|_, _, cx| cx.open_url("https://github.com/sofyan-rs/dotlink/issues")),
+                                pill(p, "kurodev", "kurodev.org", Kind::Ghost)
+                                    .on_click(|_, _, cx| cx.open_url("https://kurodev.org")),
                             ),
                     )
                     .child(
