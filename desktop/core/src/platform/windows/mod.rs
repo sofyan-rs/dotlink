@@ -17,7 +17,7 @@ use anyhow::Result;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// AppUserModelID: toasts are shown under the name and icon registered for it.
 pub const APP_ID: &str = "dev.dotlink.Dotlink";
@@ -76,24 +76,34 @@ fn read_user_sid() -> std::io::Result<String> {
 
 /// Registers the AppUserModelID under HKCU (name and icon of our toasts). Without it, toasts
 /// from an exe that has no Start-menu shortcut don't show at all.
+///
+/// In dark mode Windows shows a dark icon inverted (a white tile, black dots and a cyan one), so
+/// there the icon is the dots alone. Checked before every toast: the mode can change meanwhile.
 fn register_app_id() {
-    static DONE: OnceLock<()> = OnceLock::new();
-    DONE.get_or_init(|| {
-        let icon = crate::config::config_dir().join("dotlink.png");
-        if !icon.exists() {
-            let _ = std::fs::create_dir_all(crate::config::config_dir());
-            let _ = std::fs::write(&icon, include_bytes!("../../../../app/assets/icons/64x64.png"));
-        }
-        let result = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-            .create_subkey(format!(r"Software\Classes\AppUserModelId\{APP_ID}"))
-            .and_then(|(key, _)| {
-                key.set_value("DisplayName", &"Dotlink")?;
-                key.set_value("IconUri", &icon.to_string_lossy().into_owned())
-            });
-        if let Err(e) = result {
-            tracing::warn!("could not register the notification app id: {e}");
-        }
-    });
+    static LAST: Mutex<Option<bool>> = Mutex::new(None);
+    let light = taskbar_is_light();
+    let mut last = LAST.lock().unwrap();
+    if *last == Some(light) {
+        return;
+    }
+    let (name, png): (_, &[u8]) = if light {
+        ("dotlink.png", include_bytes!("../../../../app/assets/icons/64x64.png"))
+    } else {
+        ("dotlink-dark.png", include_bytes!("../../../../app/assets/notification-dark.png"))
+    };
+    let icon = crate::config::config_dir().join(name);
+    let _ = std::fs::create_dir_all(crate::config::config_dir());
+    let _ = std::fs::write(&icon, png);
+    let result = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .create_subkey(format!(r"Software\Classes\AppUserModelId\{APP_ID}"))
+        .and_then(|(key, _)| {
+            key.set_value("DisplayName", &"Dotlink")?;
+            key.set_value("IconUri", &icon.to_string_lossy().into_owned())
+        });
+    match result {
+        Ok(()) => *last = Some(light),
+        Err(e) => tracing::warn!("could not register the notification app id: {e}"),
+    }
 }
 
 /// Whether the taskbar is light (Settings → Personalization → Colors, the Windows mode): the

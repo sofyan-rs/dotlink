@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Draws desktop/app/assets/dotlink.ico: the Dotlink icon for Windows (exe, taskbar, Alt-Tab).
+"""Draws desktop/app/assets/dotlink.ico: the Dotlink icon for Windows (exe, taskbar, Alt-Tab), and
+desktop/app/assets/notification-dark.png: the dots alone, for notifications in dark mode (Windows
+shows a dark icon there inverted: a white tile, black dots and a cyan one).
 
 Windows icons fill their square, unlike the GNOME-style PNGs (a 416 px tile with a 48 px margin
 in 512), which looked small on the taskbar. Same drawing as assets/dotlink.svg, tile edge to
@@ -31,18 +33,23 @@ def in_tile(x, y):
     return (x - cx) ** 2 + (y - cy) ** 2 <= RADIUS ** 2
 
 
-def colour_at(x, y):
+# The dots alone: the glyph's square (123..389) with a margin, on a transparent background.
+GLYPH_ORIGIN, GLYPH_SPAN = 107, 298
+
+
+def colour_at(x, y, tile=True):
     """(r, g, b, a) of one sample in the 512 grid."""
-    if not in_tile(x, y):
+    if tile and not in_tile(x, y):
         return (0, 0, 0, 0)
     for cx, cy, col in CENTRES:
         if (x - cx) ** 2 + (y - cy) ** 2 <= DOT_R ** 2:
             return (*col, 255)
-    return (0, 0, 0, 255)
+    return (0, 0, 0, 255 if tile else 0)
 
 
-def render(size):
-    scale = 512 / size
+def render(size, tile=True):
+    origin, span = (0, 512) if tile else (GLYPH_ORIGIN, GLYPH_SPAN)
+    scale = span / size
     rows = []
     for py in range(size):
         row = bytearray([0])  # PNG filter: none
@@ -50,7 +57,9 @@ def render(size):
             acc = [0, 0, 0, 0]
             for sy in range(SS):
                 for sx in range(SS):
-                    r, g, b, a = colour_at((px + (sx + 0.5) / SS) * scale, (py + (sy + 0.5) / SS) * scale)
+                    r, g, b, a = colour_at(
+                        origin + (px + (sx + 0.5) / SS) * scale, origin + (py + (sy + 0.5) / SS) * scale, tile
+                    )
                     acc[0] += r * a
                     acc[1] += g * a
                     acc[2] += b * a
@@ -81,10 +90,12 @@ def main():
         out += struct.pack("<BBBBHHII", s % 256, s % 256, 0, 0, 1, 32, len(data), offset)
         offset += len(data)
     out += b"".join(data for _, data in images)
-    path = os.path.join(os.path.dirname(__file__), "..", "desktop", "app", "assets", "dotlink.ico")
-    with open(path, "wb") as f:
-        f.write(out)
-    print(f"wrote {os.path.normpath(path)} ({len(out)} bytes)")
+    assets = os.path.join(os.path.dirname(__file__), "..", "desktop", "app", "assets")
+    for name, data in [("dotlink.ico", out), ("notification-dark.png", render(64, tile=False))]:
+        path = os.path.join(assets, name)
+        with open(path, "wb") as f:
+            f.write(data)
+        print(f"wrote {os.path.normpath(path)} ({len(data)} bytes)")
 
 
 if __name__ == "__main__":
