@@ -140,5 +140,27 @@ platform item, packaging and signing, and a checklist per OS.
 
 ## Commits
 
-One topic per commit, subject `Area: what changed` (e.g. `Cast: download scrcpy when it's
-missing`), body for the why when it isn't obvious.
+Every commit follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/),
+one topic per commit:
+
+```
+<type>(<scope>): <what changed>
+
+<why, when it isn't obvious>
+```
+
+- **Type:** `feat` (new behaviour), `fix` (a bug), `docs`, `refactor` (same behaviour, other
+  code), `perf`, `test`, `build` (Cargo, Gradle, packaging, installers), `ci`, `chore`
+  (anything else: version bumps, assets).
+- **Scope:** the area it touches, lower case: `cast`, `webcam`, `mic`, `remote`, `shell`,
+  `files`, `clipboard`, `pairing`, `usb`, `tray`, `setup`, `devices`, `android`, `windows`,
+  `linux`, `macos`, `docs`. Leave it out when a change spans many areas.
+- **Subject:** imperative, lower case, no full stop, about 70 characters at most
+  (`fix(cast): download scrcpy when it's missing`).
+- **Body:** wrapped at 72 columns, says why; the diff already says what.
+- **Breaking changes** (the phone and PC no longer understand each other, a config key is
+  renamed): `!` after the scope and a `BREAKING CHANGE:` footer,
+  e.g. `feat(pairing)!: pin the certificate per phone`.
+
+Pull request titles use the same form. Commits before
+this rule use `Area: what changed` and stay as they are.
