@@ -45,7 +45,14 @@ sealed interface UpdateState {
 }
 
 object Updater {
+    private const val REPO = "https://github.com/sofyan-rs/dotlink"
     private const val RELEASES = "https://api.github.com/repos/sofyan-rs/dotlink/releases?per_page=20"
+    private const val FEED = "$REPO/releases.atom"
+    private val FEED_ENTRY = Regex("""<entry>.*?</entry>""", RegexOption.DOT_MATCHES_ALL)
+    private val FEED_TAG = Regex("""/releases/tag/([^"]+)"""")
+    private val FEED_CONTENT = Regex("""<content type="html">(.*?)</content>""", RegexOption.DOT_MATCHES_ALL)
+    private val APK_NAME = Regex("""<code>([^<]+\.apk)</code>""")
+    private const val DOWNLOADS_HTML = "<h2>Downloads</h2>"
 
     /** The release workflow appends the downloads from this heading on; the app hides them. */
     private const val DOWNLOADS_HEADING = "## Downloads"
@@ -95,43 +102,106 @@ object Updater {
      * stable installs stay on stable releases.
      */
     private fun latest(current: String): Release? {
-        val request = Request.Builder().url(RELEASES).header("Accept", "application/vnd.github+json").build()
-        val body =
-            http.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) error("GitHub answered ${response.code}")
-                response.body?.string() ?: error("empty answer")
-            }
         val withPre = Version.parse(current)?.pre?.isNotEmpty() == true
-        val releases = JSONArray(body)
         var best: Release? = null
         var bestVersion: Version? = null
-        for (i in 0 until releases.length()) {
-            val r = releases.getJSONObject(i)
-            if (r.optBoolean("draft")) continue
-            val prerelease = r.optBoolean("prerelease")
-            if (prerelease && !withPre) continue
-            val tag = r.optString("tag_name").removePrefix("v")
-            val version = Version.parse(tag) ?: continue
+        for (r in releases()) {
+            if (r.prerelease && !withPre) continue
+            val version = Version.parse(r.version) ?: continue
             if (bestVersion != null && version <= bestVersion) continue
-            val assets = r.optJSONArray("assets") ?: continue
-            val apk =
-                (0 until assets.length()).map { assets.getJSONObject(it) }.firstOrNull { it.optString("name").endsWith(".apk") }
-                    ?: continue
-            best =
-                Release(
-                    version = tag,
-                    notes = r.optString("body").substringBefore(DOWNLOADS_HEADING).trim(),
-                    prerelease = prerelease,
-                    pageUrl = r.optString("html_url"),
-                    apkUrl = apk.optString("browser_download_url"),
-                    apkName = apk.optString("name"),
-                    apkSize = apk.optLong("size"),
-                )
+            best = r
             bestVersion = version
         }
         val installed = Version.parse(current) ?: return best
         return best?.takeIf { bestVersion!! > installed }
     }
+
+    /**
+     * The releases with an APK, from the API. It allows 60 requests an hour per IP address without
+     * a token (every phone and PC behind one router shares them); past that, from the releases
+     * feed, which has no such limit.
+     */
+    private fun releases(): List<Release> {
+        val request = Request.Builder().url(RELEASES).header("Accept", "application/vnd.github+json").build()
+        val limited =
+            http.newCall(request).execute().use { response ->
+                if (response.isSuccessful) return fromApi(response.body?.string() ?: error("empty answer"))
+                if (response.code != 403 && response.code != 429) error("GitHub answered ${response.code}")
+                val reset = response.header("X-RateLimit-Reset")?.toLongOrNull()
+                val minutes = reset?.let { (it - System.currentTimeMillis() / 1000 + 59) / 60 }?.coerceAtLeast(1)
+                "GitHub limits update checks. Try again " + (minutes?.let { "in $it min." } ?: "later.")
+            }
+        return try {
+            fromFeed()
+        } catch (e: Exception) {
+            error(limited)
+        }
+    }
+
+    private fun fromApi(body: String): List<Release> {
+        val releases = JSONArray(body)
+        return (0 until releases.length()).map { releases.getJSONObject(it) }.filter { !it.optBoolean("draft") }.mapNotNull { r ->
+            val assets = r.optJSONArray("assets") ?: return@mapNotNull null
+            val apk =
+                (0 until assets.length()).map { assets.getJSONObject(it) }.firstOrNull { it.optString("name").endsWith(".apk") }
+                    ?: return@mapNotNull null
+            Release(
+                version = r.optString("tag_name").removePrefix("v"),
+                notes = r.optString("body").substringBefore(DOWNLOADS_HEADING).trim(),
+                prerelease = r.optBoolean("prerelease"),
+                pageUrl = r.optString("html_url"),
+                apkUrl = apk.optString("browser_download_url"),
+                apkName = apk.optString("name"),
+                apkSize = apk.optLong("size"),
+            )
+        }
+    }
+
+    /**
+     * The releases from the Atom feed: no drafts, no pre-release flag (a version with a suffix is
+     * one, as for the release workflow), and the notes as HTML. The APK is the one named in the
+     * download table the workflow appends.
+     */
+    private fun fromFeed(): List<Release> {
+        val xml =
+            http.newCall(Request.Builder().url(FEED).build()).execute().use { response ->
+                if (!response.isSuccessful) error("GitHub answered ${response.code}")
+                response.body?.string() ?: error("empty answer")
+            }
+        return FEED_ENTRY.findAll(xml).mapNotNull { entry ->
+            val tag = FEED_TAG.find(entry.value)?.groupValues?.get(1) ?: return@mapNotNull null
+            val html = FEED_CONTENT.find(entry.value)?.groupValues?.get(1)?.let(::unescape) ?: ""
+            val apk = APK_NAME.find(html.substringAfter(DOWNLOADS_HTML, ""))?.groupValues?.get(1)?.let(::unescape) ?: return@mapNotNull null
+            val version = tag.removePrefix("v")
+            Release(
+                version = version,
+                notes = htmlToText(html.substringBefore(DOWNLOADS_HTML)),
+                prerelease = version.substringBefore('+').contains('-'),
+                pageUrl = "$REPO/releases/tag/$tag",
+                apkUrl = "$REPO/releases/download/$tag/$apk",
+                apkName = apk,
+                apkSize = 0,
+            )
+        }.toList()
+    }
+
+    /** Release notes HTML as the Markdown the API gives, near enough. */
+    private fun htmlToText(html: String): String =
+        unescape(
+            html
+                .replace(Regex("""<h(\d)>""")) { "#".repeat(it.groupValues[1].toInt()) + " " }
+                .replace("<li>", "- ")
+                .replace(Regex("""</?code>"""), "`")
+                .replace(Regex("""<[^>]+>"""), ""),
+        ).replace(Regex("""\n{3,}"""), "\n\n").trim()
+
+    private fun unescape(text: String) =
+        text
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&")
 
     /** Downloads [release]'s APK (unless it's already here) and opens the system installer. */
     suspend fun update(
