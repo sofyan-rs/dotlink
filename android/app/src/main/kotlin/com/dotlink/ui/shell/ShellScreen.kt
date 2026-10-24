@@ -112,6 +112,7 @@ class TermController(
 
     /** [status] is an error (wrong PIN, shell turned off): shown in red. */
     var statusError by mutableStateOf(false)
+    var shift by mutableStateOf(false)
     var ctrl by mutableStateOf(false)
     var alt by mutableStateOf(false)
     var sessions by mutableStateOf(emptyList<TermTab>())
@@ -143,9 +144,27 @@ class TermController(
         main.post { if (ws != null) status = "${link.prefs.serverName} · ${c}×$r" }
     }
 
-    /** Text from xterm.js (keyboard) or the key row. Sticky Ctrl/Alt apply to the next key. */
+    /** Text from xterm.js (keyboard) or the key row. Sticky Shift/Ctrl/Alt apply to the next key. */
     fun onInput(data: String) {
         var out = data
+        // A cursor key (arrows, HOME/END, PGUP/PGDN) carries its modifiers as an xterm parameter:
+        // Shift+→ is ESC[1;2C, Ctrl+→ is ESC[1;5C.
+        val csi = CURSOR_KEY.matchEntire(out)
+        if (csi != null && (shift || ctrl || alt)) {
+            val mods = 1 + (if (shift) 1 else 0) + (if (alt) 2 else 0) + (if (ctrl) 4 else 0)
+            val (n, final) = csi.destructured
+            ws?.send("\u001b[${n.ifEmpty { "1" }};$mods$final".encodeToByteArray().toByteString())
+            main.post {
+                shift = false
+                ctrl = false
+                alt = false
+            }
+            return
+        }
+        if (shift && out.length == 1) {
+            out = if (out == "\t") "\u001b[Z" else out.uppercase()
+            main.post { shift = false }
+        }
         if (ctrl && out.length == 1) {
             val c = out[0].uppercaseChar()
             if (c in '@'..'_') out = (c.code - 64).toChar().toString()
@@ -461,6 +480,9 @@ private fun Modifier.tap(onClick: () -> Unit) =
         }
     }
 
+/** An arrow, HOME/END or PGUP/PGDN sequence from [KEYS]: ESC[ + optional number + final byte. */
+private val CURSOR_KEY = Regex("""\u001b\[(\d*)([A-DFH~])""")
+
 private val KEYS =
     listOf(
         "ESC" to "\u001b",
@@ -488,6 +510,7 @@ private fun ExtraKeys(controller: TermController) {
             .padding(horizontal = Dotline.space.s4),
         horizontalArrangement = Arrangement.spacedBy(Dotline.space.s2),
     ) {
+        Key("SHIFT", active = controller.shift) { controller.shift = !controller.shift }
         Key("CTRL", active = controller.ctrl) { controller.ctrl = !controller.ctrl }
         Key("ALT", active = controller.alt) { controller.alt = !controller.alt }
         KEYS.forEach { (label, seq) -> Key(label) { controller.onInput(seq) } }
