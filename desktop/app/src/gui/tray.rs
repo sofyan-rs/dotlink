@@ -125,10 +125,11 @@ struct DotlinkTray {
 
 #[cfg(target_os = "linux")]
 impl DotlinkTray {
-    fn item(label: &str, icon: &str, action: TrayAction) -> ksni::MenuItem<Self> {
+    /// A plain text entry: theme icons look mismatched next to each other, and the Windows
+    /// menu has none either.
+    fn item(label: &str, action: TrayAction) -> ksni::MenuItem<Self> {
         ksni::menu::StandardItem {
             label: label.into(),
-            icon_name: icon.into(),
             activate: Box::new(move |tray: &mut Self| {
                 let _ = tray.actions.unbounded_send(action);
             }),
@@ -163,14 +164,14 @@ impl ksni::Tray for DotlinkTray {
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         vec![
-            Self::item("Open Dotlink", "", TrayAction::Open),
+            Self::item("Open Dotlink", TrayAction::Open),
             ksni::MenuItem::Separator,
-            Self::item("Send files…", "document-send", TrayAction::SendFiles),
-            Self::item("Send clipboard", "edit-paste", TrayAction::SendClipboard),
-            Self::item("Cast screen", "video-display", TrayAction::Cast),
-            Self::item("Pair a phone…", "list-add", TrayAction::Pair),
+            Self::item("Send files…", TrayAction::SendFiles),
+            Self::item("Send clipboard", TrayAction::SendClipboard),
+            Self::item("Cast screen", TrayAction::Cast),
+            Self::item("Pair a phone…", TrayAction::Pair),
             ksni::MenuItem::Separator,
-            Self::item("Quit", "application-exit", TrayAction::Quit),
+            Self::item("Quit", TrayAction::Quit),
         ]
     }
 }
