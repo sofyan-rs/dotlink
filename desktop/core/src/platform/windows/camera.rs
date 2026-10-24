@@ -74,9 +74,7 @@ pub fn installed_ok() -> std::result::Result<(), String> {
         .is_some_and(|a| std::fs::read(&bundled).ok().is_some_and(|b| a == b));
     if !current {
         return Err(
-            "Installs the camera's driver part into Program Files, so apps see \"Dotlink Camera\". \
-             Windows asks for administrator rights once."
-                .into(),
+            "Installs the virtual camera into Program Files, so apps see \"Dotlink Camera\".".into(),
         );
     }
     if !STARTED.load(Ordering::SeqCst) {

@@ -1,6 +1,7 @@
 //! What the features need from Windows: an inbound firewall rule for the port, on a Private
-//! network (its fix asks for administrator rights once), and adb + scrcpy for Cast (downloaded
-//! without admin rights).
+//! network (its fix asks for administrator rights once), the virtual camera, VB-CABLE, adb +
+//! scrcpy for Cast (downloaded without admin rights), and notifications left on. Sections come
+//! in the same order as on Linux.
 
 use super::super::Check;
 use super::hidden_command;
@@ -23,14 +24,12 @@ pub fn checks(port: u16) -> Vec<Check> {
     out.push(Check {
         id: "firewall".into(),
         feature: "Network".into(),
-        title: format!("Windows Firewall allows port {port}"),
+        title: format!("Firewall allows port {port}/tcp"),
         ok: rule,
         detail: if rule {
             String::new()
         } else {
-            "Adds an inbound rule for Private and Domain networks, so the phone can connect. \
-             Windows asks for administrator rights once."
-                .into()
+            "Windows Firewall blocks the phone. Adds an inbound rule for Private and Domain networks.".into()
         },
         fixable: !rule,
     });
@@ -54,15 +53,25 @@ pub fn checks(port: u16) -> Vec<Check> {
         },
         fixable: false,
     });
+    // Remote: SendInput needs no setup.
+    out.push(Check {
+        id: "input".into(),
+        feature: "Remote".into(),
+        title: "Virtual mouse and keyboard (SendInput)".into(),
+        ok: true,
+        detail: "Windows keeps administrator windows (UAC prompts, Task Manager) out of reach.".into(),
+        fixable: false,
+    });
+
     // Webcam: the virtual camera's media source, installed where the frame server can load it.
     let camera = super::camera::installed_ok();
     out.push(Check {
         id: "camera".into(),
         feature: "Webcam".into(),
-        title: "\"Dotlink Camera\" (Windows 11 virtual camera)".into(),
+        title: "\"Dotlink Camera\" device".into(),
         ok: camera.is_ok(),
         detail: match &camera {
-            Ok(()) => String::new(),
+            Ok(()) => format!("In your app, pick \"{}\" as the camera.", dotlink_camera::shared::FRIENDLY_NAME),
             Err(e) => e.clone(),
         },
         fixable: camera.is_err() && super::camera::os_supported() && super::camera::bundled_dll().is_some(),
@@ -97,14 +106,39 @@ pub fn checks(port: u16) -> Vec<Check> {
             detail: if ok {
                 String::new()
             } else if downloadable {
-                "Fix downloads scrcpy with adb (from GitHub).".into()
+                "Fix downloads scrcpy with adb (from GitHub). Or install: winget install Genymobile.scrcpy".into()
             } else {
-                "Install scrcpy (winget install Genymobile.scrcpy).".into()
+                "Install: winget install Genymobile.scrcpy".into()
             },
             fixable: !ok && downloadable,
         });
     }
+
+    // Notifications: toasts are built in, but can be turned off for everyone or for Dotlink.
+    let toasts = toasts_enabled();
+    out.push(Check {
+        id: "notifications".into(),
+        feature: "Notifications".into(),
+        title: "Windows notifications".into(),
+        ok: toasts,
+        detail: if toasts {
+            String::new()
+        } else {
+            "Windows has notifications off for Dotlink. Turn them on in Settings → System → Notifications.".into()
+        },
+        fixable: false,
+    });
     out
+}
+
+/// Neither notifications as a whole nor Dotlink's are switched off (a missing value means on).
+fn toasts_enabled() -> bool {
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    let off = |key: &str, value: &str| {
+        hkcu.open_subkey(key).and_then(|k| k.get_value::<u32, _>(value)).is_ok_and(|v| v == 0)
+    };
+    !off(r"Software\Microsoft\Windows\CurrentVersion\PushNotifications", "ToastEnabled")
+        && !off(&format!(r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\{}", super::APP_ID), "Enabled")
 }
 
 /// Names of the connected networks whose profile is Public.
