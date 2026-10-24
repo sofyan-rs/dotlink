@@ -11,4 +11,5 @@ pub mod server;
 pub mod service;
 pub mod term;
 pub mod tls;
+pub mod update;
 pub mod usb;

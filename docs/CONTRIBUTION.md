@@ -60,7 +60,31 @@ cd .. && cargo build --release -p dotlink && cargo generate-rpm -p app   # targe
 ```
 
 The Windows icon (`app/assets/dotlink.ico`) is drawn by `scripts/make-windows-icon.py`.
-`.github/workflows/release.yml` builds every package; run it by hand or push a `v*` tag.
+`.github/workflows/release.yml` builds every package; run it by hand to get them as artifacts.
+
+### Releasing
+
+One version for everything: `version` in `desktop/Cargo.toml`. The Android app reads it too and
+derives its `versionCode` from it (`1.2.3-beta.4` is `1020304`, `1.2.3` is `1020399`), so a
+pre-release's suffix ends in a number below 100 and grows: `beta.1`, `beta.2`, `rc.3`.
+
+1. Bump `version` in `desktop/Cargo.toml` and run `cargo check` (updates `Cargo.lock`).
+2. Optionally write the notes in `.github/release-notes/v<version>.md`; otherwise GitHub
+   generates them from the commits.
+3. Commit, tag `v<version>` and push the tag. A tag with a suffix (`v0.2.0-beta.1`) publishes a
+   pre-release; without one, a release.
+
+The workflow signs the APK with the release key from the repository secrets
+(`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
+`ANDROID_KEY_PASSWORD`) and refuses to publish without them.
+
+The apps check the releases for updates (`desktop/core/src/update.rs`,
+`android/.../update/Updater.kt`): on start, every 12 hours on the PC, and from Settings. Windows
+runs the new setup `.exe` and an AppImage replaces itself; `.deb` and `.rpm` installs get the
+release page. Android downloads the APK and opens the system installer, which only accepts it
+over an app signed with the same key. Installs of a pre-release are offered pre-releases too;
+stable installs only stable releases. Everything from the `## Downloads` heading of the release
+notes is hidden in the apps.
 
 `NO_STRIP=1` works around linuxdeploy's `strip` being too old for current distros' libraries.
 Packages need the glibc they were built with or newer: build releases on the oldest distro you

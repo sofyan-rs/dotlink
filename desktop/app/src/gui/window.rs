@@ -1,7 +1,7 @@
 //! The Dotlink window: a sidebar and five pages.
 
 use super::client::{Battery, DeviceInfo, Status};
-use super::model::{Model, Notice, Page, Pairing};
+use super::model::{Model, Notice, Page, Pairing, UpdateState};
 use super::theme::{self, DISPLAY, MONO, Palette, palette};
 use super::title_bar::TitleBar;
 use dotlink_core::cast::CastState;
@@ -1123,6 +1123,7 @@ impl MainView {
                 "About",
                 group(p)
                     .child(kv(p, "Version", version))
+                    .child(self.update_row(p, cx))
                     .child(
                         kv(p, "Config", dotlink_core::config::config_path().display().to_string())
                             .border_t_1()
@@ -1163,6 +1164,48 @@ impl MainView {
                             ),
                     ),
             ))
+    }
+
+    /// Settings → About: the update check, and the update once one is found.
+    fn update_row(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let state = &self.model.read(cx).update;
+        let (text, button): (String, Option<(&str, bool)>) = match state {
+            UpdateState::Idle => ("Updates come from the GitHub releases.".into(), Some(("Check for updates", true))),
+            UpdateState::Checking => ("Checking for updates…".into(), Some(("Check for updates", false))),
+            UpdateState::UpToDate => ("Dotlink is up to date.".into(), Some(("Check again", true))),
+            UpdateState::Failed(e) => (format!("Couldn't check: {e}"), Some(("Try again", true))),
+            UpdateState::Available(r) => (
+                format!("Dotlink {}{} is available.", r.version, if r.prerelease { " (pre-release)" } else { "" }),
+                Some((if r.asset.is_some() { "Update and restart" } else { "Download" }, true)),
+            ),
+            UpdateState::Downloading(r, done) => {
+                (format!("Downloading Dotlink {}: {}%", r.version, (done * 100.) as u32), None)
+            }
+        };
+        let available = matches!(state, UpdateState::Available(_));
+        let release_page = match state {
+            UpdateState::Available(r) => Some(r.page_url.clone()),
+            _ => None,
+        };
+        row(p)
+            .border_t_1()
+            .border_color(p.line)
+            .child(div().flex_1().text_color(p.ink_muted).child(text))
+            .when_some(release_page, |r, url| {
+                r.child(pill(p, "release-notes", "What's new", Kind::Ghost).on_click(move |_, _, cx| cx.open_url(&url)))
+            })
+            .when_some(button, |r, (label, on)| {
+                r.child(enabled(
+                    pill(p, "update", label, if available { Kind::Primary } else { Kind::Ghost }).on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            this.model.update(cx, |m, cx| {
+                                if available { m.install_update(cx) } else { m.check_update(true, cx) }
+                            })
+                        },
+                    )),
+                    on,
+                ))
+            })
     }
 
     fn not_connected(&self, p: &Palette, _cx: &mut Context<Self>) -> impl IntoElement {

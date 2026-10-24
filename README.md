@@ -34,13 +34,21 @@ What has been tested per feature: [docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEAT
 
 ## Install
 
+Ready-made builds for every platform are on the
+[releases page](https://github.com/sofyan-rs/dotlink/releases). Dotlink checks for new releases
+by itself (Settings → About on the PC, Settings → Check for updates on the phone) and installs
+them on Windows, from the AppImage and on Android.
+
 ### Phone
+
+Install `Dotlink-<version>.apk` from the releases page, or build it:
 
 ```sh
 cd android && ./gradlew installDebug
 ```
 
-Or copy `android/app/build/outputs/apk/debug/app-debug.apk` to the phone.
+Or copy `android/app/build/outputs/apk/debug/app-debug.apk` to the phone. A debug build can't be
+updated by a release APK (different signing key): uninstall it first.
 
 ### Linux
 
@@ -214,7 +222,8 @@ cd .. && cargo generate-rpm -p app                    # Linux .rpm, after a rele
 
 Build Linux releases on the oldest distro you want to support (they need its glibc or newer).
 The Android release APK is signed with the key in `android/keystore.properties` (not in git),
-or the debug key without it. `.github/workflows/release.yml` builds all of them; it only runs by
-hand or for a `v*` tag.
+or the debug key without it. `.github/workflows/release.yml` builds all of them; a `v*` tag
+publishes them as a release (with a suffix like `v0.2.0-beta.1`, a pre-release). See
+[Releasing](docs/CONTRIBUTION.md#releasing).
 
 More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/CONTRIBUTION.md](docs/CONTRIBUTION.md).
