@@ -88,8 +88,20 @@ impl Config {
             .unwrap_or((1920, 1080))
     }
 
+    /// `~/Downloads` means the system's Downloads folder, which the user may have moved
+    /// (Windows known folder, `XDG_DOWNLOAD_DIR`).
     pub fn download_dir(&self) -> PathBuf {
-        expand_home(&self.download_dir)
+        let p = self.download_dir.replace('\\', "/");
+        match p.strip_prefix("~/Downloads").filter(|rest| rest.is_empty() || rest.starts_with('/')) {
+            Some(rest) => match dirs::download_dir() {
+                Some(dir) => match rest.trim_start_matches('/') {
+                    "" => dir,
+                    rest => dir.join(rest),
+                },
+                None => expand_home(&p),
+            },
+            None => expand_home(&self.download_dir),
+        }
     }
 }
 
@@ -187,4 +199,18 @@ pub fn set_private(path: &std::path::Path) {
     // unless the config dir is moved somewhere shared.
     #[cfg(not(unix))]
     let _ = path;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_dir_follows_system_downloads() {
+        let Some(downloads) = dirs::download_dir() else { return };
+        let dir = |s: &str| Config { download_dir: s.into(), ..Config::default() }.download_dir();
+        assert_eq!(dir("~/Downloads/Dotlink"), downloads.join("Dotlink"));
+        assert_eq!(dir("~/Downloads"), downloads);
+        assert_eq!(dir("~/DownloadsX"), dirs::home_dir().unwrap().join("DownloadsX"));
+    }
 }
