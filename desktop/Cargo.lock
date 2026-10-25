@@ -1849,7 +1849,7 @@ dependencies = [
 
 [[package]]
 name = "dotlink"
-version = "0.1.0-beta.7"
+version = "0.1.0-beta.8"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "dotlink-camera"
-version = "0.1.0-beta.7"
+version = "0.1.0-beta.8"
 dependencies = [
  "windows 0.62.2",
  "windows-core 0.62.2",
@@ -1882,7 +1882,7 @@ dependencies = [
 
 [[package]]
 name = "dotlink-core"
-version = "0.1.0-beta.7"
+version = "0.1.0-beta.8"
 dependencies = [
  "anyhow",
  "arboard",
