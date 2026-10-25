@@ -5,7 +5,7 @@
 use anyhow::{Result, anyhow, bail};
 use dotlink_core::cast::CastState;
 use dotlink_core::config::{Config, DeviceKind};
-use dotlink_core::events::{Event, Transfer};
+use dotlink_core::events::{Event, Incoming, Transfer};
 use dotlink_core::ipc;
 use futures::channel::{mpsc, oneshot};
 use serde::Deserialize;
@@ -32,6 +32,9 @@ pub struct Status {
     /// Device id → its cast, for the phones that aren't Idle.
     #[serde(default)]
     pub casts: HashMap<String, CastState>,
+    /// Files waiting for Accept or Decline.
+    #[serde(default)]
+    pub incoming: Vec<Incoming>,
 }
 
 impl Status {
@@ -193,6 +196,11 @@ impl Client {
     /// Sends this PC's clipboard changes to a linked PC as they happen, or stops.
     pub fn clipboard_auto(&self, id: &str, on: bool) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "clipboard_auto", "id": id, "on": on })))
+    }
+
+    /// Accept or Decline for a file waiting on it.
+    pub fn answer_incoming(&self, id: &str, accept: bool) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "answer_incoming", "id": id, "accept": accept })))
     }
 
     pub fn unpair(&self, id: &str) -> impl Future<Output = Result<String>> + use<> {

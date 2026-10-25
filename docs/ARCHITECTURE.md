@@ -130,6 +130,7 @@ Control messages (`{"t": …}`):
 | PC ↔ PC | `battery` | `level`, `charging`: a linked laptop's battery, on connect and when it changes |
 | phone → PC | `clip` | phone clipboard text |
 | phone → PC | `info` | phone name, model, Wireless debugging on, Developer options on (for Cast) |
+| phone → PC | `decline` | `id`: the file offer it won't take ("Ask before receiving files"); the PC lists it as declined |
 | phone → PC | `media` | `state: needs_tap`: starting camera/mic waits for a tap |
 | phone → PC | `battery` | `level` (percent), `charging`; on connect and when either changes. The Phones page shows it while the phone is connected |
 
@@ -219,7 +220,11 @@ request line in, one or more reply lines out.
 
 ## Features, briefly
 
-- **Files.** Uploads go to a `.part` file, are SHA-256 checked, then renamed. Transfers are
+- **Files.** With "Ask before receiving files" on (`ask_before_receiving`, and the phone's own
+  setting), a file waits for Accept: `App::ask_incoming` shows a notification with Accept /
+  Decline (Windows: `dotlink:accept/<id>` links; Linux: notify-send actions) and a banner in
+  the window, and declines after 2 minutes. An upload isn't read until then (senders allow 3
+  minutes); an offer is declined with a `decline` message. Uploads go to a `.part` file, are SHA-256 checked, then renamed. Transfers are
   tracked (`events::Transfer`) with progress for the window; the phone shows its own progress
   notifications (`TransferNotifier`).
 - **Clipboard.** Linux: `wl-paste --watch` where the compositor has data-control (Hyprland,

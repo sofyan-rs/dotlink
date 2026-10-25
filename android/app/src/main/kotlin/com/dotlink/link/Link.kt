@@ -577,7 +577,12 @@ class Link(
             "camera", "mic" -> streamRequests.tryEmit(msg.optString("t") to msg.optBoolean("on"))
             "file" ->
                 scope.launch {
-                    download(msg.getString("id"), msg.optString("name", "file"), msg.optLong("size", -1))
+                    val (id, name, size) = Triple(msg.getString("id"), msg.optString("name", "file"), msg.optLong("size", -1))
+                    if (askIncoming(prefs.serverName, name, size)) {
+                        download(id, name, size)
+                    } else {
+                        control?.send(JSONObject().put("t", "decline").put("id", id).toString())
+                    }
                 }
         }
     }
@@ -711,6 +716,63 @@ class Link(
         }
     }
 
+    private val asks = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+
+    /**
+     * With "Ask before receiving files" on, asks (a notification with Accept / Decline)
+     * whether to take [name] from [from]; true right away when it's off. No answer in two
+     * minutes: declined, and listed as such.
+     */
+    suspend fun askIncoming(
+        from: String,
+        name: String,
+        size: Long,
+    ): Boolean {
+        if (!prefs.askBeforeReceiving) return true
+        val id = UUID.randomUUID().toString()
+        val answer = CompletableDeferred<Boolean>()
+        asks[id] = answer
+        val notificationId = id.hashCode()
+        val nm = app.getSystemService(NotificationManager::class.java)
+        fun action(accept: Boolean) =
+            PendingIntent.getService(
+                app,
+                notificationId * 2 + if (accept) 1 else 0,
+                Intent(app, LinkService::class.java)
+                    .setAction(LinkService.ACTION_ANSWER)
+                    .putExtra(LinkService.EXTRA_ASK, id)
+                    .putExtra(LinkService.EXTRA_ACCEPT, accept),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        val sizeText = if (size >= 0) " · ${com.dotlink.ui.formatSize(size)}" else ""
+        val n =
+            NotificationCompat
+                .Builder(app, DotlinkApp.CHANNEL_REQUESTS)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("$from wants to send a file")
+                .setContentText("$name$sizeText")
+                .addAction(0, "Decline", action(false))
+                .addAction(0, "Accept", action(true))
+                .setOngoing(true)
+                .setTimeoutAfter(ASK_MS)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build()
+        if (nm.areNotificationsEnabled()) nm.notify(notificationId, n)
+        val accepted = withTimeoutOrNull(ASK_MS) { answer.await() } ?: false
+        asks.remove(id)
+        nm.cancel(notificationId)
+        if (!accepted) finish(newTransfer(name, incoming = true, size = size).id, "Declined")
+        return accepted
+    }
+
+    /** Accept or Decline from the notification. */
+    fun answerIncoming(
+        id: String,
+        accept: Boolean,
+    ) {
+        asks.remove(id)?.complete(accept)
+    }
+
     /** A transfer for the list (and the progress notification). */
     fun newTransfer(
         name: String,
@@ -771,11 +833,12 @@ class Link(
         }
     }
 
+    // Long enough for the receiver to answer "Ask before receiving files" (two minutes).
     private fun transferClient() =
         http()
             .newBuilder()
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(180, TimeUnit.SECONDS)
+            .writeTimeout(180, TimeUnit.SECONDS)
             .build()
 
     private var lastProgress = 0L
@@ -910,6 +973,9 @@ class Link(
                 .readTimeout(3, TimeUnit.SECONDS)
                 .build()
         }
+
+        /** How long a file waits for Accept ("Ask before receiving files") before it's declined. */
+        const val ASK_MS = 120_000L
 
         /** How often a Wi-Fi link checks whether the cable has become available. */
         private const val USB_PROBE_MS = 5_000L

@@ -22,6 +22,20 @@ pub enum Event {
     Cast,
     /// The phone needs a tap on its notification to start `kind` ("camera" | "mic").
     MediaPrompt { device: String, kind: String },
+    /// A file waits for Accept or Decline ("Ask before receiving files"): `answer_incoming`.
+    Incoming(Incoming),
+    /// That file was answered, or nobody did in time.
+    IncomingDone { id: String },
+}
+
+/// A file someone wants to send here, waiting for an answer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Incoming {
+    pub id: String,
+    /// The phone's or PC's name.
+    pub from: String,
+    pub name: String,
+    pub size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

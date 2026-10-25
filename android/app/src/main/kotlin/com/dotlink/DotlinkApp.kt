@@ -21,7 +21,7 @@ class DotlinkApp : Application() {
         nm.createNotificationChannel(NotificationChannel(CHANNEL_FILES, "Received files", NotificationManager.IMPORTANCE_DEFAULT))
         nm.createNotificationChannel(NotificationChannel(CHANNEL_TRANSFERS, "File transfers", NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_REQUESTS, "Requests from the PC", NotificationManager.IMPORTANCE_HIGH),
+            NotificationChannel(CHANNEL_REQUESTS, "Requests", NotificationManager.IMPORTANCE_HIGH),
         )
         registerActivityLifecycleCallbacks(
             object : ActivityLifecycleCallbacks {

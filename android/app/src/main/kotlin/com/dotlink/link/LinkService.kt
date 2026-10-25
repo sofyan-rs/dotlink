@@ -109,6 +109,10 @@ class LinkService : LifecycleService() {
                 }
             ACTION_MIC_ON -> startMic()
             ACTION_MIC_OFF -> mic?.stop()
+            ACTION_ANSWER -> {
+                val id = intent.getStringExtra(EXTRA_ASK)
+                if (id != null) link.answerIncoming(id, intent.getBooleanExtra(EXTRA_ACCEPT, false))
+            }
             ACTION_DISCONNECT -> {
                 camera?.stop()
                 mic?.stop()
@@ -321,6 +325,11 @@ class LinkService : LifecycleService() {
         const val ACTION_MIC_ON = "mic_on"
         const val ACTION_MIC_OFF = "mic_off"
         const val ACTION_DISCONNECT = "disconnect"
+
+        /** Accept or Decline on an incoming file ([EXTRA_ASK], [EXTRA_ACCEPT]). */
+        const val ACTION_ANSWER = "answer"
+        const val EXTRA_ASK = "ask"
+        const val EXTRA_ACCEPT = "accept"
 
         /** Reconnect to the PC in [EXTRA_PC], or to the active PC again (after pairing or unpairing one). */
         const val ACTION_SWITCH = "switch"

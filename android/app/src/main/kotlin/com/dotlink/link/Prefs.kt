@@ -202,6 +202,10 @@ class Prefs(
     var mirror: Boolean
         get() = sp.getBoolean("mirror", false)
         set(v) = sp.edit { putBoolean("mirror", v) }
+    /** Ask (a notification with Accept / Decline) before taking a file; off: take it. */
+    var askBeforeReceiving: Boolean
+        get() = sp.getBoolean("ask_before_receiving", false)
+        set(v) = sp.edit { putBoolean("ask_before_receiving", v) }
     var autoClipboard: Boolean
         get() = sp.getBoolean("auto_clipboard", true)
         set(v) = sp.edit { putBoolean("auto_clipboard", v) }

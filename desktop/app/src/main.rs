@@ -247,7 +247,7 @@ async fn command(cmd: Cmd) -> Result<()> {
         }
         Cmd::Unpair { device } => simple(json!({ "cmd": "unpair", "id": device })).await,
         Cmd::Quit => simple(json!({ "cmd": "quit" })).await,
-        Cmd::Url { link } => open_link(&link),
+        Cmd::Url { link } => open_link(&link).await,
         Cmd::Cast { to, action: None } => simple(json!({ "cmd": "cast", "on": true, "id": to })).await,
         Cmd::Cast { to, action: Some(CastCmd::Stop) } => {
             simple(json!({ "cmd": "cast", "on": false, "id": to })).await
@@ -315,16 +315,22 @@ fn print_qr(data: &str) {
     }
 }
 
-/// Started by Windows, without a console: errors go to a notification.
+/// Started by Windows, without a console: errors go to a notification. Accept / Decline on an
+/// incoming file go to the running service.
 #[cfg(windows)]
-fn open_link(link: &str) -> Result<()> {
-    if let Err(e) = dotlink_core::platform::open_link(link) {
+async fn open_link(link: &str) -> Result<()> {
+    let answer = link.strip_prefix("dotlink:accept/").map(|id| (id, true)).or(link.strip_prefix("dotlink:decline/").map(|id| (id, false)));
+    let result = match answer {
+        Some((id, accept)) => simple(json!({ "cmd": "answer_incoming", "id": id.trim_end_matches('/'), "accept": accept })).await,
+        None => dotlink_core::platform::open_link(link),
+    };
+    if let Err(e) = result {
         dotlink_core::platform::notify("Dotlink", &format!("{e:#}"));
     }
     Ok(())
 }
 
 #[cfg(not(windows))]
-fn open_link(_link: &str) -> Result<()> {
+async fn open_link(_link: &str) -> Result<()> {
     bail!("dotlink: links are only used on Windows")
 }

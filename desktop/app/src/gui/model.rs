@@ -175,7 +175,9 @@ impl Model {
                 self.connected = false;
                 cx.notify();
             }
-            Update::Event(Event::Devices | Event::Config | Event::Streams | Event::Cast) => self.refresh(cx),
+            Update::Event(
+                Event::Devices | Event::Config | Event::Streams | Event::Cast | Event::Incoming(_) | Event::IncomingDone { .. },
+            ) => self.refresh(cx),
             Update::Event(Event::MediaPrompt { device, kind }) => {
                 let what = if kind == "mic" { "microphone" } else { "webcam" };
                 self.notice(format!("Tap Start in the notification on {device} to turn on the {what}"), false, cx);
@@ -677,6 +679,22 @@ impl Model {
 
     pub fn set_clipboard_auto(&mut self, id: String, on: bool, cx: &mut Context<Self>) {
         let call = self.client.clipboard_auto(&id, on);
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| {
+                if let Err(e) = result {
+                    this.notice(capitalize(&format!("{e:#}")), true, cx);
+                }
+                this.refresh(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Accept or Decline for a file waiting on it ("Ask before receiving files").
+    pub fn answer_incoming(&mut self, id: String, accept: bool, cx: &mut Context<Self>) {
+        let call = self.client.answer_incoming(&id, accept);
         cx.spawn(async move |this, cx| {
             let result = call.await;
             this.update(cx, |this, cx| {

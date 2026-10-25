@@ -158,6 +158,25 @@ pub fn notify_file(from: &str, name: &str, path: &Path) {
     }
 }
 
+/// "X wants to send …" with Accept / Decline: `dotlink:accept/<id>` and `dotlink:decline/<id>`
+/// links (`dotlink url` passes them to the service), so they work from the notification
+/// center too. A reminder toast: it stays up until answered.
+pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &crate::events::Incoming) {
+    register_app_id();
+    register_url_scheme();
+    let link = |action: &str| xml_escape(&format!("dotlink:{action}/{}", incoming.id));
+    let xml = format!(
+        r#"<toast scenario="reminder"><visual><binding template="ToastGeneric"><text>{title}</text><text>{body}</text></binding></visual><actions><action content="Accept" activationType="protocol" arguments="{accept}"/><action content="Decline" activationType="protocol" arguments="{decline}"/></actions></toast>"#,
+        title = xml_escape(&format!("{} wants to send a file", incoming.from)),
+        body = xml_escape(&incoming.name),
+        accept = link("accept"),
+        decline = link("decline"),
+    );
+    if let Err(e) = show_toast_xml(&xml) {
+        tracing::warn!("notification: {e}");
+    }
+}
+
 /// `name`: what to show; `file`: the file's name in the download folder, for the links.
 fn file_toast_xml(from: &str, name: &str, file: &str) -> String {
     let link = |action: &str| xml_escape(&format!("dotlink:{action}/{}", crate::config::url_encode(file)));

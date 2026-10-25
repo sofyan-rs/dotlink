@@ -17,7 +17,8 @@ are supported; macOS is planned.
 | **Microphone** | The phone mic as a microphone on the PC | |
 | **Cast** | | The phone's screen in a window, with mouse and keyboard ([scrcpy](https://github.com/Genymobile/scrcpy)) |
 
-Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on the phone.
+Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on the phone. Turn on
+**Ask before receiving files** in Settings (PC or phone) to Accept or Decline each one first.
 
 ## Requirements
 

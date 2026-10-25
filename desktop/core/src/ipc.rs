@@ -134,6 +134,15 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
             let msg = result(app.send_clipboard(req["to"].as_str()).await.map(|()| "clipboard sent".into()));
             w.write_all(reply(msg).as_bytes()).await?;
         }
+        "answer_incoming" => {
+            let (id, accept) = (req["id"].as_str().unwrap_or(""), req["accept"].as_bool().unwrap_or(false));
+            let msg = if app.answer_incoming(id, accept) {
+                json!({ "ok": if accept { "accepted" } else { "declined" } })
+            } else {
+                json!({ "error": "that file isn't waiting any more" })
+            };
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
         "nearby" => {
             let pcs = crate::peer::nearby(&app).await;
             w.write_all(reply(json!({ "pcs": pcs })).as_bytes()).await?;

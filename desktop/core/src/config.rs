@@ -18,6 +18,8 @@ pub struct Config {
     pub download_dir: String,
     /// Push PC clipboard changes to the phone automatically.
     pub clipboard_sync: bool,
+    /// Ask (notification, window) before taking a file from a phone or PC; off: take it.
+    pub ask_before_receiving: bool,
     /// Allow the phone to open a shell on this PC.
     pub terminal: bool,
     /// When non-empty, the phone must send this PIN to open the terminal.
@@ -49,6 +51,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             download_dir: "~/Downloads/Dotlink".into(),
             clipboard_sync: true,
+            ask_before_receiving: false,
             terminal: true,
             terminal_pin: String::new(),
             shell: String::new(),

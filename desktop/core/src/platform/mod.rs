@@ -4,6 +4,7 @@
 //! |---|---|
 //! | `notify(title, body)` | desktop notification |
 //! | `notify_file(from, name, path)` | "file received" notification with Open / Show in folder |
+//! | `notify_incoming(app, incoming)` | "X wants to send …" with Accept / Decline (`App::answer_incoming`) |
 //! | `open_path(path)` | open a file or folder with the default app |
 //! | `clipboard::{watch, get, set}` | clipboard text, and pushing changes to the phone |
 //! | `Input` | virtual mouse and keyboard for the Remote screen |

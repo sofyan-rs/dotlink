@@ -64,6 +64,7 @@ struct SettingsForm {
     camera_size: Entity<InputState>,
     cast_max_size: Entity<InputState>,
     clipboard_sync: bool,
+    ask_before_receiving: bool,
     terminal: bool,
     cast_screen_off: bool,
     cast_audio: bool,
@@ -85,6 +86,7 @@ impl MainView {
             camera_size: input("1920x1080", window, cx),
             cast_max_size: input("Full resolution", window, cx),
             clipboard_sync: true,
+            ask_before_receiving: false,
             terminal: true,
             cast_screen_off: false,
             cast_audio: true,
@@ -193,6 +195,7 @@ impl MainView {
             set(&self.form.cast_max_size, config.cast_max_size.to_string(), window, cx);
         }
         self.form.clipboard_sync = config.clipboard_sync;
+        self.form.ask_before_receiving = config.ask_before_receiving;
         self.form.terminal = config.terminal;
         self.form.cast_screen_off = config.cast_screen_off;
         self.form.cast_audio = config.cast_audio;
@@ -215,6 +218,7 @@ impl MainView {
     fn save_switches(&mut self, cx: &mut Context<Self>) {
         let Some(mut config) = self.model.read(cx).status.as_ref().map(|s| s.config.clone()) else { return };
         config.clipboard_sync = self.form.clipboard_sync;
+        config.ask_before_receiving = self.form.ask_before_receiving;
         config.terminal = self.form.terminal;
         config.cast_screen_off = self.form.cast_screen_off;
         config.cast_audio = self.form.cast_audio;
@@ -250,6 +254,7 @@ impl MainView {
             }
         }
         config.clipboard_sync = self.form.clipboard_sync;
+        config.ask_before_receiving = self.form.ask_before_receiving;
         config.terminal = self.form.terminal;
         config.cast_screen_off = self.form.cast_screen_off;
         config.cast_audio = self.form.cast_audio;
@@ -281,7 +286,17 @@ impl Render for MainView {
                 .text_size(px(15.))
                 .child(self.sidebar(&p, page, cx))
                 .child(div().id("content").flex_1().min_w_0().h_full().overflow_y_scroll().child(
-                    div().w_full().max_w(px(760.)).mx_auto().px(px(32.)).py(px(28.)).flex().flex_col().gap(px(24.)).child(content),
+                    div()
+                        .w_full()
+                        .max_w(px(760.))
+                        .mx_auto()
+                        .px(px(32.))
+                        .py(px(28.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(24.))
+                        .children(self.incoming_banner(&p, cx))
+                        .child(content),
                 ));
         // GNOME (and other compositors without server-side decorations) leave the title bar to
         // the app: draw one with window controls (title_bar.rs). gpui-component's Root already
@@ -306,6 +321,56 @@ impl Render for MainView {
 const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for administrator rights (UAC).";
 #[cfg(not(windows))]
 const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for your password once (polkit).";
+
+// ---------- incoming files ----------
+
+impl MainView {
+    /// Files waiting for Accept or Decline ("Ask before receiving files"), above every page.
+    fn incoming_banner(&self, p: &Palette, cx: &mut Context<Self>) -> Option<Div> {
+        let waiting = self.model.read(cx).status.as_ref().map(|s| s.incoming.clone()).unwrap_or_default();
+        if waiting.is_empty() {
+            return None;
+        }
+        let mut list = group(p).border_1().border_color(p.accent);
+        for (i, f) in waiting.into_iter().enumerate() {
+            let (accept_id, decline_id) = (f.id.clone(), f.id.clone());
+            let size = f.size.map(|s| format!(" · {}", human_size(s))).unwrap_or_default();
+            list = list.child(
+                row(p)
+                    .when(i > 0, |r| r.border_t_1().border_color(p.line))
+                    .child(direction(p, false))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().truncate().child(f.name.clone()))
+                            .child(
+                                div()
+                                    .font_family(MONO)
+                                    .text_size(px(13.))
+                                    .text_color(p.ink_muted)
+                                    .child(format!("{} wants to send it{size}", f.from)),
+                            ),
+                    )
+                    .child(pill(p, SharedString::from(format!("decline-{}", f.id)), "Decline", Kind::Ghost).on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            let id = decline_id.clone();
+                            this.model.update(cx, |m, cx| m.answer_incoming(id, false, cx));
+                        },
+                    )))
+                    .child(pill(p, SharedString::from(format!("accept-{}", f.id)), "Accept", Kind::Primary).on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            let id = accept_id.clone();
+                            this.model.update(cx, |m, cx| m.answer_incoming(id, true, cx));
+                        },
+                    ))),
+            );
+        }
+        Some(list)
+    }
+}
 
 // ---------- sidebar ----------
 
@@ -1331,7 +1396,19 @@ impl MainView {
             .child(section(
                 p,
                 "Files",
-                group(p).child(field("Download folder", "Files from the phone go here.", &form.download_dir, true)),
+                group(p).child(field("Download folder", "Files from phones and PCs go here.", &form.download_dir, true)).child(
+                    switch_row(
+                        "ask-receive",
+                        "Ask before receiving files",
+                        "Each file waits for Accept. No answer in 2 minutes declines it.",
+                        form.ask_before_receiving,
+                        false,
+                        |this, on, cx| {
+                            this.form.ask_before_receiving = on;
+                            this.save_switches(cx);
+                        },
+                    ),
+                ),
             ))
             .child(section(
                 p,
