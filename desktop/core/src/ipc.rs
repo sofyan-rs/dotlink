@@ -104,8 +104,8 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
     };
     match req["cmd"].as_str().unwrap_or("") {
         "pair" => {
-            let (uri, done) = app.start_pairing();
-            w.write_all(reply(json!({ "uri": uri })).as_bytes()).await?;
+            let (uri, code, done) = app.start_pairing();
+            w.write_all(reply(json!({ "uri": uri, "code": code })).as_bytes()).await?;
             let msg = match tokio::time::timeout(std::time::Duration::from_secs(300), done).await {
                 Ok(Ok(name)) => json!({ "paired": name }),
                 _ => json!({ "error": "pairing timed out" }),
@@ -132,6 +132,15 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
         }
         "clip" => {
             let msg = result(app.send_clipboard(req["to"].as_str()).await.map(|()| "clipboard sent".into()));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "nearby" => {
+            let pcs = crate::peer::nearby(&app).await;
+            w.write_all(reply(json!({ "pcs": pcs })).as_bytes()).await?;
+        }
+        "join_code" => {
+            let (id, code) = (req["id"].as_str().unwrap_or(""), req["code"].as_str().unwrap_or(""));
+            let msg = result(crate::peer::join_code(&app, id, code).await.map(|name| format!("linked to {name}")));
             w.write_all(reply(msg).as_bytes()).await?;
         }
         "join" => {

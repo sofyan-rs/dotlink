@@ -33,8 +33,20 @@ const TRANSFER_HISTORY: usize = 100;
 
 struct Pairing {
     secret: String,
+    /// What another PC types to join with a code (`pair_code.rs`); empty after too many wrong
+    /// ones.
+    code: String,
+    failures: u32,
     expires: Instant,
     done: Option<oneshot::Sender<String>>,
+}
+
+/// A PC joining with a code, between its two requests: the key both sides derived.
+struct CodeSession {
+    key: Vec<u8>,
+    device_id: String,
+    device_name: String,
+    expires: Instant,
 }
 
 /// What a connected phone told us about itself (its `info` message), for casting.
@@ -88,6 +100,8 @@ pub struct App {
     pub hostname: String,
     pub state: Mutex<State>,
     pairing: Mutex<Option<Pairing>>,
+    /// Code pairings between `/pair/code` and `/pair/code/confirm`, by session id.
+    code_sessions: Mutex<HashMap<String, CodeSession>>,
     /// One-time codes handed out over USB (`POST /pair/usb`), one per request, so several
     /// phones can pair at once without touching the code the window shows: (secret, expiry).
     usb_pairings: Mutex<Vec<(String, Instant)>>,
@@ -138,6 +152,7 @@ impl App {
             hostname,
             state: Mutex::new(state),
             pairing: Mutex::new(None),
+            code_sessions: Mutex::new(HashMap::new()),
             usb_pairings: Mutex::new(Vec::new()),
             control_tx: broadcast::channel(64).0,
             revoked_tx: broadcast::channel(16).0,
@@ -530,12 +545,19 @@ impl App {
 
     /// Starts a pairing window. Returns the `dotlink://` URI for the QR code and a receiver
     /// that yields the phone's name once it pairs.
-    pub fn start_pairing(&self) -> (String, oneshot::Receiver<String>) {
+    /// Also returns the 6-digit code another PC can join with.
+    pub fn start_pairing(&self) -> (String, String, oneshot::Receiver<String>) {
         let secret = random_hex(16);
+        let code = crate::pair_code::new_code();
         let (tx, rx) = oneshot::channel();
-        *self.pairing.lock().unwrap() =
-            Some(Pairing { secret: secret.clone(), expires: Instant::now() + PAIRING_TTL, done: Some(tx) });
-        (self.pairing_uri(&secret), rx)
+        *self.pairing.lock().unwrap() = Some(Pairing {
+            secret: secret.clone(),
+            code: code.clone(),
+            failures: 0,
+            expires: Instant::now() + PAIRING_TTL,
+            done: Some(tx),
+        });
+        (self.pairing_uri(&secret), code, rx)
     }
 
     /// A one-time code for a phone asking over USB, and its link. Separate from the window's
@@ -664,6 +686,8 @@ fn update_share_menu(state: &State) {
 pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/pair", post(pair).delete(unpair_self))
+        .route("/pair/code", post(code_start))
+        .route("/pair/code/confirm", post(code_confirm))
         .route("/pair/usb", get(usb_pair_probe).post(usb_pair_request))
         .route("/ping", get(ping))
         .route("/ws/control", get(ws_control))
@@ -727,14 +751,9 @@ struct PairReq {
 }
 
 async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Response {
-    // This PC's own link pasted into itself.
-    if req.device_id == app.server_id() {
-        return (StatusCode::BAD_REQUEST, "this is the same PC").into_response();
-    }
-    // One link per pair of PCs: this one already joined that PC.
-    if let Some(peer) = app.state.lock().unwrap().peers.iter().find(|p| p.id == req.device_id) {
-        return (StatusCode::CONFLICT, format!("already linked: {} joined {} before", app.name(), peer.name))
-            .into_response();
+    // This PC's own link pasted into itself, or a PC this one already joined.
+    if let Some(refused) = refuse_pairing(&app, &req.device_id) {
+        return refused;
     }
     let done = {
         let mut pairing = app.pairing.lock().unwrap();
@@ -752,23 +771,29 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
             None
         }
     };
+    match add_device(&app, &req.device_id, &req.device_name, req.kind, done) {
+        Ok(token) => Json(json!({ "token": token, "server_id": app.server_id(), "server_name": app.name() })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// A device that just paired: saved with a new token, which is returned.
+fn add_device(app: &App, id: &str, name: &str, kind: DeviceKind, done: Option<oneshot::Sender<String>>) -> Result<String> {
     let token = random_hex(32);
-    let name: String = req.device_name.chars().take(64).collect();
+    let name: String = name.chars().take(64).collect();
     {
         let mut state = app.state.lock().unwrap();
-        // Re-pairing the same phone replaces its old token.
-        state.devices.retain(|d| d.id != req.device_id);
+        // Re-pairing the same device replaces its old token.
+        state.devices.retain(|d| d.id != id);
         state.devices.push(Device {
-            id: req.device_id.chars().take(64).collect(),
+            id: id.chars().take(64).collect(),
             name: name.clone(),
-            kind: req.kind,
+            kind,
             clipboard_auto: false,
             token_sha256: sha256_hex(token.as_bytes()),
             paired_at: now_secs(),
         });
-        if let Err(e) = state.save() {
-            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-        }
+        state.save()?;
         update_share_menu(&state);
     }
     if let Some(done) = done {
@@ -776,9 +801,107 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
     }
     app.emit(Event::Paired { name: name.clone() });
     app.emit(Event::Devices);
-    let what = if req.kind == DeviceKind::Pc { "PC" } else { "Phone" };
+    let what = if kind == DeviceKind::Pc { "PC" } else { "Phone" };
     notify(&format!("{what} paired"), &format!("{name} can now connect to this PC"));
-    Json(json!({ "token": token, "server_id": app.server_id(), "server_name": app.name() })).into_response()
+    Ok(token)
+}
+
+/// Why a device can't pair with this PC, before any secret is checked.
+fn refuse_pairing(app: &App, device_id: &str) -> Option<Response> {
+    if device_id == app.server_id() {
+        return Some((StatusCode::BAD_REQUEST, "this is the same PC").into_response());
+    }
+    let state = app.state.lock().unwrap();
+    let peer = state.peers.iter().find(|p| p.id == device_id)?;
+    Some((StatusCode::CONFLICT, format!("already linked: {} joined {} before", app.name(), peer.name)).into_response())
+}
+
+#[derive(Deserialize)]
+struct CodeStartReq {
+    device_id: String,
+    device_name: String,
+    /// The joining PC's SPAKE2 message, hex.
+    msg: String,
+}
+
+/// A PC joining with the code this one shows, step 1: the key exchange (`pair_code.rs`).
+async fn code_start(AxState(app): AxState<Arc<App>>, Json(req): Json<CodeStartReq>) -> Response {
+    if let Some(refused) = refuse_pairing(&app, &req.device_id) {
+        return refused;
+    }
+    let code = {
+        let pairing = app.pairing.lock().unwrap();
+        match pairing.as_ref() {
+            Some(p) if p.expires > Instant::now() && !p.code.is_empty() => p.code.clone(),
+            Some(p) if p.expires > Instant::now() => {
+                return (StatusCode::FORBIDDEN, "too many wrong codes: press New code on that PC").into_response();
+            }
+            _ => return (StatusCode::FORBIDDEN, "no pairing code shown: open Pair on that PC").into_response(),
+        }
+    };
+    let Ok(msg) = hex::decode(&req.msg) else { return (StatusCode::BAD_REQUEST, "bad message").into_response() };
+    let (exchange, reply) = crate::pair_code::start_shower(&code, &app.fingerprint);
+    let Some(key) = exchange.finish(&msg) else { return (StatusCode::BAD_REQUEST, "bad message").into_response() };
+    let session = random_hex(16);
+    {
+        let mut sessions = app.code_sessions.lock().unwrap();
+        sessions.retain(|_, s| s.expires > Instant::now());
+        if sessions.len() >= 8 {
+            return (StatusCode::TOO_MANY_REQUESTS, "too many pairing attempts, wait a moment").into_response();
+        }
+        sessions.insert(
+            session.clone(),
+            CodeSession {
+                key,
+                device_id: req.device_id,
+                device_name: req.device_name,
+                expires: Instant::now() + Duration::from_secs(60),
+            },
+        );
+    }
+    Json(json!({ "session": session, "msg": hex::encode(reply) })).into_response()
+}
+
+#[derive(Deserialize)]
+struct CodeConfirmReq {
+    session: String,
+    /// `pair_code::confirm(key, joiner)`: proof the joining PC typed the right code.
+    proof: String,
+}
+
+/// Step 2: the joining PC proves it has the same key (the code was right, and it sees this
+/// PC's certificate), and gets its token and this PC's proof.
+async fn code_confirm(AxState(app): AxState<Arc<App>>, Json(req): Json<CodeConfirmReq>) -> Response {
+    let Some(session) = app.code_sessions.lock().unwrap().remove(&req.session).filter(|s| s.expires > Instant::now())
+    else {
+        return (StatusCode::FORBIDDEN, "pairing timed out, try again").into_response();
+    };
+    let done = {
+        let mut pairing = app.pairing.lock().unwrap();
+        let Some(p) = pairing.as_mut().filter(|p| p.expires > Instant::now() && !p.code.is_empty()) else {
+            return (StatusCode::FORBIDDEN, "the pairing code expired").into_response();
+        };
+        if !ct_eq(&req.proof, &crate::pair_code::confirm(&session.key, true)) {
+            p.failures += 1;
+            if p.failures >= crate::pair_code::MAX_FAILURES {
+                // Guessing stops here: a new code is needed.
+                p.code.clear();
+                notify("Pairing code blocked", "Too many wrong codes. Open Pair again for a new one.");
+            }
+            return (StatusCode::FORBIDDEN, "wrong code").into_response();
+        }
+        pairing.take().and_then(|mut p| p.done.take())
+    };
+    match add_device(&app, &session.device_id, &session.device_name, DeviceKind::Pc, done) {
+        Ok(token) => Json(json!({
+            "token": token,
+            "server_id": app.server_id(),
+            "server_name": app.name(),
+            "proof": crate::pair_code::confirm(&session.key, false),
+        }))
+        .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 /// A PC linked to this one unlinked it: forget it here too.

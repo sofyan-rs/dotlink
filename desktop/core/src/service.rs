@@ -119,7 +119,9 @@ fn advertise(app: &Arc<App>) -> Result<mdns_sd::ServiceDaemon> {
     let mdns = mdns_sd::ServiceDaemon::new()?;
     let id = app.server_id();
     let host = format!("dotlink-{id}.local.");
-    let props = [("id", id.as_str()), ("fp", &app.fingerprint[..16])];
+    // `n`: the name a PC joining with a code lists this one under.
+    let name = app.name();
+    let props = [("id", id.as_str()), ("fp", &app.fingerprint[..16]), ("n", name.as_str())];
     // Two instances on one machine (`DOTLINK_CONFIG_DIR`) need different instance names.
     let instance = format!("{}{}", app.hostname, config::instance_suffix());
     let info = mdns_sd::ServiceInfo::new("_dotlink._tcp.local.", &instance, &host, "", app.port, &props[..])?

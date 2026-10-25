@@ -118,9 +118,10 @@ with several PCs: tap the PC's name at the top of the app to switch.
 
 ### Linking two PCs
 
-Two PCs can send each other files and the clipboard. On the first PC, open **Pair** and press
-**Copy link**. On the second, open **Pair → Join a PC**, paste the link and press **Join** (or
-`dotlink join "<link>"`). The PC then shows under **PCs** on the Devices page. Clipboard changes go
+Two PCs can send each other files and the clipboard. On the first PC, open **Pair**: it shows a
+6-digit code. On the second, open **Pair → Join a PC**, pick the first PC, type the code and press
+**Join** (or `dotlink nearby`, then `dotlink join "<name>" --code 123456`). Instead of the code,
+**Copy link** on the first PC and paste the link on the second also works (`dotlink join "<link>"`). The PC then shows under **PCs** on the Devices page. Clipboard changes go
 to it only with **Clipboard sync** on for that PC (`dotlink clip-auto <pc> on`); **Send clipboard**
 works either way. A laptop's battery shows there too.
 

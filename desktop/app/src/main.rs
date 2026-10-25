@@ -55,9 +55,18 @@ enum Cmd {
         #[arg(long)]
         to: Option<String>,
     },
-    /// Link this PC to another one: paste the link its `dotlink pair` (or Pair page) shows.
-    /// The two PCs then share files and the clipboard.
-    Join { link: String },
+    /// Link this PC to another one: paste the link its `dotlink pair` (or Pair page) shows, or
+    /// give its name from `dotlink nearby` and the 6-digit code it shows. The two PCs then share
+    /// files and the clipboard.
+    Join {
+        /// The other PC's `dotlink://pair` link, or its name or id.
+        target: String,
+        /// The 6-digit code the other PC shows (with a name or id).
+        #[arg(long)]
+        code: Option<String>,
+    },
+    /// List the Dotlink PCs on this network (to join one with a code).
+    Nearby,
     /// Send this PC's clipboard changes to a linked PC as they happen (`on`), or only on
     /// `dotlink clip` (`off`, the default).
     ClipAuto { device: String, state: OnOff },
@@ -160,7 +169,14 @@ async fn command(cmd: Cmd) -> Result<()> {
                 if let Some(uri) = v["uri"].as_str() {
                     print_qr(uri);
                     println!("\nScan this with the Dotlink app (valid for 5 minutes).");
-                    println!("Or paste this link in the app:\n{uri}\n\nWaiting for the phone…");
+                    println!("Or paste this link in the app:\n{uri}\n");
+                    if let Some(code) = v["code"].as_str() {
+                        println!(
+                            "Another PC can join with this code: {}\n(`dotlink join <this PC> --code {code}`)\n",
+                            dotlink_core::pair_code::spaced(code)
+                        );
+                    }
+                    println!("Waiting…");
                     if usb {
                         // A second request while this one waits for the phone to pair.
                         let req = json!({ "cmd": "pair_usb", "uri": uri });
@@ -194,7 +210,38 @@ async fn command(cmd: Cmd) -> Result<()> {
             result
         }
         Cmd::Clip { to } => simple(json!({ "cmd": "clip", "to": to })).await,
-        Cmd::Join { link } => simple(json!({ "cmd": "join", "uri": link })).await,
+        Cmd::Join { target, code: None } if target.starts_with("dotlink://") => {
+            simple(json!({ "cmd": "join", "uri": target })).await
+        }
+        Cmd::Join { code: None, .. } => bail!("give the code the other PC shows: --code 123456 (or paste its link)"),
+        Cmd::Join { target, code: Some(code) } => {
+            // A name: find its id among the PCs on the network.
+            let mut id = target.clone();
+            ipc::request(json!({ "cmd": "nearby" }), |v| {
+                for pc in v["pcs"].as_array().into_iter().flatten() {
+                    if pc["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(&target)) {
+                        id = pc["id"].as_str().unwrap_or_default().to_string();
+                    }
+                }
+                Ok(())
+            })
+            .await?;
+            simple(json!({ "cmd": "join_code", "id": id, "code": code })).await
+        }
+        Cmd::Nearby => {
+            ipc::request(json!({ "cmd": "nearby" }), |v| {
+                let pcs = v["pcs"].as_array().cloned().unwrap_or_default();
+                if pcs.is_empty() {
+                    println!("No other Dotlink PC found on this network.");
+                }
+                for pc in pcs {
+                    let linked = if pc["linked"].as_bool() == Some(true) { "  (linked)" } else { "" };
+                    println!("{}  {}{linked}", pc["id"].as_str().unwrap_or(""), pc["name"].as_str().unwrap_or(""));
+                }
+                Ok(())
+            })
+            .await
+        }
         Cmd::ClipAuto { device, state } => {
             simple(json!({ "cmd": "clipboard_auto", "id": device, "on": matches!(state, OnOff::On) })).await
         }

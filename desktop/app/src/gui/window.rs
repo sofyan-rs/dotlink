@@ -47,6 +47,9 @@ pub struct MainView {
     pair_tab: usize,
     /// Another PC's pairing link, pasted on the Pair page.
     join_link: Entity<InputState>,
+    /// The PC picked on the Pair page's Join a PC, and the code it shows.
+    join_pick: Option<String>,
+    join_code: Entity<InputState>,
     _subs: Vec<Subscription>,
 }
 
@@ -137,7 +140,8 @@ impl MainView {
         .detach();
         let cast_code = cx.new(|cx| InputState::new(window, cx).placeholder("6-digit code"));
         let join_link = cx.new(|cx| InputState::new(window, cx).placeholder("dotlink://pair?…"));
-        Self { model, form, cast_code, qr: None, pair_tab: 0, join_link, _subs: subs }
+        let join_code = cx.new(|cx| InputState::new(window, cx).placeholder("6-digit code"));
+        Self { model, form, cast_code, qr: None, pair_tab: 0, join_link, join_pick: None, join_code, _subs: subs }
     }
 
     fn go(&mut self, page: Page, cx: &mut Context<Self>) {
@@ -740,9 +744,10 @@ impl MainView {
         let model = self.model.read(cx);
         let body: AnyElement = match &model.pairing {
             Pairing::Idle => div().text_color(p.ink_muted).child("Making a pairing code…").into_any_element(),
-            Pairing::Waiting { uri, since } => {
+            Pairing::Waiting { uri, code, since } => {
                 let left = 300u64.saturating_sub(since.elapsed().as_secs());
                 let uri = uri.clone();
+                let code = dotlink_core::pair_code::spaced(code);
                 // Too narrow for both side by side: the steps go under the code.
                 div()
                     .flex()
@@ -760,6 +765,21 @@ impl MainView {
                             .child(step(p, "1", "Open Dotlink on your phone."))
                             .child(step(p, "2", "Tap Pair and scan this code."))
                             .child(step(p, "3", "Keep both on the same Wi-Fi, or use a USB cable."))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(4.))
+                                    .pt(px(8.))
+                                    .child(mono_label(p, "ANOTHER PC: PAIR → JOIN A PC, THEN TYPE"))
+                                    .child(
+                                        div()
+                                            .font_family(MONO)
+                                            .text_size(px(28.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(code),
+                                    ),
+                            )
                             .child(mono_label(p, format!("EXPIRES IN {}:{:02}", left / 60, left % 60)).pt(px(8.)))
                             .child(
                                 div()
@@ -822,27 +842,106 @@ impl MainView {
         let tabs = segmented(p, "pair-tab", &["THIS PC'S CODE", "JOIN A PC"], tab, move |i, cx| {
             view.update(cx, |this, cx| {
                 this.pair_tab = i;
+                if i == 1 {
+                    this.model.update(cx, |m, cx| m.refresh_nearby(cx));
+                }
                 cx.notify();
             })
             .ok();
         });
         let (subtitle, body) = if tab == 0 {
-            ("A phone scans the code; another PC pastes the link (Copy link). It works once, for 5 minutes.", body)
+            ("A phone scans the QR code; another PC types the 6-digit code. Both work once, for 5 minutes.", body)
         } else {
             ("Link this PC to another one to send files and the clipboard both ways.", self.join_form(p, cx))
         };
         page(p, "Pair", Some(subtitle)).child(div().flex().child(tabs)).child(body)
     }
 
-    /// The Pair page's "Join a PC" tab: paste the other PC's link.
+    /// The Pair page's "Join a PC" tab: pick a PC on the network and type its code, or paste
+    /// its link.
     fn join_form(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let model = self.model.read(cx);
+        let loading = model.nearby_loading;
+        let pcs = model.nearby.clone();
+        let pick = self.join_pick.clone().filter(|id| pcs.iter().any(|pc| pc.id == *id && !pc.linked));
+        let mut list = group(p);
+        if pcs.is_empty() {
+            list = list.child(row(p).child(div().flex_1().min_w_0().text_color(p.ink_muted).child(if loading {
+                "Looking for PCs…"
+            } else {
+                "No other Dotlink PC found. Open Dotlink on it, on the same network."
+            })));
+        }
+        for (i, pc) in pcs.iter().enumerate() {
+            let (id, chosen) = (pc.id.clone(), pick.as_deref() == Some(pc.id.as_str()));
+            let mut r = row(p)
+                .id(SharedString::from(format!("nearby-{}", pc.id)))
+                .when(i > 0, |r| r.border_t_1().border_color(p.line))
+                .child(status_dot(if chosen { p.accent } else if pc.linked { p.positive } else { p.ink_faint }))
+                .child(div().flex_1().min_w_0().font_weight(FontWeight::MEDIUM).child(pc.name.clone()))
+                .child(div().text_size(px(13.)).text_color(p.ink_muted).child(if pc.linked {
+                    "Linked"
+                } else if chosen {
+                    "Chosen"
+                } else {
+                    ""
+                }));
+            if !pc.linked {
+                r = r.cursor_pointer().on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.join_pick = Some(id.clone());
+                    cx.notify();
+                }));
+            }
+            list = list.child(r);
+        }
+        let can_join = pick.is_some();
         div()
             .flex()
             .flex_col()
             .gap(px(14.))
             .max_w(px(560.))
-            .child(step(p, "1", "On the other PC, open Dotlink → Pair and press Copy link."))
-            .child(step(p, "2", "Send yourself the link (a chat, an email…) and paste it here."))
+            .child(step(p, "1", "On the other PC, open Dotlink → Pair: it shows a 6-digit code."))
+            .child(step(p, "2", "Pick that PC here and type its code."))
+            .child(section_with(
+                p,
+                "PCs on this network",
+                Some(enabled(pill(p, "nearby-refresh", if loading { "Looking…" } else { "Refresh" }, Kind::Ghost), !loading).when(
+                    !loading,
+                    |b| b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.refresh_nearby(cx)))),
+                )),
+                list,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(div().w(px(200.)).child(Input::new(&self.join_code).h(px(CONTROL))))
+                    .child(enabled(pill(p, "join-code", "Join", Kind::Primary), can_join).when(can_join, |b| {
+                        b.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            let (Some(id), code) = (this.join_pick.clone(), this.join_code.read(cx).value().to_string()) else {
+                                return;
+                            };
+                            let input = this.join_code.clone();
+                            let window = window.window_handle();
+                            this.model.update(cx, |m, cx| {
+                                m.join_code(
+                                    id,
+                                    code,
+                                    move |cx| {
+                                        let _ = window.update(cx, |_, window, cx| {
+                                            input.update(cx, |state, cx| state.set_value("", window, cx));
+                                        });
+                                    },
+                                    cx,
+                                )
+                            });
+                        }))
+                    })),
+            )
+            .child(div().text_size(px(13.)).text_color(p.ink_muted).child(
+                "The code only works with the PC showing it: someone else on the network can't stand in for it.",
+            ))
+            .child(mono_label(p, "OR PASTE ITS LINK (PAIR → COPY LINK)").pt(px(10.)))
             .child(
                 div()
                     .flex()
@@ -868,9 +967,6 @@ impl MainView {
                         });
                     }))),
             )
-            .child(div().text_size(px(13.)).text_color(p.ink_muted).child(
-                "The link carries the other PC's certificate fingerprint: Dotlink only talks to that PC. Only files and the clipboard go between PCs.",
-            ))
             .into_any_element()
     }
 
