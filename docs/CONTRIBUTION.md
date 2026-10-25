@@ -93,7 +93,9 @@ support.
 ## Testing without disturbing your own setup
 
 The service keeps its config in `$XDG_CONFIG_HOME/dotlink` and its socket in
-`$XDG_RUNTIME_DIR`, so a second instance can run next to yours:
+`$XDG_RUNTIME_DIR`, so a second instance can run next to yours. `DOTLINK_CONFIG_DIR` points the
+config folder somewhere else directly (on every OS); the control socket and the mDNS name then
+get a suffix of their own, and the second instance leaves the "Share with Dotlink" menu alone:
 
 ```sh
 mkdir -p /tmp/dl-test/cfg/dotlink /tmp/dl-test/run && chmod 700 /tmp/dl-test/run
@@ -115,8 +117,10 @@ cargo run -p dotlink
 - **Hyprland.** `hyprctl output create headless NAME` adds an invisible monitor; move the test
   window there and capture it with `grim -o NAME`. Remove it afterwards
   (`hyprctl output remove NAME`).
-- **Windows.** The config folder comes from `%APPDATA%` and ignores `XDG_*`, so a second
-  instance isn't possible yet. `cargo test -p dotlink-camera --test capture -- --ignored
+- **Windows.** The config folder comes from `%APPDATA%` and ignores `XDG_*`; use
+  `DOTLINK_CONFIG_DIR` for a second instance (PowerShell: `$env:DOTLINK_CONFIG_DIR =
+  "$env:TEMP\dl-test"`, put `port = 47391` in its `config.toml`, then `cargo run -p dotlink`;
+  `dotlink` commands from the same shell reach it). `cargo test -p dotlink-camera --test capture -- --ignored
   --nocapture` opens "Dotlink Camera" through the frame server like an app would.
   From Linux, `rustup target add x86_64-pc-windows-msvc` then `cargo check -p dotlink-camera
   --target x86_64-pc-windows-msvc` type-checks the camera DLL; the whole app needs MSVC's C
