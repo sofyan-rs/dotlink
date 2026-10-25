@@ -164,8 +164,23 @@ impl State {
     }
 }
 
+/// `DOTLINK_CONFIG_DIR`, when set, replaces the config folder: a second instance next to the
+/// usual one (testing two PCs on one machine).
+fn config_dir_override() -> Option<PathBuf> {
+    std::env::var_os("DOTLINK_CONFIG_DIR").filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
 pub fn config_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| expand_home("~/.config")).join("dotlink")
+    config_dir_override().unwrap_or_else(|| dirs::config_dir().unwrap_or_else(|| expand_home("~/.config")).join("dotlink"))
+}
+
+/// Empty for the usual instance. One started with `DOTLINK_CONFIG_DIR` gets `-<hash of the
+/// folder>`, so its control socket and mDNS name don't clash with the usual one's.
+pub fn instance_suffix() -> String {
+    match config_dir_override() {
+        Some(dir) => format!("-{}", &sha256_hex(dir.to_string_lossy().as_bytes())[..8]),
+        None => String::new(),
+    }
 }
 
 pub fn config_path() -> PathBuf {

@@ -504,8 +504,12 @@ impl App {
     }
 }
 
-/// The file manager's "Share with Dotlink" items follow the paired phones.
+/// The file manager's "Share with Dotlink" items follow the paired phones. A second instance
+/// (`DOTLINK_CONFIG_DIR`) leaves them to the usual one.
 fn update_share_menu(state: &State) {
+    if !crate::config::instance_suffix().is_empty() {
+        return;
+    }
     let phones: Vec<_> = state.devices.iter().map(|d| (d.id.clone(), d.name.clone())).collect();
     platform::share_menu::set(&phones);
 }
