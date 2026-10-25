@@ -54,7 +54,7 @@ Everything goes over the phone's Dotlink connection to the PC: HTTPS and WebSock
 The phone tries the cable first. On Wi-Fi it checks for the cable every 5 s and moves over
 (the link drops for a few tens of milliseconds); plugging a cable in also retries at once
 when the phone was offline. Unplugged, it reconnects over Wi-Fi within seconds. The PC's
-Devices page and the phone show which one is in use ("Online · USB" / "USB cable"). The PC
+Phones page and the phone show which one is in use ("Online · USB" / "USB cable"). The PC
 setting `usb_link = false` turns the cable link off.
 
 USB needs, once: Developer options and USB debugging on, and "Allow USB debugging" accepted
@@ -255,7 +255,7 @@ Linux:
 - [x] Pairing over USB from the window (Pair → Pair over USB); two phones at once.
 - [x] Unpairing a connected phone (`dotlink unpair`) cuts it off within a second, and the phone
   forgets the PC ("X-PC forgot this phone").
-- [x] Unpairing from the window (Devices → Forget).
+- [x] Unpairing from the window (Phones → Forget).
 - [x] Devices: each connected phone's battery and charging state.
 - [x] Setup's texts and order (the firewall first, the camera's "pick Dotlink Camera" line).
 - [x] Shell: the phone's terminal PIN is per PC (Settings → Paired PC).
@@ -271,7 +271,7 @@ an iQOO I2218 and a realme RMX5085 after the Windows work changed shared code:
 - [x] Pairing over USB from the PC and from the phone, two phones at once; unpairing cuts a
   connected phone off within a second.
 - [x] Cast over USB and Wi-Fi, Stop, Stop while connecting, two phones at once.
-- [x] Webcam and mic; the phone's tab rail in landscape; battery on the Devices page.
+- [x] Webcam and mic; the phone's tab rail in landscape; battery on the Phones page.
 - [x] Tray (monochrome icon, text menu), start at login, `dotlink quit`, Setup page.
 - [x] Hyprland: tiled window without our title bar, `wl-paste --watch`, started at login by the
   `hyprland.lua` hook, tray in quickshell.

@@ -260,7 +260,7 @@ fn listen_tray(mut rx: futures::channel::mpsc::UnboundedReceiver<TrayAction>, cx
                     TrayAction::Cast => {
                         let online = model.read(cx).online_counts().0;
                         if online > 1 {
-                            model.update(cx, |m, _| m.page = Page::Devices);
+                            model.update(cx, |m, _| m.page = Page::Phones);
                             show_window(cx);
                         } else {
                             model.update(cx, |m, cx| m.set_cast(true, None, cx));
