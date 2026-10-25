@@ -124,6 +124,7 @@ impl App {
             .map(|h| h.to_string_lossy().into_owned())
             .unwrap_or_else(|_| std::env::consts::OS.into());
         let camera = CameraHub::start(config.camera_device.clone(), config.camera_size());
+        update_share_menu(&state);
         Arc::new(Self {
             port: config.port,
             config: Mutex::new(config),
@@ -471,6 +472,7 @@ impl App {
         if let Err(e) = state.save() {
             tracing::warn!("state: {e:#}");
         }
+        update_share_menu(&state);
     }
 
     pub fn unpair(&self, key: &str) -> Result<String> {
@@ -482,6 +484,7 @@ impl App {
             .ok_or_else(|| anyhow!("no paired device \"{key}\""))?;
         let dev = state.devices.remove(idx);
         state.save()?;
+        update_share_menu(&state);
         drop(state);
         for s in self.terms.lock().unwrap().remove(&dev.id).unwrap_or_default().into_values() {
             s.kill();
@@ -490,6 +493,12 @@ impl App {
         self.emit(Event::Devices);
         Ok(dev.name)
     }
+}
+
+/// The file manager's "Share with Dotlink" items follow the paired phones.
+fn update_share_menu(state: &State) {
+    let phones: Vec<_> = state.devices.iter().map(|d| (d.id.clone(), d.name.clone())).collect();
+    platform::share_menu::set(&phones);
 }
 
 pub fn router(app: Arc<App>) -> Router {
@@ -570,6 +579,7 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
         if let Err(e) = state.save() {
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
         }
+        update_share_menu(&state);
     }
     if let Some(done) = done {
         let _ = done.send(name.clone());

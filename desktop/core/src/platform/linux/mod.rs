@@ -6,6 +6,11 @@ mod input;
 mod media;
 pub mod setup;
 
+/// TODO(linux): Nautilus scripts / Dolphin service menus / Thunar custom actions.
+pub mod share_menu {
+    pub fn set(_phones: &[(String, String)]) {}
+}
+
 pub use input::Input;
 pub use media::{CameraHub, MicSink, find_camera};
 
