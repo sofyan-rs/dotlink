@@ -83,6 +83,9 @@ enum Cmd {
     },
     /// Stop the running app or daemon.
     Quit,
+    /// Windows: what a notification's `dotlink:` link runs (Open, Show in folder).
+    #[command(hide = true)]
+    Url { link: String },
 }
 
 #[derive(Subcommand)]
@@ -187,6 +190,7 @@ async fn command(cmd: Cmd) -> Result<()> {
         Cmd::Clip { to } => simple(json!({ "cmd": "clip", "to": to })).await,
         Cmd::Unpair { device } => simple(json!({ "cmd": "unpair", "id": device })).await,
         Cmd::Quit => simple(json!({ "cmd": "quit" })).await,
+        Cmd::Url { link } => open_link(&link),
         Cmd::Cast { to, action: None } => simple(json!({ "cmd": "cast", "on": true, "id": to })).await,
         Cmd::Cast { to, action: Some(CastCmd::Stop) } => {
             simple(json!({ "cmd": "cast", "on": false, "id": to })).await
@@ -242,4 +246,18 @@ fn print_qr(data: &str) {
         }
         Err(e) => eprintln!("could not draw QR code: {e}"),
     }
+}
+
+/// Started by Windows, without a console: errors go to a notification.
+#[cfg(windows)]
+fn open_link(link: &str) -> Result<()> {
+    if let Err(e) = dotlink_core::platform::open_link(link) {
+        dotlink_core::platform::notify("Dotlink", &format!("{e:#}"));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn open_link(_link: &str) -> Result<()> {
+    bail!("dotlink: links are only used on Windows")
 }

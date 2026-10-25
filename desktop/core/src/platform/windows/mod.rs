@@ -129,20 +129,88 @@ pub fn notify(title: &str, body: &str) {
     }
 }
 
-/// "Received from …" with Open / Show in folder buttons.
+/// "Received from …" with Open / Show in folder buttons; clicking the toast itself shows it in
+/// its folder too.
+///
+/// The buttons are `dotlink:` links (protocol activation, see [register_url_scheme]), not
+/// in-process click handlers: those only hear clicks while the toast is on screen, so a click
+/// from the notification center, after it slid away, did nothing.
 pub fn notify_file(from: &str, name: &str, path: &Path) {
-    let mut n = toast(&format!("Received from {from}"), name);
-    n.action("open", "Open").action("folder", "Show in folder");
-    let path = path.to_path_buf();
-    // Waiting for the click blocks; the toast reports it on a WinRT thread.
-    std::thread::spawn(move || match n.show() {
-        Ok(handle) => handle.wait_for_action(|action| match action {
-            "open" => open_path(&path),
-            "folder" => show_in_folder(&path),
-            _ => {}
-        }),
-        Err(e) => tracing::warn!("notification: {e}"),
+    register_app_id();
+    register_url_scheme();
+    let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if let Err(e) = show_toast_xml(&file_toast_xml(from, name, &file)) {
+        tracing::warn!("notification: {e}");
+    }
+}
+
+/// `name`: what to show; `file`: the file's name in the download folder, for the links.
+fn file_toast_xml(from: &str, name: &str, file: &str) -> String {
+    let link = |action: &str| xml_escape(&format!("dotlink:{action}/{}", crate::config::url_encode(file)));
+    format!(
+        r#"<toast launch="{reveal}" activationType="protocol"><visual><binding template="ToastGeneric"><text>{title}</text><text>{body}</text></binding></visual><actions><action content="Open" activationType="protocol" arguments="{open}"/><action content="Show in folder" activationType="protocol" arguments="{reveal}"/></actions></toast>"#,
+        title = xml_escape(&format!("Received from {from}")),
+        body = xml_escape(name),
+        open = link("open"),
+        reveal = link("reveal"),
+    )
+}
+
+fn show_toast_xml(xml: &str) -> windows::core::Result<()> {
+    use windows::Data::Xml::Dom::XmlDocument;
+    use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+    use windows::core::HSTRING;
+    let doc = XmlDocument::new()?;
+    doc.LoadXml(&HSTRING::from(xml))?;
+    let toast = ToastNotification::CreateToastNotification(&doc)?;
+    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))?.Show(&toast)
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
+}
+
+/// The `dotlink:` URL scheme under `HKCU\Software\Classes\dotlink`: Windows runs
+/// `dotlink url "<link>"` for it, also when Dotlink isn't running.
+fn register_url_scheme() {
+    static DONE: OnceLock<()> = OnceLock::new();
+    DONE.get_or_init(|| {
+        let result = (|| -> Result<()> {
+            let exe = std::env::current_exe()?;
+            let (key, _) =
+                winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).create_subkey(r"Software\Classes\dotlink")?;
+            key.set_value("", &"URL:Dotlink")?;
+            key.set_value("URL Protocol", &"")?;
+            key.create_subkey(r"shell\open\command")?.0.set_value("", &format!("\"{}\" url \"%1\"", exe.display()))?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            tracing::warn!("could not register the dotlink: links: {e:#}");
+        }
     });
+}
+
+/// Runs a `dotlink:` link from a notification: `dotlink:open/<file name>` opens a received file,
+/// `dotlink:reveal/<file name>` shows it in its folder. Only files directly in the download
+/// folder: any web page can ask the browser to open such a link.
+pub fn open_link(link: &str) -> Result<()> {
+    let rest = link.strip_prefix("dotlink:").ok_or_else(|| anyhow::anyhow!("not a dotlink: link"))?;
+    let rest = rest.trim_start_matches('/').trim_end_matches('/');
+    let (action, name) = rest.split_once('/').ok_or_else(|| anyhow::anyhow!("unknown link {link}"))?;
+    let name = crate::config::url_decode(name).ok_or_else(|| anyhow::anyhow!("bad file name in {link}"))?;
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':']) {
+        anyhow::bail!("bad file name in {link}");
+    }
+    let path = crate::config::Config::load()?.download_dir().join(&name);
+    if !path.is_file() {
+        anyhow::bail!("{name} is no longer in the download folder");
+    }
+    match action {
+        "open" => open_path(&path),
+        "reveal" => show_in_folder(&path),
+        _ => anyhow::bail!("unknown link {link}"),
+    }
+    Ok(())
 }
 
 pub fn open_path(path: &Path) {
@@ -235,4 +303,23 @@ impl Drop for ProcessTree {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn file_toast_xml_parses() {
+        let xml = file_toast_xml("Pixel <8> & \"co\"", "Résumé & 'notes'.pdf", "Résumé & 'notes'.pdf");
+        let doc = windows::Data::Xml::Dom::XmlDocument::new().unwrap();
+        doc.LoadXml(&windows::core::HSTRING::from(xml.as_str())).unwrap();
+        assert!(xml.contains("dotlink:open/R%C3%A9sum%C3%A9%20%26%20%27notes%27.pdf"));
+    }
+
+    /// Shows a real toast: `cargo test -p dotlink-core file_toast_shows -- --ignored`.
+    #[test]
+    #[ignore]
+    fn file_toast_shows() {
+        register_app_id();
+        show_toast_xml(&file_toast_xml("Test phone", "dotlink toast test & co.txt", "dotlink toast test & co.txt")).unwrap();
+    }
+}

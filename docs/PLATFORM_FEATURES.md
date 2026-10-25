@@ -189,8 +189,8 @@ switches to the plain microphone.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | `notify-send` with Open / Show in folder actions | toasts (`notify-rust`) under the AppUserModelID `dev.dotlink.Dotlink`, registered in HKCU with name and icon; Open / Show in folder buttons | `notify-rust`, text only |
-| Status | ✅ | ✅ toasts show as "Dotlink" with its icon; received files carry Open / Show in folder (the buttons haven't been clicked in a test) | 🔧 |
+| Method | `notify-send` with Open / Show in folder actions | toasts under the AppUserModelID `dev.dotlink.Dotlink`, registered in HKCU with name and icon; Open / Show in folder buttons are `dotlink:` links (`dotlink url`), so they work from the notification center too | `notify-rust`, text only |
+| Status | ✅ | ✅ toasts show as "Dotlink" with its icon; received files carry Open / Show in folder, also clicked from the notification center | 🔧 |
 
 ### Tray / menu bar
 

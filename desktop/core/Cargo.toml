@@ -43,7 +43,13 @@ x11rb = { version = "0.13.2", features = ["xfixes"] }
 [target.'cfg(windows)'.dependencies]
 # "Dotlink Camera": the frame file and class id shared with the camera DLL.
 dotlink-camera = { path = "../camera" }
-windows = { version = "0.62.2", features = ["Win32_Media_MediaFoundation", "Win32_System_Com"] }
+# Toasts whose buttons open a `dotlink:` link (notify_file) are built from their XML.
+windows = { version = "0.62.2", features = [
+    "Data_Xml_Dom",
+    "UI_Notifications",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+] }
 # The named pipe's security descriptor (SDDL as UTF-16).
 widestring = "1.2.1"
 winreg = "0.56.0"

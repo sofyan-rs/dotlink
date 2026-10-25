@@ -1,6 +1,6 @@
 //! Shared daemon state and the HTTPS / WebSocket API the phone talks to.
 
-use crate::config::{now_secs, random_hex, sha256_hex, Config, Device, DeviceKind, State};
+use crate::config::{now_secs, random_hex, sha256_hex, url_encode, Config, Device, DeviceKind, State};
 use crate::events::{Event, Transfer, TransferState, UiRequest};
 use crate::input::InputMsg;
 use crate::platform::{self, clipboard, find_camera, notify, CameraHub, Input, MicSink};
@@ -1263,15 +1263,6 @@ impl Drop for Progress {
 /// Constant-time string comparison for secrets.
 fn ct_eq(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-}
-
-fn url_encode(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => (b as char).to_string(),
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
 }
 
 /// LAN IPv4 addresses, skipping loopback and container/VM bridges.
