@@ -375,11 +375,10 @@ impl Model {
         cx.emit(Notice { text: text.into(), error });
     }
 
-    pub fn online_names(&self) -> Vec<String> {
-        self.status
-            .as_ref()
-            .map(|s| s.devices.iter().filter(|d| d.online).map(|d| d.name.clone()).collect())
-            .unwrap_or_default()
+    /// Connected (phones, PCs).
+    pub fn online_counts(&self) -> (usize, usize) {
+        let online = self.status.iter().flat_map(|s| &s.devices).filter(|d| d.online);
+        online.fold((0, 0), |(phones, pcs), d| if d.is_phone() { (phones + 1, pcs) } else { (phones, pcs + 1) })
     }
 
     pub fn start_pairing(&mut self, cx: &mut Context<Self>) {
@@ -423,8 +422,14 @@ impl Model {
 
     /// [Model::stream_from] while that phone is online; otherwise the first online phone.
     pub fn stream_source(&self) -> Option<String> {
-        let online: Vec<&str> =
-            self.status.as_ref()?.devices.iter().filter(|d| d.online).map(|d| d.id.as_str()).collect();
+        let online: Vec<&str> = self
+            .status
+            .as_ref()?
+            .devices
+            .iter()
+            .filter(|d| d.online && d.is_phone())
+            .map(|d| d.id.as_str())
+            .collect();
         let chosen = self.stream_from.as_deref().filter(|id| online.contains(id));
         chosen.or(online.first().copied()).map(str::to_string)
     }
@@ -536,6 +541,40 @@ impl Model {
             this.update(cx, |this, cx| match result {
                 Ok(msg) => this.notice(msg, false, cx),
                 Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Links this PC to the one whose pairing link this is. Calls `done` once it worked.
+    pub fn join(&mut self, link: String, done: impl FnOnce(&mut App) + 'static, cx: &mut Context<Self>) {
+        let call = self.client.join(link.trim());
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| match result {
+                Ok(msg) => {
+                    this.notice(capitalize(&msg), false, cx);
+                    this.page = Page::Devices;
+                    this.refresh(cx);
+                    done(cx);
+                }
+                Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn set_clipboard_auto(&mut self, id: String, on: bool, cx: &mut Context<Self>) {
+        let call = self.client.clipboard_auto(&id, on);
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| {
+                if let Err(e) = result {
+                    this.notice(capitalize(&format!("{e:#}")), true, cx);
+                }
+                this.refresh(cx);
             })
             .ok();
         })

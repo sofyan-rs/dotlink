@@ -258,7 +258,7 @@ fn listen_tray(mut rx: futures::channel::mpsc::UnboundedReceiver<TrayAction>, cx
                     // With several phones online, the Devices page asks which one. Needing
                     // pairing shows there too.
                     TrayAction::Cast => {
-                        let online = model.read(cx).online_names().len();
+                        let online = model.read(cx).online_counts().0;
                         if online > 1 {
                             model.update(cx, |m, _| m.page = Page::Devices);
                             show_window(cx);

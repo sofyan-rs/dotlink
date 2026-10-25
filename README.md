@@ -106,7 +106,7 @@ of it in one click (firewall port, webcam, remote access, scrcpy).
 
 ## Pairing
 
-1. On the PC: **Pair a phone** in Dotlink (or `dotlink pair`).
+1. On the PC: **Pair** in Dotlink (or `dotlink pair`).
 2. On the phone: scan the QR code (or paste the link).
 
 With the phone on a USB cable (USB debugging on, this PC allowed), nothing needs scanning:
@@ -115,6 +115,14 @@ tap **Pair with <PC> over USB** in the phone app, or click **Pair over USB** on 
 
 That's it. The phone finds the PC again by itself when its address changes. One phone can be paired
 with several PCs: tap the PC's name at the top of the app to switch.
+
+### Linking two PCs
+
+Two PCs can send each other files and the clipboard. On the first PC, open **Pair** and press
+**Copy link**. On the second, open **Pair → Join a PC**, paste the link and press **Join** (or
+`dotlink join "<link>"`). The PC then shows under **PCs** on the Devices page. Clipboard changes go
+to it only with **Clipboard sync** on for that PC (`dotlink clip-auto <pc> on`); **Send clipboard**
+works either way. A laptop's battery shows there too.
 
 ## Wi-Fi or USB
 

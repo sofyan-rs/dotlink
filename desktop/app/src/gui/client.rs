@@ -4,7 +4,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use dotlink_core::cast::CastState;
-use dotlink_core::config::Config;
+use dotlink_core::config::{Config, DeviceKind};
 use dotlink_core::events::{Event, Transfer};
 use dotlink_core::ipc;
 use futures::channel::{mpsc, oneshot};
@@ -44,6 +44,12 @@ impl Status {
 pub struct DeviceInfo {
     pub id: String,
     pub name: String,
+    /// A phone, or another PC (files and the clipboard only).
+    #[serde(default)]
+    pub kind: DeviceKind,
+    /// A PC: gets this PC's clipboard changes as they happen.
+    #[serde(default)]
+    pub clipboard_auto: bool,
     pub online: bool,
     pub paired_at: u64,
     /// Connected through the USB cable rather than Wi-Fi.
@@ -52,6 +58,12 @@ pub struct DeviceInfo {
     /// While connected, from phone apps that report it.
     #[serde(default)]
     pub battery: Option<Battery>,
+}
+
+impl DeviceInfo {
+    pub fn is_phone(&self) -> bool {
+        self.kind == DeviceKind::Phone
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
@@ -149,6 +161,16 @@ impl Client {
     /// Opens the pairing link `uri` on the phones plugged in over USB.
     pub fn pair_usb(&self, uri: &str) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "pair_usb", "uri": uri })))
+    }
+
+    /// Links this PC to the one whose pairing link this is.
+    pub fn join(&self, link: &str) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "join", "uri": link })))
+    }
+
+    /// Sends this PC's clipboard changes to a linked PC as they happen, or stops.
+    pub fn clipboard_auto(&self, id: &str, on: bool) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "clipboard_auto", "id": id, "on": on })))
     }
 
     pub fn unpair(&self, id: &str) -> impl Future<Output = Result<String>> + use<> {
