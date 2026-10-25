@@ -318,6 +318,7 @@ impl App {
         platform::notify_incoming(self, &ask);
         let accepted = matches!(tokio::time::timeout(ASK_TIMEOUT, rx).await, Ok(Ok(true)));
         self.incoming.lock().unwrap().remove(&ask.id);
+        platform::dismiss_incoming(&ask.id);
         self.emit(Event::IncomingDone { id: ask.id.clone() });
         if !accepted {
             self.put_transfer(Transfer {

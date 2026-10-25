@@ -172,8 +172,43 @@ pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &cra
         accept = link("accept"),
         decline = link("decline"),
     );
-    if let Err(e) = show_toast_xml(&xml) {
+    if let Err(e) = show_incoming_toast(&xml, &incoming.id) {
         tracing::warn!("notification: {e}");
+    }
+}
+
+/// The incoming file's toast: tagged with its id, so [dismiss_incoming] can take it away, and
+/// gone by itself when the answer is no longer awaited.
+fn show_incoming_toast(xml: &str, id: &str) -> windows::core::Result<()> {
+    use windows::Data::Xml::Dom::XmlDocument;
+    use windows::Foundation::{DateTime, IReference, PropertyValue};
+    use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+    use windows::core::{HSTRING, Interface};
+    let doc = XmlDocument::new()?;
+    doc.LoadXml(&HSTRING::from(xml))?;
+    let toast = ToastNotification::CreateToastNotification(&doc)?;
+    toast.SetTag(&HSTRING::from(id))?;
+    toast.SetGroup(&HSTRING::from(INCOMING_GROUP))?;
+    // DateTime counts 100 ns ticks from 1601; the Unix epoch is 11644473600 s after that.
+    let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let expires = (unix.as_secs() as i64 + 11_644_473_600 + 120) * 10_000_000;
+    let when: IReference<DateTime> = PropertyValue::CreateDateTime(DateTime { UniversalTime: expires })?.cast()?;
+    toast.SetExpirationTime(&when)?;
+    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))?.Show(&toast)
+}
+
+const INCOMING_GROUP: &str = "incoming";
+
+/// Takes away the toast of an incoming file that was answered (here, in the window) or
+/// declined for lack of an answer.
+pub fn dismiss_incoming(id: &str) {
+    use windows::UI::Notifications::ToastNotificationManager;
+    use windows::core::HSTRING;
+    let removed = ToastNotificationManager::History().and_then(|h| {
+        h.RemoveGroupedTagWithId(&HSTRING::from(id), &HSTRING::from(INCOMING_GROUP), &HSTRING::from(APP_ID))
+    });
+    if let Err(e) = removed {
+        tracing::debug!("notification: {e}");
     }
 }
 

@@ -49,6 +49,9 @@ pub fn notify_incoming(app: &std::sync::Arc<crate::server::App>, incoming: &crat
     });
 }
 
+/// notify-send's notification expires by itself (`-t`): nothing to take away.
+pub fn dismiss_incoming(_id: &str) {}
+
 /// "Received from …" with Open / Show in folder actions.
 pub fn notify_file(from: &str, name: &str, path: &Path) {
     let path = path.to_path_buf();

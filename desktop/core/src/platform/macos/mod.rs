@@ -42,6 +42,8 @@ pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &cra
     notify(&format!("{} wants to send a file", incoming.from), &format!("{}: Accept or Decline in Dotlink", incoming.name));
 }
 
+pub fn dismiss_incoming(_id: &str) {}
+
 pub fn notify_file(from: &str, name: &str, _path: &Path) {
     notify(&format!("Received from {from}"), name);
 }
