@@ -102,6 +102,7 @@ PC linked to this one gets files and the clipboard only: `/ws/input`, `/ws/term`
 |---|---|
 | `POST /pair` | one-time secret from the QR code (+ `kind`) → token; refused when `device_id` is this PC's own id, or a PC this one already joined |
 | `DELETE /pair` | the caller unpairs itself (a linked PC that forgot this one) |
+| `POST /pair/code`, `POST /pair/code/confirm` | a PC joining with the 6-digit code this PC shows: SPAKE2 key exchange, then both sides' proofs and the token (`pair_code.rs`) |
 | `GET /pair/usb`, `POST /pair/usb` | over the cable only (loopback): "is a Dotlink PC there?", and "send me the pairing link". The PC opens the link in the app through adb, never on this connection |
 | `GET /ping` | PC name and Shell settings |
 | `GET /ws/control` | long-lived JSON messages, both ways (below) |
@@ -157,7 +158,8 @@ mDNS (`_dotlink._tcp`, matched by server id).
 
 ### Linking two PCs
 
-`dotlink join <link>` (`peer.rs`) pairs with another PC's `dotlink://pair` link as `kind: pc`
+`dotlink join` (`peer.rs`) pairs with another PC as `kind: pc`, with its `dotlink://pair` link or
+with the 6-digit code its Pair page shows (below),
 and from then on behaves like a phone towards it: it pins the other PC's certificate, keeps
 `/ws/control` open (reconnecting with backoff, through the stored addresses, then mDNS by id)
 and moves files with `/upload` and `/download/{id}`. Only the PC that joined dials, so a pair
@@ -169,13 +171,22 @@ Phones get clipboard changes while `clipboard_sync` is on; a PC only with `clipb
 for it (`dotlink clip-auto <pc> on`), since two PCs copying would keep overwriting each other.
 `dotlink clip` and `dotlink send` reach linked PCs like phones.
 
+**Joining with a code.** The joining PC lists the others from mDNS (`nearby`: `_dotlink._tcp`
+with `id`, `fp` = the first 16 hex digits of the fingerprint, and `n` = the name), connects to the
+chosen one accepting any certificate, and checks it against `fp`. A 6-digit code can't simply be
+sent: a fake PC on the network would get it, and it is guessed offline in a moment. It is the
+password of a SPAKE2 exchange whose identities include the certificate fingerprint the joiner
+sees, so both PCs only get the same key with the right code and no one in between. The joiner
+proves the key, gets its token and checks the other PC's proof; both requests use one
+connection. Each wrong code counts; after 3 the code is dropped and the Pair page needs a new one.
+
 ## Control socket (CLI and window)
 
 `$XDG_RUNTIME_DIR/dotlink.sock` on Linux/macOS (user-only), on Windows the named pipe
 `\\.\pipe\dotlink-<user SID>` with an ACL that only lets that user in. One JSON
 request line in, one or more reply lines out.
 
-`pair` · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` ·
+`pair` (also returns the code) · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `nearby` · `join_code` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` ·
 `cast_pair` · `watch` (event stream, see `events.rs`) · `show` · `quit`
 
 ## Features, briefly

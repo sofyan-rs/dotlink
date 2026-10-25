@@ -66,6 +66,16 @@ impl DeviceInfo {
     }
 }
 
+/// A Dotlink PC on the network, to join with its code.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NearbyPc {
+    pub id: String,
+    pub name: String,
+    /// Already linked with this PC.
+    #[serde(default)]
+    pub linked: bool,
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
 pub struct Battery {
     pub level: u8,
@@ -83,7 +93,8 @@ pub enum Update {
 
 /// Progress of a pairing request.
 pub enum PairUpdate {
-    Uri(String),
+    /// The link for the QR code, and the code another PC can join with.
+    Uri { uri: String, code: String },
     Paired(String),
     Failed(String),
 }
@@ -168,6 +179,17 @@ impl Client {
         ok_text(self.call(json!({ "cmd": "join", "uri": link })))
     }
 
+    /// The other Dotlink PCs on the network (takes about 3 s).
+    pub fn nearby(&self) -> impl Future<Output = Result<Vec<NearbyPc>>> + use<> {
+        let call = self.call(json!({ "cmd": "nearby" }));
+        async move { Ok(serde_json::from_value(call.await?["pcs"].clone())?) }
+    }
+
+    /// Links this PC to the PC `id` (from [Self::nearby]) with the code it shows.
+    pub fn join_code(&self, id: &str, code: &str) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "join_code", "id": id, "code": code })))
+    }
+
     /// Sends this PC's clipboard changes to a linked PC as they happen, or stops.
     pub fn clipboard_auto(&self, id: &str, on: bool) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "clipboard_auto", "id": id, "on": on })))
@@ -194,7 +216,7 @@ impl Client {
         self.rt.spawn(async move {
             let result = ipc::request(json!({ "cmd": "pair" }), |v| {
                 let update = if let Some(uri) = v["uri"].as_str() {
-                    PairUpdate::Uri(uri.into())
+                    PairUpdate::Uri { uri: uri.into(), code: v["code"].as_str().unwrap_or_default().into() }
                 } else if let Some(name) = v["paired"].as_str() {
                     PairUpdate::Paired(name.into())
                 } else {

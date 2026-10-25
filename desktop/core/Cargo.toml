@@ -41,6 +41,8 @@ tar = "0.4.46"
 ureq = "3.5.0"
 toml = "1.1.8"
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2"] }
+# Pairing two PCs with a 6-digit code (pair_code.rs).
+spake2 = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.13.2"

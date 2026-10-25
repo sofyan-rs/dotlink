@@ -5,6 +5,7 @@ pub mod cast;
 pub mod config;
 pub mod events;
 pub mod input;
+pub mod pair_code;
 pub mod ipc;
 pub mod peer;
 pub mod platform;

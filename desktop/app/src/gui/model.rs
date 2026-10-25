@@ -1,7 +1,7 @@
 //! App-wide state the window shows. It outlives the window: closing it to the tray and
 //! opening it again finds everything where it was.
 
-use super::client::{Client, PairUpdate, Status, Update};
+use super::client::{Client, NearbyPc, PairUpdate, Status, Update};
 use dotlink_core::cast::CastState;
 use dotlink_core::config::Config;
 use dotlink_core::events::{Event, Transfer};
@@ -24,7 +24,8 @@ pub enum Page {
 
 pub enum Pairing {
     Idle,
-    Waiting { uri: String, since: Instant },
+    /// `code`: what another PC types to join this one.
+    Waiting { uri: String, code: String, since: Instant },
     Paired(String),
     Failed(String),
 }
@@ -68,6 +69,9 @@ pub struct Model {
     pub send_to: Option<String>,
     /// Device id the webcam and mic start on, when several phones are connected.
     pub stream_from: Option<String>,
+    /// Other Dotlink PCs on the network (the Pair page's Join a PC), and whether a scan runs.
+    pub nearby: Vec<NearbyPc>,
+    pub nearby_loading: bool,
     /// A status request is on its way; `refresh_again` asks for one more after it (events come
     /// in bursts, e.g. a phone connecting sends Devices twice).
     refreshing: bool,
@@ -126,6 +130,8 @@ impl Model {
             starting: Vec::new(),
             send_to: None,
             stream_from: None,
+            nearby: Vec::new(),
+            nearby_loading: false,
             refreshing: false,
             refresh_again: false,
             update: UpdateState::Idle,
@@ -395,7 +401,7 @@ impl Model {
                         return;
                     }
                     this.pairing = match update {
-                        PairUpdate::Uri(uri) => Pairing::Waiting { uri, since: Instant::now() },
+                        PairUpdate::Uri { uri, code } => Pairing::Waiting { uri, code, since: Instant::now() },
                         PairUpdate::Paired(name) => {
                             this.notice(format!("Paired with {name}"), false, cx);
                             Pairing::Paired(name)
@@ -540,6 +546,48 @@ impl Model {
             let result = call.await;
             this.update(cx, |this, cx| match result {
                 Ok(msg) => this.notice(msg, false, cx),
+                Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Looks for the other Dotlink PCs on the network.
+    pub fn refresh_nearby(&mut self, cx: &mut Context<Self>) {
+        if self.nearby_loading {
+            return;
+        }
+        self.nearby_loading = true;
+        cx.notify();
+        let call = self.client.nearby();
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| {
+                this.nearby_loading = false;
+                match result {
+                    Ok(pcs) => this.nearby = pcs,
+                    Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Links this PC to the PC `id` with the code it shows. Calls `done` once it worked.
+    pub fn join_code(&mut self, id: String, code: String, done: impl FnOnce(&mut App) + 'static, cx: &mut Context<Self>) {
+        let call = self.client.join_code(&id, &code);
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| match result {
+                Ok(msg) => {
+                    this.notice(capitalize(&msg), false, cx);
+                    this.page = Page::Devices;
+                    this.refresh(cx);
+                    done(cx);
+                }
                 Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
             })
             .ok();

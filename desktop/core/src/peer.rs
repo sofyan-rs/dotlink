@@ -196,31 +196,149 @@ pub async fn join(app: &Arc<App>, link: &str) -> Result<String> {
         let token = v["token"].as_str().ok_or_else(|| anyhow!("pairing reply has no token"))?;
         let id = v["server_id"].as_str().filter(|s| !s.is_empty()).unwrap_or(&link.id).to_string();
         let name = v["server_name"].as_str().filter(|s| !s.is_empty()).unwrap_or(&link.name).to_string();
-        // The address that answered first, so reconnecting tries it first.
-        let first = addr.ip().to_string();
-        let mut hosts: Vec<String> = link.hosts.iter().filter(|h| **h != first).cloned().collect();
-        hosts.insert(0, first);
-        {
-            let mut state = app.state.lock().unwrap();
-            state.peers.retain(|p| p.id != id);
-            state.peers.push(Peer {
-                id: id.clone(),
-                name: name.clone(),
-                fingerprint: link.fingerprint.clone(),
-                hosts,
-                port: link.port,
-                token: token.to_string(),
-                paired_at: now_secs(),
-                clipboard_auto: false,
-            });
-            state.save()?;
-        }
-        tracing::info!("linked to {name}");
-        start(app, id);
-        app.emit(Event::Devices);
+        save_peer(app, &id, &name, &link.fingerprint, *addr, &link.hosts, token)?;
         return Ok(name);
     }
     Err(last_error.context(format!("could not reach {}", if link.name.is_empty() { "the PC" } else { &link.name })))
+}
+
+/// Remembers a PC just joined and starts linking to it. `addr` answered; `hosts` are its other
+/// addresses.
+fn save_peer(app: &Arc<App>, id: &str, name: &str, fingerprint: &str, addr: SocketAddr, hosts: &[String], token: &str) -> Result<()> {
+    // The address that answered first, so reconnecting tries it first.
+    let first = addr.ip().to_string();
+    let mut all: Vec<String> = hosts.iter().filter(|h| **h != first).cloned().collect();
+    all.insert(0, first);
+    {
+        let mut state = app.state.lock().unwrap();
+        state.peers.retain(|p| p.id != id);
+        state.peers.push(Peer {
+            id: id.to_string(),
+            name: name.to_string(),
+            fingerprint: fingerprint.to_string(),
+            hosts: all,
+            port: addr.port(),
+            token: token.to_string(),
+            paired_at: now_secs(),
+            clipboard_auto: false,
+        });
+        state.save()?;
+    }
+    tracing::info!("linked to {name}");
+    start(app, id.to_string());
+    app.emit(Event::Devices);
+    Ok(())
+}
+
+/// A Dotlink PC on the network (mDNS), for joining with a code.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Nearby {
+    pub id: String,
+    pub name: String,
+    pub port: u16,
+    /// Its addresses.
+    pub hosts: Vec<String>,
+    /// The first 16 hex digits of its certificate's fingerprint, as advertised.
+    pub fp: String,
+    /// Already linked with this PC (either way).
+    pub linked: bool,
+}
+
+/// The other Dotlink PCs on the network.
+pub async fn nearby(app: &App) -> Vec<Nearby> {
+    let own = app.server_id();
+    let mut found = scan(None).await;
+    found.retain(|n| n.id != own);
+    // In the order they answered they'd move around between scans.
+    found.sort_by_key(|n| n.name.to_lowercase());
+    let state = app.state.lock().unwrap();
+    for n in &mut found {
+        n.linked = state.peers.iter().any(|p| p.id == n.id) || state.devices.iter().any(|d| d.id == n.id);
+    }
+    found
+}
+
+/// Joins the PC `id` (from [nearby]) with the 6-digit code it shows (see `pair_code.rs`).
+pub async fn join_code(app: &Arc<App>, id: &str, code: &str) -> Result<String> {
+    let code = crate::pair_code::clean(code);
+    if code.len() != 6 {
+        bail!("the code has 6 digits");
+    }
+    if let Some(dev) = app.state.lock().unwrap().devices.iter().find(|d| d.id == id) {
+        bail!("{} is already linked: it joined this PC", dev.name);
+    }
+    let pc = scan(Some(id)).await.into_iter().next().ok_or_else(|| anyhow!("that PC isn't on the network any more"))?;
+    let mut last_error = anyhow!("{} has no address", pc.name);
+    for host in &pc.hosts {
+        let Ok(ip) = host.parse() else { continue };
+        let addr = SocketAddr::new(ip, pc.port);
+        match join_code_at(app, &pc, addr, &code).await {
+            Ok(name) => return Ok(name),
+            Err(e) if e.is::<Refused>() => return Err(e),
+            Err(e) => last_error = e,
+        }
+    }
+    Err(last_error.context(format!("could not reach {}", pc.name)))
+}
+
+/// The other PC answered and said no (wrong code, no code shown…): no use trying its other
+/// addresses.
+#[derive(Debug)]
+struct Refused(String);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
+
+async fn join_code_at(app: &Arc<App>, pc: &Nearby, addr: SocketAddr, code: &str) -> Result<String> {
+    // No fingerprint to pin yet: take whatever certificate it shows, then make the code prove it.
+    let (tls, seen) = capturing_config();
+    let stream = connect(addr, &tls).await?;
+    let fingerprint = seen.lock().unwrap().clone().ok_or_else(|| anyhow!("no certificate"))?;
+    if !fingerprint.starts_with(&pc.fp.to_lowercase()) {
+        return Err(Refused(format!("{} answered with another certificate than it advertises", pc.name)).into());
+    }
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    let post = |path: &str, body: Value| {
+        Request::post(path)
+            .header(hyper::header::HOST, addr.to_string())
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(body.to_string())))
+    };
+    // Both requests on this one connection: the certificate checked above is the one the key
+    // is bound to.
+    let (exchange, msg) = crate::pair_code::start_joiner(code, &fingerprint);
+    let body = json!({ "device_id": app.server_id(), "device_name": app.name(), "msg": hex::encode(msg) });
+    let v = json_reply(&pc.name, sender.send_request(post("/pair/code", body)?).await?).await?;
+    let reply = v["msg"].as_str().and_then(|m| hex::decode(m).ok()).ok_or_else(|| anyhow!("bad pairing reply"))?;
+    let key = exchange.finish(&reply).ok_or_else(|| anyhow!("bad pairing reply"))?;
+    sender.ready().await?;
+    let body = json!({ "session": v["session"], "proof": crate::pair_code::confirm(&key, true) });
+    let v = json_reply(&pc.name, sender.send_request(post("/pair/code/confirm", body)?).await?).await?;
+    if v["proof"].as_str() != Some(crate::pair_code::confirm(&key, false).as_str()) {
+        return Err(Refused(format!("{} couldn't prove it knows the code", pc.name)).into());
+    }
+    let token = v["token"].as_str().ok_or_else(|| anyhow!("pairing reply has no token"))?;
+    let name = v["server_name"].as_str().filter(|s| !s.is_empty()).unwrap_or(&pc.name).to_string();
+    save_peer(app, &pc.id, &name, &fingerprint, addr, &pc.hosts, token)?;
+    Ok(name)
+}
+
+/// A pairing reply as JSON; a refusal (its text) as [Refused].
+async fn json_reply(name: &str, reply: Response<Incoming>) -> Result<Value> {
+    let status = reply.status();
+    let text = String::from_utf8_lossy(&reply.into_body().collect().await?.to_bytes()).into_owned();
+    if !status.is_success() {
+        return Err(Refused(format!("{name}: {}", text.trim())).into());
+    }
+    Ok(serde_json::from_str(&text).context("pairing reply")?)
 }
 
 /// Forgets a linked PC here, and tells it to forget this one (when it can be reached).
@@ -562,7 +680,14 @@ async fn connect_any(app: &App, peer: &Peer, tls: &Arc<ClientConfig>) -> Result<
     let mut last_error = anyhow!("no address to try");
     for round in 0..2 {
         if round == 1 {
-            candidates = browse(&peer.id).await;
+            candidates = scan(Some(&peer.id))
+                .await
+                .into_iter()
+                .flat_map(|n| {
+                    let port = n.port;
+                    n.hosts.into_iter().filter_map(move |h| h.parse().ok().map(|ip| SocketAddr::new(ip, port)))
+                })
+                .collect();
         }
         for addr in candidates.drain(..) {
             if tried.contains(&addr) {
@@ -578,22 +703,51 @@ async fn connect_any(app: &App, peer: &Peer, tls: &Arc<ClientConfig>) -> Result<
     Err(last_error)
 }
 
-/// The PC's addresses from mDNS (`_dotlink._tcp`, matched by its id), for when its IP changed.
-async fn browse(id: &str) -> Vec<SocketAddr> {
-    let id = id.to_string();
+/// Dotlink PCs on the network (`_dotlink._tcp`), listening for 3 s; with `id`, just that one
+/// (as soon as it answers), for when its IP changed or to join it with a code.
+async fn scan(id: Option<&str>) -> Vec<Nearby> {
+    let id = id.map(str::to_string);
     tokio::task::spawn_blocking(move || {
         let Ok(mdns) = mdns_sd::ServiceDaemon::new() else { return Vec::new() };
         let Ok(events) = mdns.browse("_dotlink._tcp.local.") else { return Vec::new() };
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        let mut found = Vec::new();
+        let mut found: Vec<Nearby> = Vec::new();
         while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
-            match events.recv_timeout(left) {
-                Ok(mdns_sd::ServiceEvent::ServiceResolved(info)) if info.get_property_val_str("id") == Some(&id) => {
-                    found = info.get_addresses_v4().into_iter().map(|ip| SocketAddr::new(ip.into(), info.get_port())).collect();
-                    break;
+            let Ok(event) = events.recv_timeout(left) else { break };
+            let mdns_sd::ServiceEvent::ServiceResolved(info) = event else { continue };
+            let Some(pc_id) = info.get_property_val_str("id").map(str::to_string) else { continue };
+            if id.as_ref().is_some_and(|id| *id != pc_id) {
+                continue;
+            }
+            let instance = info.get_fullname().split("._dotlink").next().unwrap_or_default().to_string();
+            let mut hosts: Vec<String> = info.get_addresses_v4().into_iter().map(|ip| ip.to_string()).collect();
+            // Resolved on an interface without IPv4 (or before its address came): another
+            // answer follows.
+            if hosts.is_empty() {
+                continue;
+            }
+            hosts.sort();
+            let pc = Nearby {
+                name: info.get_property_val_str("n").map(str::to_string).unwrap_or(instance),
+                port: info.get_port(),
+                fp: info.get_property_val_str("fp").unwrap_or_default().to_string(),
+                hosts,
+                linked: false,
+                id: pc_id,
+            };
+            // The same PC answers once per network interface: merge its addresses.
+            match found.iter_mut().find(|n| n.id == pc.id) {
+                Some(n) => {
+                    for h in pc.hosts {
+                        if !n.hosts.contains(&h) {
+                            n.hosts.push(h);
+                        }
+                    }
                 }
-                Ok(_) => {}
-                Err(_) => break,
+                None => found.push(pc),
+            }
+            if id.is_some() {
+                break;
             }
         }
         let _ = mdns.shutdown();
@@ -605,9 +759,28 @@ async fn browse(id: &str) -> Vec<SocketAddr> {
 
 // ---------- TLS ----------
 
+/// For joining with a code: accepts any certificate and records its fingerprint, which the
+/// code exchange then binds to.
+fn capturing_config() -> (Arc<ClientConfig>, Arc<Mutex<Option<String>>>) {
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let seen = Arc::new(Mutex::new(None));
+    let verifier = Arc::new(Pinned { fingerprint: None, seen: seen.clone(), provider: provider.clone() });
+    let config = ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("TLS versions")
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    (Arc::new(config), seen)
+}
+
 fn client_config(fingerprint: &str) -> Arc<ClientConfig> {
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let verifier = Arc::new(Pinned { fingerprint: fingerprint.to_lowercase(), provider: provider.clone() });
+    let verifier = Arc::new(Pinned {
+        fingerprint: Some(fingerprint.to_lowercase()),
+        seen: Arc::default(),
+        provider: provider.clone(),
+    });
     let config = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("TLS versions")
@@ -617,10 +790,12 @@ fn client_config(fingerprint: &str) -> Arc<ClientConfig> {
     Arc::new(config)
 }
 
-/// Trusts exactly the certificate whose SHA-256 is `fingerprint`: no CA, no host name.
+/// Trusts exactly the certificate whose SHA-256 is `fingerprint`: no CA, no host name. Without
+/// a fingerprint it trusts any and records it in `seen` ([capturing_config]).
 #[derive(Debug)]
 struct Pinned {
-    fingerprint: String,
+    fingerprint: Option<String>,
+    seen: Arc<Mutex<Option<String>>>,
     provider: Arc<CryptoProvider>,
 }
 
@@ -633,7 +808,9 @@ impl ServerCertVerifier for Pinned {
         _ocsp_response: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        if sha256_hex(end_entity.as_ref()) == self.fingerprint {
+        let fingerprint = sha256_hex(end_entity.as_ref());
+        *self.seen.lock().unwrap() = Some(fingerprint.clone());
+        if self.fingerprint.as_ref().is_none_or(|f| *f == fingerprint) {
             Ok(ServerCertVerified::assertion())
         } else {
             Err(rustls::Error::General("the PC's certificate isn't the one it was paired with".into()))
