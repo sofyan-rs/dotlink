@@ -130,7 +130,7 @@ fn pick(app: &App, id: Option<&str>) -> Result<(String, String, PhoneInfo)> {
     let dev = state
         .devices
         .iter()
-        .filter(|d| online.contains(&d.name))
+        .filter(|d| d.kind == crate::config::DeviceKind::Phone && online.contains(&d.name))
         .find(|d| id.is_none_or(|id| d.id == id || d.name.eq_ignore_ascii_case(id)))
         .ok_or_else(|| match id {
             Some(id) => anyhow!("no connected phone called \"{id}\""),

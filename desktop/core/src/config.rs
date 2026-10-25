@@ -105,10 +105,22 @@ impl Config {
     }
 }
 
+/// What a paired device is. A PC linked to another PC gets files and the clipboard only.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceKind {
+    /// Also what devices paired before kinds existed are.
+    #[default]
+    Phone,
+    Pc,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub kind: DeviceKind,
     /// SHA-256 of the bearer token; the token itself is only known to the phone.
     pub token_sha256: String,
     pub paired_at: u64,
@@ -204,6 +216,16 @@ pub fn set_private(path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn devices_paired_before_kinds_are_phones() {
+        let dev: Device =
+            serde_json::from_str(r#"{"id":"a","name":"Pixel","token_sha256":"00","paired_at":1}"#).unwrap();
+        assert_eq!(dev.kind, DeviceKind::Phone);
+        let dev: Device =
+            serde_json::from_str(r#"{"id":"b","name":"Desk","kind":"pc","token_sha256":"00","paired_at":1}"#).unwrap();
+        assert_eq!(dev.kind, DeviceKind::Pc);
+    }
 
     #[test]
     fn download_dir_follows_system_downloads() {

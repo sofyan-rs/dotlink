@@ -1,6 +1,6 @@
 //! Shared daemon state and the HTTPS / WebSocket API the phone talks to.
 
-use crate::config::{now_secs, random_hex, sha256_hex, Config, Device, State};
+use crate::config::{now_secs, random_hex, sha256_hex, Config, Device, DeviceKind, State};
 use crate::events::{Event, Transfer, TransferState, UiRequest};
 use crate::input::InputMsg;
 use crate::platform::{self, clipboard, find_camera, notify, CameraHub, Input, MicSink};
@@ -224,6 +224,7 @@ impl App {
                 json!({
                     "id": d.id,
                     "name": d.name,
+                    "kind": d.kind,
                     "online": online.get(&d.id).copied().unwrap_or(0) > 0,
                     "paired_at": d.paired_at,
                     "model": phones.get(&d.id).map(|p| p.model.clone()),
@@ -289,16 +290,15 @@ impl App {
             self.send_control(json!({ "t": kind, "on": false }));
             return Ok(target.names);
         }
-        let target = self.target(to)?;
-        if target.id.is_none() && target.names.contains(", ") {
+        let target = self.target_of(to, true)?;
+        let [(id, name)] = &target.phones[..] else {
             bail!("several phones are connected ({}), choose one", target.names);
-        }
+        };
         if let Some(from) = self.streams.lock().unwrap().get(kind) {
             bail!("{from} is already streaming it");
         }
-        // With one phone online `target.id` is None and the message reaches just that phone.
-        self.send_control_to(target.id.as_deref(), json!({ "t": kind, "on": true }));
-        Ok(target.names)
+        self.send_control_to(Some(id), json!({ "t": kind, "on": true }));
+        Ok(name.clone())
     }
 
     /// Sends the current PC clipboard now, whatever the sync setting says.
@@ -315,11 +315,17 @@ impl App {
         Ok(())
     }
 
-    /// Resolves `to` (a device name or id) to an online phone, or every online phone for None.
+    /// Resolves `to` (a device name or id) to an online device, or every online device for None.
     pub fn target(&self, to: Option<&str>) -> Result<Target> {
+        self.target_of(to, false)
+    }
+
+    /// [Self::target], limited to phones with `phones_only` (camera, mic: what a PC can't do).
+    pub fn target_of(&self, to: Option<&str>, phones_only: bool) -> Result<Target> {
         let online = self.online.lock().unwrap();
         let state = self.state.lock().unwrap();
         let is_online = |d: &Device| online.get(&d.id).copied().unwrap_or(0) > 0;
+        let kind_ok = |d: &Device| !phones_only || d.kind == DeviceKind::Phone;
         match to {
             Some(key) => {
                 let dev = state
@@ -327,6 +333,9 @@ impl App {
                     .iter()
                     .find(|d| d.id == key || d.name.eq_ignore_ascii_case(key))
                     .ok_or_else(|| anyhow!("no paired device \"{key}\""))?;
+                if !kind_ok(dev) {
+                    bail!("{} is a PC, not a phone", dev.name);
+                }
                 if !is_online(dev) {
                     bail!("{} is not connected", dev.name);
                 }
@@ -338,7 +347,7 @@ impl App {
             }
             None => {
                 let phones: Vec<(String, String)> =
-                    state.devices.iter().filter(|d| is_online(d)).map(|d| (d.id.clone(), d.name.clone())).collect();
+                    state.devices.iter().filter(|d| is_online(d) && kind_ok(d)).map(|d| (d.id.clone(), d.name.clone())).collect();
                 if phones.is_empty() {
                     bail!("no phone connected");
                 }
@@ -538,6 +547,22 @@ impl FromRequestParts<Arc<App>> for Authed {
     }
 }
 
+/// A request from a paired phone: what a PC linked to this one can't use (Remote, Shell,
+/// camera, mic) refuses PCs with 403.
+struct AuthedPhone(Device);
+
+impl FromRequestParts<Arc<App>> for AuthedPhone {
+    type Rejection = StatusCode;
+
+    async fn from_request_parts(parts: &mut Parts, app: &Arc<App>) -> Result<Self, Self::Rejection> {
+        let Authed(dev) = Authed::from_request_parts(parts, app).await?;
+        if dev.kind != DeviceKind::Phone {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        Ok(AuthedPhone(dev))
+    }
+}
+
 // ---------- pairing ----------
 
 #[derive(Deserialize)]
@@ -545,9 +570,16 @@ struct PairReq {
     secret: String,
     device_id: String,
     device_name: String,
+    /// Missing from phones: they're phones.
+    #[serde(default)]
+    kind: DeviceKind,
 }
 
 async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Response {
+    // This PC's own link pasted into itself.
+    if req.device_id == app.server_id() {
+        return (StatusCode::BAD_REQUEST, "this is the same PC").into_response();
+    }
     let done = {
         let mut pairing = app.pairing.lock().unwrap();
         let valid = pairing.as_ref().is_some_and(|p| p.expires > Instant::now() && ct_eq(&p.secret, &req.secret));
@@ -573,6 +605,7 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
         state.devices.push(Device {
             id: req.device_id.chars().take(64).collect(),
             name: name.clone(),
+            kind: req.kind,
             token_sha256: sha256_hex(token.as_bytes()),
             paired_at: now_secs(),
         });
@@ -586,7 +619,8 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
     }
     app.emit(Event::Paired { name: name.clone() });
     app.emit(Event::Devices);
-    notify("Phone paired", &format!("{name} can now connect to this PC"));
+    let what = if req.kind == DeviceKind::Pc { "PC" } else { "Phone" };
+    notify(&format!("{what} paired"), &format!("{name} can now connect to this PC"));
     Json(json!({ "token": token, "server_id": app.server_id(), "server_name": app.name() })).into_response()
 }
 
@@ -756,7 +790,7 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
 
 // ---------- remote input ----------
 
-async fn ws_input(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, Authed(_): Authed) -> Response {
+async fn ws_input(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, AuthedPhone(_): AuthedPhone) -> Response {
     ws.on_upgrade(move |mut socket| async move {
         while let Some(Ok(msg)) = socket.recv().await {
             let Message::Text(text) = msg else { continue };
@@ -805,7 +839,7 @@ fn check_terminal(app: &App, headers: &HeaderMap) -> Option<Response> {
     None
 }
 
-async fn list_terms(AxState(app): AxState<Arc<App>>, Authed(dev): Authed, headers: HeaderMap) -> Response {
+async fn list_terms(AxState(app): AxState<Arc<App>>, AuthedPhone(dev): AuthedPhone, headers: HeaderMap) -> Response {
     if let Some(denied) = check_terminal(&app, &headers) {
         return denied;
     }
@@ -818,7 +852,7 @@ async fn list_terms(AxState(app): AxState<Arc<App>>, Authed(dev): Authed, header
 
 async fn close_term(
     AxState(app): AxState<Arc<App>>,
-    Authed(dev): Authed,
+    AuthedPhone(dev): AuthedPhone,
     Path(id): Path<u32>,
     headers: HeaderMap,
 ) -> Response {
@@ -834,7 +868,7 @@ async fn close_term(
 async fn ws_term(
     ws: WebSocketUpgrade,
     AxState(app): AxState<Arc<App>>,
-    Authed(dev): Authed,
+    AuthedPhone(dev): AuthedPhone,
     Query(q): Query<TermQuery>,
     headers: HeaderMap,
 ) -> Response {
@@ -915,7 +949,7 @@ async fn term_session(id: u32, session: Arc<Session>, socket: WebSocket) {
 
 // ---------- camera ----------
 
-async fn ws_camera(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, Authed(dev): Authed) -> Response {
+async fn ws_camera(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, AuthedPhone(dev): AuthedPhone) -> Response {
     ws.on_upgrade(move |socket| async move {
         if let Err(e) = camera_session(app, &dev, socket).await {
             tracing::warn!("camera: {e:#}");
@@ -952,7 +986,7 @@ async fn camera_session(app: Arc<App>, dev: &Device, mut socket: WebSocket) -> R
 
 // ---------- microphone ----------
 
-async fn ws_mic(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, Authed(dev): Authed) -> Response {
+async fn ws_mic(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, AuthedPhone(dev): AuthedPhone) -> Response {
     ws.on_upgrade(move |mut socket| async move {
         let (rate, ch) = match socket.recv().await {
             Some(Ok(Message::Text(t))) => {

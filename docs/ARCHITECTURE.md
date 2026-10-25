@@ -93,9 +93,13 @@ daemon. Socket I/O runs on the tokio runtime; GPUI awaits plain futures/channels
 All requests carry `Authorization: Bearer <token>` except `/pair`. The PC stores only the
 token's SHA-256.
 
+Each paired device has a kind, `phone` or `pc` (`/pair` takes `kind`; phones leave it out). A
+PC linked to this one gets files and the clipboard only: `/ws/input`, `/ws/term`, `/terms`,
+`/ws/camera` and `/ws/mic` answer it with 403, and camera, mic and Cast only pick phones.
+
 | Endpoint | Use |
 |---|---|
-| `POST /pair` | one-time secret from the QR code → token |
+| `POST /pair` | one-time secret from the QR code (+ `kind`) → token; refused when `device_id` is this PC's own id |
 | `GET /pair/usb`, `POST /pair/usb` | over the cable only (loopback): "is a Dotlink PC there?", and "send me the pairing link". The PC opens the link in the app through adb, never on this connection |
 | `GET /ping` | PC name and Shell settings |
 | `GET /ws/control` | long-lived JSON messages, both ways (below) |
@@ -231,7 +235,7 @@ named pipe above.
 | Path | Content |
 |---|---|
 | `~/.config/dotlink/config.toml` | settings (also edited by Settings) |
-| `~/.config/dotlink/state.json` | server id, paired phones (token hashes), 0600 |
+| `~/.config/dotlink/state.json` | server id, paired devices (kind, token hashes), 0600 |
 | `~/.config/dotlink/cert.pem`, `key.pem` | the certificate the phone pins |
 | `~/.local/share/dotlink/scrcpy/<version>/` | scrcpy + adb, when Dotlink downloaded them |
 | `$XDG_RUNTIME_DIR/dotlink.sock` | control socket |
