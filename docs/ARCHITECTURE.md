@@ -268,7 +268,9 @@ request line in, one or more reply lines out.
   service, firewalld port). Windows: one UAC prompt each for the firewall rule and installing
   the camera DLL (each build under its own `dotlink_camera-<hash>.dll`; the frame server is
   stopped afterwards, or it keeps serving the old DLL); scrcpy/adb download without admin
-  rights.
+  rights. The camera counts as installed while its registry key's `DotlinkSource` matches
+  `shared::SOURCE`, a hash of the camera crate's source (`camera/build.rs`): a release that
+  doesn't touch the camera asks for no new install, though its DLL's bytes differ.
 - **Autostart.** Linux: XDG autostart entry; on Hyprland also `~/.config/hypr/dotlink.lua` plus
   one marked `pcall(require, "dotlink")` line, removed again when turned off. Windows: the
   `Dotlink` value under `HKCU\…\CurrentVersion\Run`.

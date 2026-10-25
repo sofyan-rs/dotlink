@@ -50,6 +50,14 @@ pub fn registered_dll() -> Option<PathBuf> {
     key.get_value::<String, _>("").ok().map(PathBuf::from)
 }
 
+/// [shared::SOURCE] of the installed DLL, as Setup recorded it (builds from before it did: None).
+fn registered_source() -> Option<String> {
+    let key = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+        .open_subkey(format!(r"{REGISTRY_KEY}\{}", shared::CLSID_STR))
+        .ok()?;
+    key.get_value::<String, _>(shared::SOURCE_VALUE).ok()
+}
+
 /// Windows 11 (build 22000) or newer: the first with MFCreateVirtualCamera.
 pub fn os_supported() -> bool {
     let key = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
@@ -68,10 +76,13 @@ pub fn installed_ok() -> std::result::Result<(), String> {
     let Some(bundled) = bundled_dll() else {
         return Err(format!("{DLL_NAME} is missing next to dotlink.exe; reinstall Dotlink."));
     };
-    // The registered DLL has this build's content (whatever its name).
-    let current = registered_dll()
-        .and_then(|p| std::fs::read(p).ok())
-        .is_some_and(|a| std::fs::read(&bundled).ok().is_some_and(|b| a == b));
+    // The registered DLL is this build's camera: the same source (its bytes differ with every
+    // release), or, installed by a build that didn't record that, the same bytes.
+    let installed = registered_dll().filter(|p| p.is_file());
+    let current = installed.is_some_and(|p| {
+        registered_source().as_deref() == Some(shared::SOURCE)
+            || std::fs::read(p).ok().is_some_and(|a| std::fs::read(&bundled).ok().is_some_and(|b| a == b))
+    });
     if !current {
         return Err(
             "Installs the virtual camera into Program Files, so apps see \"Dotlink Camera\".".into(),

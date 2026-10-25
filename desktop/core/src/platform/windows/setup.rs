@@ -216,6 +216,8 @@ async fn install_camera() -> Result<()> {
          Copy-Item -Force {source} $dll\n\
          New-Item -Force {key} | Out-Null\n\
          Set-ItemProperty {key} '(default)' 'Dotlink Camera'\n\
+         # Which camera code this is: updates that don't change it need no new install.\n\
+         Set-ItemProperty {key} {source_value} {source_hash}\n\
          New-Item -Force {key_inproc} | Out-Null\n\
          Set-ItemProperty {key_inproc} '(default)' $dll\n\
          Set-ItemProperty {key_inproc} 'ThreadingModel' 'Both'\n\
@@ -228,6 +230,8 @@ async fn install_camera() -> Result<()> {
         source = quote(&source.to_string_lossy()),
         key = quote(&key),
         key_inproc = quote(&format!(r"{key}\InprocServer32")),
+        source_value = quote(dotlink_camera::shared::SOURCE_VALUE),
+        source_hash = quote(dotlink_camera::shared::SOURCE),
     );
     run_elevated_powershell(&script).await.map_err(|e| anyhow::anyhow!("Dotlink Camera wasn't installed: {e:#}"))?;
     super::camera::reload();

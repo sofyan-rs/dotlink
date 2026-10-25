@@ -15,6 +15,13 @@ pub const CLSID: u128 = 0x882edc27_ac20_4c63_935d_aba37092eb60;
 pub const CLSID_STR: &str = "{882EDC27-AC20-4C63-935D-ABA37092EB60}";
 pub const FRIENDLY_NAME: &str = "Dotlink Camera";
 
+/// A hash of this crate's source (`build.rs`). Setup stores it with the installed DLL and
+/// asks to install again only when it changes, not on every release.
+pub const SOURCE: &str = env!("DOTLINK_CAMERA_SOURCE");
+
+/// The registry value, next to the camera's class, that holds [SOURCE] of the installed DLL.
+pub const SOURCE_VALUE: &str = "DotlinkSource";
+
 pub const MAGIC: u32 = u32::from_le_bytes(*b"DLCM");
 pub const VERSION: u32 = 1;
 pub const HEADER: usize = 64;
