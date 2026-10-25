@@ -1,7 +1,7 @@
 //! Shared daemon state and the HTTPS / WebSocket API the phone talks to.
 
 use crate::config::{now_secs, random_hex, sha256_hex, url_encode, Config, Device, DeviceKind, State};
-use crate::events::{Event, Transfer, TransferState, UiRequest};
+use crate::events::{Event, Incoming, Transfer, TransferState, UiRequest};
 use crate::input::InputMsg;
 use crate::platform::{self, clipboard, find_camera, notify, CameraHub, Input, MicSink};
 use crate::term::Session;
@@ -27,6 +27,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{broadcast, mpsc, oneshot, Notify};
 
 const PAIRING_TTL: Duration = Duration::from_secs(300);
+/// How long a file waits for Accept ("Ask before receiving files") before it's declined.
+const ASK_TIMEOUT: Duration = Duration::from_secs(120);
 const OFFER_TTL: Duration = Duration::from_secs(3600);
 /// Transfers kept for the app's list.
 const TRANSFER_HISTORY: usize = 100;
@@ -100,6 +102,8 @@ pub struct App {
     pub hostname: String,
     pub state: Mutex<State>,
     pairing: Mutex<Option<Pairing>>,
+    /// Files waiting for Accept or Decline, by id: what they are, and where the answer goes.
+    incoming: Mutex<HashMap<String, (Incoming, oneshot::Sender<bool>)>>,
     /// Code pairings between `/pair/code` and `/pair/code/confirm`, by session id.
     code_sessions: Mutex<HashMap<String, CodeSession>>,
     /// One-time codes handed out over USB (`POST /pair/usb`), one per request, so several
@@ -153,6 +157,7 @@ impl App {
             state: Mutex::new(state),
             pairing: Mutex::new(None),
             code_sessions: Mutex::new(HashMap::new()),
+            incoming: Mutex::new(HashMap::new()),
             usb_pairings: Mutex::new(Vec::new()),
             control_tx: broadcast::channel(64).0,
             revoked_tx: broadcast::channel(16).0,
@@ -295,7 +300,59 @@ impl App {
             "mic": self.streams.lock().unwrap().get("mic"),
             "has_ui": self.ui.lock().unwrap().is_some(),
             "casts": self.cast.states(),
+            "incoming": self.incoming.lock().unwrap().values().map(|(i, _)| i.clone()).collect::<Vec<_>>(),
         })
+    }
+
+    /// With "Ask before receiving files" on, asks (a notification with Accept / Decline, and the
+    /// window) whether to take `name` from `from`; true right away when it's off. No answer in
+    /// [ASK_TIMEOUT]: declined.
+    pub async fn ask_incoming(self: &Arc<Self>, from: &str, name: &str, size: Option<u64>) -> bool {
+        if !self.config().ask_before_receiving {
+            return true;
+        }
+        let ask = Incoming { id: random_hex(8), from: from.to_string(), name: name.to_string(), size };
+        let (tx, rx) = oneshot::channel();
+        self.incoming.lock().unwrap().insert(ask.id.clone(), (ask.clone(), tx));
+        self.emit(Event::Incoming(ask.clone()));
+        platform::notify_incoming(self, &ask);
+        let accepted = matches!(tokio::time::timeout(ASK_TIMEOUT, rx).await, Ok(Ok(true)));
+        self.incoming.lock().unwrap().remove(&ask.id);
+        platform::dismiss_incoming(&ask.id);
+        self.emit(Event::IncomingDone { id: ask.id.clone() });
+        if !accepted {
+            self.put_transfer(Transfer {
+                id: random_hex(12),
+                outgoing: false,
+                device: from.to_string(),
+                name: name.to_string(),
+                size,
+                done: 0,
+                state: TransferState::Failed("Declined".into()),
+                path: String::new(),
+                started_at: now_secs(),
+            });
+        }
+        accepted
+    }
+
+    /// Accept or Decline for a file [Self::ask_incoming] is waiting on. False when it isn't
+    /// waiting any more.
+    pub fn answer_incoming(&self, id: &str, accept: bool) -> bool {
+        let waiting = self.incoming.lock().unwrap().remove(id);
+        waiting.is_some_and(|(_, tx)| tx.send(accept).is_ok())
+    }
+
+    /// The phone or PC declined a file this one offered (`decline` message): say so in the list.
+    fn offer_declined(&self, offer: &str, device: &str, by: &str) {
+        let every = self.offers.lock().unwrap().get(offer).is_some_and(|o| o.device.is_none());
+        let id = transfer_id(offer, every, device);
+        let found = self.transfers.lock().unwrap().iter().find(|t| t.id == id).cloned();
+        if let Some(mut t) = found {
+            t.device = by.to_string();
+            t.state = TransferState::Failed(format!("Declined by {by}"));
+            self.put_transfer(t);
+        }
     }
 
     /// Text copied on this PC: send it to the phones (when clipboard sync is on).
@@ -1050,6 +1107,11 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                             Some((level.min(100) as u8, charging));
                         app.emit(Event::Devices);
                     }
+                    if v["t"] == "decline"
+                        && let Some(offer) = v["id"].as_str()
+                    {
+                        app.offer_declined(offer, &dev.id, &dev.name);
+                    }
                     if v["t"] == "media" && v["state"] == "needs_tap" {
                         let kind = v["kind"].as_str().unwrap_or("camera").to_string();
                         app.emit(Event::MediaPrompt { device: dev.name.clone(), kind });
@@ -1326,6 +1388,10 @@ async fn upload(
         return (StatusCode::BAD_REQUEST, "bad file name").into_response();
     };
     let size = headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
+    // Nothing is read until it's accepted: the sender waits.
+    if !app.ask_incoming(&dev.name, &name, size).await {
+        return (StatusCode::FORBIDDEN, format!("{} declined it", app.name())).into_response();
+    }
     let mut progress = Progress::new(
         &app,
         Transfer {

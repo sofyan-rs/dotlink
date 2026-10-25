@@ -31,6 +31,27 @@ pub fn notify(title: &str, body: &str) {
     let _ = std::process::Command::new("notify-send").args(["-a", "Dotlink", title, body]).spawn();
 }
 
+/// "X wants to send …" with Accept / Decline; the answer goes to [crate::server::App::answer_incoming].
+pub fn notify_incoming(app: &std::sync::Arc<crate::server::App>, incoming: &crate::events::Incoming) {
+    let (app, incoming) = (app.clone(), incoming.clone());
+    tokio::spawn(async move {
+        let out = tokio::process::Command::new("notify-send")
+            .args(["-a", "Dotlink", "-u", "critical", "-t", "120000", "--action=accept=Accept", "--action=decline=Decline"])
+            .arg(format!("{} wants to send a file", incoming.from))
+            .arg(&incoming.name)
+            .output()
+            .await;
+        match out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).as_deref() {
+            Ok("accept") => drop(app.answer_incoming(&incoming.id, true)),
+            Ok("decline") => drop(app.answer_incoming(&incoming.id, false)),
+            _ => {}
+        }
+    });
+}
+
+/// notify-send's notification expires by itself (`-t`): nothing to take away.
+pub fn dismiss_incoming(_id: &str) {}
+
 /// "Received from …" with Open / Show in folder actions.
 pub fn notify_file(from: &str, name: &str, path: &Path) {
     let path = path.to_path_buf();

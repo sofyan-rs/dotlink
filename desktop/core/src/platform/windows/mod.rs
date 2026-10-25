@@ -158,6 +158,60 @@ pub fn notify_file(from: &str, name: &str, path: &Path) {
     }
 }
 
+/// "X wants to send …" with Accept / Decline: `dotlink:accept/<id>` and `dotlink:decline/<id>`
+/// links (`dotlink url` passes them to the service), so they work from the notification
+/// center too. A reminder toast: it stays up until answered.
+pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &crate::events::Incoming) {
+    register_app_id();
+    register_url_scheme();
+    let link = |action: &str| xml_escape(&format!("dotlink:{action}/{}", incoming.id));
+    let xml = format!(
+        r#"<toast scenario="reminder"><visual><binding template="ToastGeneric"><text>{title}</text><text>{body}</text></binding></visual><actions><action content="Accept" activationType="protocol" arguments="{accept}"/><action content="Decline" activationType="protocol" arguments="{decline}"/></actions></toast>"#,
+        title = xml_escape(&format!("{} wants to send a file", incoming.from)),
+        body = xml_escape(&incoming.name),
+        accept = link("accept"),
+        decline = link("decline"),
+    );
+    if let Err(e) = show_incoming_toast(&xml, &incoming.id) {
+        tracing::warn!("notification: {e}");
+    }
+}
+
+/// The incoming file's toast: tagged with its id, so [dismiss_incoming] can take it away, and
+/// gone by itself when the answer is no longer awaited.
+fn show_incoming_toast(xml: &str, id: &str) -> windows::core::Result<()> {
+    use windows::Data::Xml::Dom::XmlDocument;
+    use windows::Foundation::{DateTime, IReference, PropertyValue};
+    use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+    use windows::core::{HSTRING, Interface};
+    let doc = XmlDocument::new()?;
+    doc.LoadXml(&HSTRING::from(xml))?;
+    let toast = ToastNotification::CreateToastNotification(&doc)?;
+    toast.SetTag(&HSTRING::from(id))?;
+    toast.SetGroup(&HSTRING::from(INCOMING_GROUP))?;
+    // DateTime counts 100 ns ticks from 1601; the Unix epoch is 11644473600 s after that.
+    let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let expires = (unix.as_secs() as i64 + 11_644_473_600 + 120) * 10_000_000;
+    let when: IReference<DateTime> = PropertyValue::CreateDateTime(DateTime { UniversalTime: expires })?.cast()?;
+    toast.SetExpirationTime(&when)?;
+    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))?.Show(&toast)
+}
+
+const INCOMING_GROUP: &str = "incoming";
+
+/// Takes away the toast of an incoming file that was answered (here, in the window) or
+/// declined for lack of an answer.
+pub fn dismiss_incoming(id: &str) {
+    use windows::UI::Notifications::ToastNotificationManager;
+    use windows::core::HSTRING;
+    let removed = ToastNotificationManager::History().and_then(|h| {
+        h.RemoveGroupedTagWithId(&HSTRING::from(id), &HSTRING::from(INCOMING_GROUP), &HSTRING::from(APP_ID))
+    });
+    if let Err(e) = removed {
+        tracing::debug!("notification: {e}");
+    }
+}
+
 /// `name`: what to show; `file`: the file's name in the download folder, for the links.
 fn file_toast_xml(from: &str, name: &str, file: &str) -> String {
     let link = |action: &str| xml_escape(&format!("dotlink:{action}/{}", crate::config::url_encode(file)));
@@ -188,6 +242,11 @@ fn xml_escape(s: &str) -> String {
 /// `dotlink url "<link>"` for it, also when Dotlink isn't running.
 fn register_url_scheme() {
     static DONE: OnceLock<()> = OnceLock::new();
+    // A second instance (`DOTLINK_CONFIG_DIR`, for testing) leaves the links to the usual one:
+    // they'd run without that variable and reach the usual service anyway.
+    if !crate::config::instance_suffix().is_empty() {
+        return;
+    }
     DONE.get_or_init(|| {
         let result = (|| -> Result<()> {
             let exe = std::env::current_exe()?;

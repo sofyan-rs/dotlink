@@ -330,7 +330,8 @@ class Phones(
                                 }
                             }
                         }
-                    call(peer, "/upload?name=" + URLEncoder.encode(name, "UTF-8"), body, timeoutSec = 60)
+                    // Long enough for the other phone to answer "Ask before receiving files".
+                    call(peer, "/upload?name=" + URLEncoder.encode(name, "UTF-8"), body, timeoutSec = 180)
                     link.finish(t.id, null)
                     ok++
                 } catch (e: Exception) {
@@ -461,7 +462,7 @@ class Phones(
         )
     }
 
-    private fun receiveFile(
+    private suspend fun receiveFile(
         peer: PhonePeer,
         req: PhoneRequest,
     ): PhoneResponse {
@@ -472,6 +473,8 @@ class Phones(
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() && it != "." && it != ".." }
                 ?: return PhoneResponse.error(400, "bad file name")
+        // Nothing is read until it's accepted: the sender waits.
+        if (!link.askIncoming(peer.name, name, req.contentLength)) return PhoneResponse.error(403, "${link.deviceName()} declined it")
         val t = link.newTransfer(name, incoming = true, size = req.contentLength, phone = peer.name)
         return runCatching { link.saveIncoming(t, peer.name, req.body) }.fold(
             onSuccess = { PhoneResponse.json(JSONObject().put("ok", true)) },

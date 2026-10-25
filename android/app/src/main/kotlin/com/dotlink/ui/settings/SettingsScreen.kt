@@ -106,6 +106,7 @@ fun SettingsScreen() {
 
         }
         Section("Received files") {
+            var ask by remember { mutableStateOf(prefs.askBeforeReceiving) }
             ListGroup {
                 ListRow(
                     title = "Saved to",
@@ -113,6 +114,18 @@ fun SettingsScreen() {
                     subtitle = "Download/Dotlink",
                     subtitleIsData = true,
                     leadingIcon = DotlineIcons.Folder,
+                )
+                ListDivider()
+                ListRow(
+                    title = "Ask before receiving",
+                    subtitle = "Each file waits for Accept in a notification; 2 minutes without an answer declines it",
+                    leadingIcon = DotlineIcons.Download,
+                    role = Role.Switch,
+                    onClick = {
+                        ask = !ask
+                        prefs.askBeforeReceiving = ask
+                    },
+                    trailing = { KuSwitch(checked = ask, onCheckedChange = null) },
                 )
             }
             Hint("Files from the PC and from phones always go here; open it in your Files app. This can't be changed yet.")

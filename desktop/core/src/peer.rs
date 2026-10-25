@@ -492,6 +492,10 @@ async fn handle(app: &Arc<App>, peer: &Peer, addr: SocketAddr, v: Value) {
             let (Some(id), Some(name)) = (v["id"].as_str(), v["name"].as_str()) else { return };
             let (app, peer, id, name, size) = (app.clone(), peer.clone(), id.to_string(), name.to_string(), v["size"].as_u64());
             tokio::spawn(async move {
+                if !app.ask_incoming(&peer.name, &name, size).await {
+                    app.peers.send(&peer.id, &json!({ "t": "decline", "id": id }));
+                    return;
+                }
                 if let Err(e) = download(&app, &peer, addr, &id, &name, size).await {
                     tracing::warn!("file from {}: {e:#}", peer.name);
                 }

@@ -56,6 +56,7 @@ dotlink-camera = { path = "../camera" }
 # Toasts whose buttons open a `dotlink:` link (notify_file) are built from their XML.
 windows = { version = "0.62.2", features = [
     "Data_Xml_Dom",
+    "Foundation",
     "UI_Notifications",
     "Win32_Media_MediaFoundation",
     "Win32_System_Com",

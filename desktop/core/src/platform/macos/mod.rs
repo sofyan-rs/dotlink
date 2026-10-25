@@ -37,6 +37,13 @@ pub fn notify(title: &str, body: &str) {
     let _ = notify_rust::Notification::new().appname("Dotlink").summary(title).body(body).show();
 }
 
+/// TODO(macos): Accept / Decline buttons (UNUserNotificationCenter); the window asks meanwhile.
+pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &crate::events::Incoming) {
+    notify(&format!("{} wants to send a file", incoming.from), &format!("{}: Accept or Decline in Dotlink", incoming.name));
+}
+
+pub fn dismiss_incoming(_id: &str) {}
+
 pub fn notify_file(from: &str, name: &str, _path: &Path) {
     notify(&format!("Received from {from}"), name);
 }
