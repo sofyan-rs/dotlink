@@ -3,6 +3,7 @@ name = "dotlink-camera"
 description = "\"Dotlink Camera\" for Windows 11: the media source the camera frame server loads, fed by Dotlink"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "dotlink_camera"

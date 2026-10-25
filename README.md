@@ -246,3 +246,13 @@ publishes them as a release (with a suffix like `v0.2.0-beta.1`, a pre-release).
 [Releasing](docs/CONTRIBUTION.md#releasing).
 
 More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/CONTRIBUTION.md](docs/CONTRIBUTION.md).
+
+## License
+
+Dotlink is free software: you can redistribute it and/or modify it under the terms of the
+[GNU General Public License](LICENSE) as published by the Free Software Foundation, either version
+3 of the License, or (at your option) any later version.
+
+The fonts and scripts bundled with the Android app keep their own licenses (for example
+`android/app/src/main/assets/term/symbols-mono-LICENSE.txt`). scrcpy, which Dotlink downloads for
+Cast, is under the Apache License 2.0.
