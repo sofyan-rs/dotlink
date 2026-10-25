@@ -51,7 +51,7 @@
             android:name=".ui.ShareActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:label="Send to PC"
+            android:label="Dotlink"
             android:theme="@style/Theme.Dotlink.Translucent">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
