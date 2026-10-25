@@ -28,6 +28,7 @@ desktop/                 Rust workspace
     src/events.rs        what the window follows live (devices, transfers, …)
     src/cast.rs          Cast: finding the phone over adb, running scrcpy
     src/usb.rs           the link over a USB cable: `adb reverse` for each phone plugged in
+    src/peer.rs          linking to another PC: the phone's side of the API, in Rust
     src/config.rs        config.toml, state.json (paired phones), paths
     src/tls.rs           self-signed certificate
     src/term.rs          shell sessions (PTY), kept across reconnects
@@ -93,9 +94,14 @@ daemon. Socket I/O runs on the tokio runtime; GPUI awaits plain futures/channels
 All requests carry `Authorization: Bearer <token>` except `/pair`. The PC stores only the
 token's SHA-256.
 
+Each paired device has a kind, `phone` or `pc` (`/pair` takes `kind`; phones leave it out). A
+PC linked to this one gets files and the clipboard only: `/ws/input`, `/ws/term`, `/terms`,
+`/ws/camera` and `/ws/mic` answer it with 403, and camera, mic and Cast only pick phones.
+
 | Endpoint | Use |
 |---|---|
-| `POST /pair` | one-time secret from the QR code → token |
+| `POST /pair` | one-time secret from the QR code (+ `kind`) → token; refused when `device_id` is this PC's own id, or a PC this one already joined |
+| `DELETE /pair` | the caller unpairs itself (a linked PC that forgot this one) |
 | `GET /pair/usb`, `POST /pair/usb` | over the cable only (loopback): "is a Dotlink PC there?", and "send me the pairing link". The PC opens the link in the app through adb, never on this connection |
 | `GET /ping` | PC name and Shell settings |
 | `GET /ws/control` | long-lived JSON messages, both ways (below) |
@@ -148,13 +154,27 @@ addresses, port, certificate fingerprint and a one-time secret valid for 5 minut
 pins `fp` and trades `c` for a token. When the PC's IP changes, the phone finds it again with
 mDNS (`_dotlink._tcp`, matched by server id).
 
+### Linking two PCs
+
+`dotlink join <link>` (`peer.rs`) pairs with another PC's `dotlink://pair` link as `kind: pc`
+and from then on behaves like a phone towards it: it pins the other PC's certificate, keeps
+`/ws/control` open (reconnecting with backoff, through the stored addresses, then mDNS by id)
+and moves files with `/upload` and `/download/{id}`. Only the PC that joined dials, so a pair
+of PCs has one link; the other PC lists it as a paired device of kind `pc`, and refuses to
+join it back. Either side can unpair: the joiner calls `DELETE /pair`, and the other PC's
+refusal (401) makes the joiner forget it.
+
+Phones get clipboard changes while `clipboard_sync` is on; a PC only with `clipboard_auto` set
+for it (`dotlink clip-auto <pc> on`), since two PCs copying would keep overwriting each other.
+`dotlink clip` and `dotlink send` reach linked PCs like phones.
+
 ## Control socket (CLI and window)
 
 `$XDG_RUNTIME_DIR/dotlink.sock` on Linux/macOS (user-only), on Windows the named pipe
 `\\.\pipe\dotlink-<user SID>` with an ACL that only lets that user in. One JSON
 request line in, one or more reply lines out.
 
-`pair` · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `send` · `clip` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` ·
+`pair` · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` ·
 `cast_pair` · `watch` (event stream, see `events.rs`) · `show` · `quit`
 
 ## Features, briefly
@@ -231,7 +251,7 @@ named pipe above.
 | Path | Content |
 |---|---|
 | `~/.config/dotlink/config.toml` | settings (also edited by Settings) |
-| `~/.config/dotlink/state.json` | server id, paired phones (token hashes), 0600 |
+| `~/.config/dotlink/state.json` | server id, paired devices (kind, token hashes), linked PCs (fingerprint, addresses, token), 0600 |
 | `~/.config/dotlink/cert.pem`, `key.pem` | the certificate the phone pins |
 | `~/.local/share/dotlink/scrcpy/<version>/` | scrcpy + adb, when Dotlink downloaded them |
 | `$XDG_RUNTIME_DIR/dotlink.sock` | control socket |

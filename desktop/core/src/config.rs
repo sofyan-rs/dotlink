@@ -105,20 +105,59 @@ impl Config {
     }
 }
 
+/// What a paired device is. A PC linked to another PC gets files and the clipboard only.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceKind {
+    /// Also what devices paired before kinds existed are.
+    #[default]
+    Phone,
+    Pc,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub kind: DeviceKind,
+    /// A PC: send it this PC's clipboard changes as they happen (phones always get them while
+    /// `clipboard_sync` is on).
+    #[serde(default)]
+    pub clipboard_auto: bool,
     /// SHA-256 of the bearer token; the token itself is only known to the phone.
     pub token_sha256: String,
     pub paired_at: u64,
+}
+
+/// A PC this one linked to with its pairing link (`peer.rs`): this PC connects to it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Peer {
+    /// Its `server_id`.
+    pub id: String,
+    pub name: String,
+    /// SHA-256 of its certificate, pinned.
+    pub fingerprint: String,
+    /// Its addresses, the one that answered last first.
+    pub hosts: Vec<String>,
+    pub port: u16,
+    /// What this PC presents to it.
+    pub token: String,
+    pub paired_at: u64,
+    /// Send it this PC's clipboard changes as they happen.
+    #[serde(default)]
+    pub clipboard_auto: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct State {
     /// Random id of this PC, so the phone can tell PCs apart over mDNS.
     pub server_id: String,
+    /// Phones and PCs that paired with this one.
     pub devices: Vec<Device>,
+    /// PCs this one linked to.
+    #[serde(default)]
+    pub peers: Vec<Peer>,
 }
 
 impl State {
@@ -152,8 +191,23 @@ impl State {
     }
 }
 
+/// `DOTLINK_CONFIG_DIR`, when set, replaces the config folder: a second instance next to the
+/// usual one (testing two PCs on one machine).
+fn config_dir_override() -> Option<PathBuf> {
+    std::env::var_os("DOTLINK_CONFIG_DIR").filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
 pub fn config_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| expand_home("~/.config")).join("dotlink")
+    config_dir_override().unwrap_or_else(|| dirs::config_dir().unwrap_or_else(|| expand_home("~/.config")).join("dotlink"))
+}
+
+/// Empty for the usual instance. One started with `DOTLINK_CONFIG_DIR` gets `-<hash of the
+/// folder>`, so its control socket and mDNS name don't clash with the usual one's.
+pub fn instance_suffix() -> String {
+    match config_dir_override() {
+        Some(dir) => format!("-{}", &sha256_hex(dir.to_string_lossy().as_bytes())[..8]),
+        None => String::new(),
+    }
 }
 
 pub fn config_path() -> PathBuf {
@@ -173,6 +227,31 @@ pub fn expand_home(p: &str) -> PathBuf {
 
 pub fn sha256_hex(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
+}
+
+/// Percent-encodes everything but `A-Z a-z 0-9 - _ .`.
+pub fn url_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// Undoes [url_encode] (any `%XX`); None for a bad escape or text that isn't UTF-8.
+pub fn url_decode(s: &str) -> Option<String> {
+    let mut out = Vec::with_capacity(s.len());
+    let mut bytes = s.bytes();
+    while let Some(b) = bytes.next() {
+        if b == b'%' {
+            let hex = [bytes.next()?, bytes.next()?];
+            out.push(u8::from_str_radix(std::str::from_utf8(&hex).ok()?, 16).ok()?);
+        } else {
+            out.push(b);
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 pub fn random_hex(bytes: usize) -> String {
@@ -204,6 +283,24 @@ pub fn set_private(path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn devices_paired_before_kinds_are_phones() {
+        let dev: Device =
+            serde_json::from_str(r#"{"id":"a","name":"Pixel","token_sha256":"00","paired_at":1}"#).unwrap();
+        assert_eq!(dev.kind, DeviceKind::Phone);
+        let dev: Device =
+            serde_json::from_str(r#"{"id":"b","name":"Desk","kind":"pc","token_sha256":"00","paired_at":1}"#).unwrap();
+        assert_eq!(dev.kind, DeviceKind::Pc);
+    }
+
+    #[test]
+    fn url_encoding_round_trips() {
+        let name = "Résumé (final) & co/../x.pdf";
+        assert_eq!(url_decode(&url_encode(name)).as_deref(), Some(name));
+        assert_eq!(url_decode("a%2"), None);
+        assert_eq!(url_decode("%FF"), None);
+    }
 
     #[test]
     fn download_dir_follows_system_downloads() {

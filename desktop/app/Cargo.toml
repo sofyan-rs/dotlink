@@ -99,6 +99,11 @@ SectionEnd
 Section un.RemoveShareMenu
   DeleteRegKey HKCU "Software\\Classes\\*\\shell\\Dotlink"
 SectionEnd
+
+# The dotlink: links of notification buttons (core/src/platform/windows/mod.rs).
+Section un.RemoveUrlScheme
+  DeleteRegKey HKCU "Software\\Classes\\dotlink"
+SectionEnd
 """
 
 # `cargo generate-rpm -p app` (cargo install cargo-generate-rpm), after

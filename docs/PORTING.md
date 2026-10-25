@@ -189,9 +189,11 @@ the `tray-icon` crate there too (with `muda` for the menu) and send the same `Tr
 - macOS shows notifications only from a bundled, signed app with a bundle id; from
   `cargo run` they appear as Terminal/Script Editor. Call
   `notify_rust::set_application("dev.dotlink.Dotlink")` once at startup.
-- `notify_file` should get **Open** / **Show in folder** buttons like Linux: on Windows a
-  toast with actions through the `windows` crate (`Windows.UI.Notifications`), on macOS
-  `UNUserNotificationCenter` with a category and two actions (needs the bundle).
+- `notify_file` should get **Open** / **Show in folder** buttons like Linux. Windows: a toast
+  built from XML through the `windows` crate (`Windows.UI.Notifications`) whose buttons are
+  `dotlink:` links (protocol activation, `dotlink url`); an in-process click handler stops
+  hearing clicks once the toast leaves the screen. macOS: `UNUserNotificationCenter` with a
+  category and two actions (needs the bundle).
 
 ### Start at login (`autostart`)
 
@@ -372,7 +374,7 @@ the dependency.
 | Graceful quit (tray, Settings, `dotlink quit`, OS shutdown) | ✅ | |
 | Tray / menu bar with every `TrayAction` | ✅ | |
 | App icon in the window, taskbar / Dock, notifications | ✅ | |
-| Notifications under Dotlink's name, Open / Show in folder on received files | ✅ (buttons not clicked in a test) | |
+| Notifications under Dotlink's name, Open / Show in folder on received files | ✅ | |
 | Start at login (`--background`) | ✅ | |
 | Setup checks and fixes for this OS | ✅ | |
 | Remote: move, click, drag, scroll, keys, combos, text | ✅ | |

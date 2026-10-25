@@ -14,11 +14,18 @@ arboard = { version = "3.7.0", default-features = false }
 axum = { version = "0.8.9", features = ["ws", "macros"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 base64 = "0.23.1"
+bytes = "1.12.1"
 dirs = "7.0.0"
 futures = "0.3.34"
 getrandom = "0.4"
 hex = "0.4.3"
 hostname = "0.4.2"
+# The client side of a link to another PC (peer.rs): HTTP/1.1 and WebSocket over pinned TLS.
+http-body-util = "0.1.5"
+hyper = { version = "1.12.0", features = ["client", "http1"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["logging", "tls12"] }
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["handshake"] }
 if-addrs = "0.15.0"
 interprocess = { version = "2.4.6", features = ["tokio"] }
 mdns-sd = "0.21.6"
@@ -43,7 +50,13 @@ x11rb = { version = "0.13.2", features = ["xfixes"] }
 [target.'cfg(windows)'.dependencies]
 # "Dotlink Camera": the frame file and class id shared with the camera DLL.
 dotlink-camera = { path = "../camera" }
-windows = { version = "0.62.2", features = ["Win32_Media_MediaFoundation", "Win32_System_Com"] }
+# Toasts whose buttons open a `dotlink:` link (notify_file) are built from their XML.
+windows = { version = "0.62.2", features = [
+    "Data_Xml_Dom",
+    "UI_Notifications",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+] }
 # The named pipe's security descriptor (SDDL as UTF-16).
 widestring = "1.2.1"
 winreg = "0.56.0"

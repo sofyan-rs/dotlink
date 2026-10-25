@@ -16,17 +16,22 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[cfg(unix)]
 fn socket_name() -> std::io::Result<Name<'static>> {
-    use crate::config::runtime_dir;
     use interprocess::local_socket::GenericFilePath;
     // Inside $XDG_RUNTIME_DIR, which only this user can open.
-    runtime_dir().join("dotlink.sock").to_fs_name::<GenericFilePath>()
+    socket_path().to_fs_name::<GenericFilePath>()
+}
+
+#[cfg(unix)]
+fn socket_path() -> PathBuf {
+    crate::config::runtime_dir().join(format!("dotlink{}.sock", crate::config::instance_suffix()))
 }
 
 /// `\\.\pipe\dotlink-<user SID>`: one per user, also when two users share a name across domains.
 #[cfg(windows)]
 fn socket_name() -> std::io::Result<Name<'static>> {
     use interprocess::local_socket::GenericNamespaced;
-    format!("dotlink-{}", crate::platform::user_sid()?).to_ns_name::<GenericNamespaced>()
+    format!("dotlink-{}{}", crate::platform::user_sid()?, crate::config::instance_suffix())
+        .to_ns_name::<GenericNamespaced>()
 }
 
 #[cfg(unix)]
@@ -47,7 +52,7 @@ fn listener_options() -> std::io::Result<ListenerOptions<'static>> {
 
 #[cfg(unix)]
 fn remove_stale_socket() {
-    let _ = std::fs::remove_file(crate::config::runtime_dir().join("dotlink.sock"));
+    let _ = std::fs::remove_file(socket_path());
 }
 
 #[cfg(windows)]
@@ -127,6 +132,17 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
         }
         "clip" => {
             let msg = result(app.send_clipboard(req["to"].as_str()).await.map(|()| "clipboard sent".into()));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "join" => {
+            let msg = result(crate::peer::join(&app, req["uri"].as_str().unwrap_or("")).await.map(|name| format!("linked to {name}")));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "clipboard_auto" => {
+            let on = req["on"].as_bool().unwrap_or(false);
+            let msg = result(app.set_clipboard_auto(req["id"].as_str().unwrap_or(""), on).map(|name| {
+                format!("{name} {} this PC's clipboard changes", if on { "gets" } else { "no longer gets" })
+            }));
             w.write_all(reply(msg).as_bytes()).await?;
         }
         "devices" => {
