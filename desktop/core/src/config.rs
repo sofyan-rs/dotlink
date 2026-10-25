@@ -175,6 +175,31 @@ pub fn sha256_hex(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
 
+/// Percent-encodes everything but `A-Z a-z 0-9 - _ .`.
+pub fn url_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// Undoes [url_encode] (any `%XX`); None for a bad escape or text that isn't UTF-8.
+pub fn url_decode(s: &str) -> Option<String> {
+    let mut out = Vec::with_capacity(s.len());
+    let mut bytes = s.bytes();
+    while let Some(b) = bytes.next() {
+        if b == b'%' {
+            let hex = [bytes.next()?, bytes.next()?];
+            out.push(u8::from_str_radix(std::str::from_utf8(&hex).ok()?, 16).ok()?);
+        } else {
+            out.push(b);
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 pub fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     getrandom::fill(&mut buf).expect("system random number generator");
@@ -204,6 +229,14 @@ pub fn set_private(path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_encoding_round_trips() {
+        let name = "Résumé (final) & co/../x.pdf";
+        assert_eq!(url_decode(&url_encode(name)).as_deref(), Some(name));
+        assert_eq!(url_decode("a%2"), None);
+        assert_eq!(url_decode("%FF"), None);
+    }
 
     #[test]
     fn download_dir_follows_system_downloads() {
