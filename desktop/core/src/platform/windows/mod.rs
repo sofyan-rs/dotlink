@@ -207,6 +207,11 @@ fn xml_escape(s: &str) -> String {
 /// `dotlink url "<link>"` for it, also when Dotlink isn't running.
 fn register_url_scheme() {
     static DONE: OnceLock<()> = OnceLock::new();
+    // A second instance (`DOTLINK_CONFIG_DIR`, for testing) leaves the links to the usual one:
+    // they'd run without that variable and reach the usual service anyway.
+    if !crate::config::instance_suffix().is_empty() {
+        return;
+    }
     DONE.get_or_init(|| {
         let result = (|| -> Result<()> {
             let exe = std::env::current_exe()?;

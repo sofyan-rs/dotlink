@@ -95,7 +95,9 @@ support.
 The service keeps its config in `$XDG_CONFIG_HOME/dotlink` and its socket in
 `$XDG_RUNTIME_DIR`, so a second instance can run next to yours. `DOTLINK_CONFIG_DIR` points the
 config folder somewhere else directly (on every OS); the control socket and the mDNS name then
-get a suffix of their own, and the second instance leaves the "Share with Dotlink" menu alone:
+get a suffix of their own, and the second instance leaves the "Share with Dotlink" menu and the
+`dotlink:` links of notification buttons alone (so a second instance's Open / Accept buttons
+reach the usual instance, not it):
 
 ```sh
 mkdir -p /tmp/dl-test/cfg/dotlink /tmp/dl-test/run && chmod 700 /tmp/dl-test/run
