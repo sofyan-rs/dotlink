@@ -26,6 +26,20 @@ pub const APP_ID: &str = "dev.dotlink.Dotlink";
 /// Keeps console programs (netsh, powershell) from flashing a console window.
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// The laptop's battery: (percent, on power); None on a desktop.
+pub fn battery() -> Option<(u8, bool)> {
+    use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    let mut status: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
+    if unsafe { GetSystemPowerStatus(&mut status) } == 0 {
+        return None;
+    }
+    // 128: no system battery; 255: unknown. A percent of 255 is unknown too.
+    if status.BatteryFlag & 128 != 0 || status.BatteryFlag == 255 || status.BatteryLifePercent > 100 {
+        return None;
+    }
+    Some((status.BatteryLifePercent, status.ACLineStatus == 1))
+}
+
 pub fn features() -> Features {
     Features { clipboard: true, remote: true, camera: true, mic: true, shell: true }
 }

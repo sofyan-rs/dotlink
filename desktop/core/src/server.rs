@@ -114,6 +114,8 @@ pub struct App {
     pub cast: crate::cast::Cast,
     /// Links to the PCs this one joined.
     pub peers: crate::peer::Peers,
+    /// This PC's battery as last read (laptops): (percent, on power).
+    battery: Mutex<Option<(u8, bool)>>,
     /// "camera" / "mic" → the phone streaming it right now.
     streams: Mutex<BTreeMap<&'static str, String>>,
     /// The window of the app this runs in; None when headless (`dotlink daemon`).
@@ -151,6 +153,7 @@ impl App {
             phones: Mutex::new(HashMap::new()),
             cast: crate::cast::Cast::default(),
             peers: crate::peer::Peers::default(),
+            battery: Mutex::new(platform::battery()),
             ui: Mutex::new(None),
             shutdown: Notify::new(),
         })
@@ -255,6 +258,7 @@ impl App {
                     // This PC joined it (rather than it joining this PC).
                     "joined": true,
                     "clipboard_auto": p.clipboard_auto,
+                    "battery": self.peers.battery(&p.id).map(|(level, charging)| json!({ "level": level, "charging": charging })),
                 })
             }))
             .collect()
@@ -448,6 +452,43 @@ impl App {
                 }
                 let names = phones.iter().chain(&peers).map(|(_, n)| n.as_str()).collect::<Vec<_>>().join(", ");
                 Ok(Target { id: None, names, phones, peers })
+            }
+        }
+    }
+
+    /// This PC's `battery` message for the PCs linked to it; None without a battery.
+    pub fn battery_msg(&self) -> Option<Value> {
+        let (level, charging) = (*self.battery.lock().unwrap())?;
+        Some(json!({ "t": "battery", "level": level, "charging": charging }))
+    }
+
+    /// Reads the battery once a minute and tells the linked PCs when it changed. Phones don't
+    /// show the PC's battery.
+    pub async fn watch_battery(self: Arc<Self>) {
+        let mut every = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            every.tick().await;
+            let now = tokio::task::spawn_blocking(platform::battery).await.ok().flatten();
+            {
+                let mut last = self.battery.lock().unwrap();
+                if *last == now {
+                    continue;
+                }
+                *last = now;
+            }
+            let Some(msg) = self.battery_msg() else { continue };
+            let (pcs, peers): (Vec<String>, Vec<String>) = {
+                let state = self.state.lock().unwrap();
+                (
+                    state.devices.iter().filter(|d| d.kind == DeviceKind::Pc).map(|d| d.id.clone()).collect(),
+                    state.peers.iter().map(|p| p.id.clone()).collect(),
+                )
+            };
+            for id in pcs {
+                self.send_control_to(Some(&id), msg.clone());
+            }
+            for id in peers {
+                self.peers.send(&id, &msg);
             }
         }
     }
@@ -842,6 +883,11 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
     let mut revoked = app.revoked_tx.subscribe();
     let hello = app.hello();
     let _ = tx.send(Message::Text(hello.to_string().into())).await;
+    if dev.kind == DeviceKind::Pc
+        && let Some(battery) = app.battery_msg()
+    {
+        let _ = tx.send(Message::Text(battery.to_string().into())).await;
+    }
     loop {
         tokio::select! {
             id = revoked.recv() => match id {

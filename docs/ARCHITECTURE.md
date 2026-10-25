@@ -124,6 +124,7 @@ Control messages (`{"t": …}`):
 | PC → phone | `file` | a file offer: id, name, size; the phone downloads it |
 | PC → phone | `camera`, `mic` | `on: bool`, from Start/Stop on the PC |
 | PC → phone | `adb_wifi` | Cast needs Wireless debugging: show the notification |
+| PC ↔ PC | `battery` | `level`, `charging`: a linked laptop's battery, on connect and when it changes |
 | phone → PC | `clip` | phone clipboard text |
 | phone → PC | `info` | phone name, model, Wireless debugging on, Developer options on (for Cast) |
 | phone → PC | `media` | `state: needs_tap`: starting camera/mic waits for a tap |
@@ -202,7 +203,10 @@ request line in, one or more reply lines out.
   The phone offers 30 or 60 fps, only what the lens in use lists; the Windows camera offers
   both rates and paces by the one the app picks.
 - **Battery.** The phone reports its level and charging state (`battery`); the Devices page
-  shows it for connected phones.
+  shows it for connected phones. Linked PCs send each other the same message when they have
+  a battery (`platform::battery()`: `GetSystemPowerStatus` on Windows, `/sys/class/power_supply`
+  on Linux, `pmset -g batt` on macOS), on connect and when it changes (read once a minute).
+  "Charging" means on power, as on the phone.
 - **Tray.** The logo's dots in one colour (`tray.rs`, `glyph`): a symbolic SVG the panel
   recolours on Linux, white or black with the taskbar's mode on Windows. Started before the
   bar at login (Hyprland), it registers once a tray appears.
