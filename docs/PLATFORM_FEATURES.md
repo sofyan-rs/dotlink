@@ -252,7 +252,7 @@ Linux:
 - [x] The tray icon is the same size as the icons next to it.
 - [x] Pairing over USB: `dotlink pair --usb` opens the pairing screen on the phone; the phone's
   own Pair with <PC> over USB pairs without a tap.
-- [x] Pairing over USB from the window (Pair a phone → Pair over USB); two phones at once.
+- [x] Pairing over USB from the window (Pair → Pair over USB); two phones at once.
 - [x] Unpairing a connected phone (`dotlink unpair`) cuts it off within a second, and the phone
   forgets the PC ("X-PC forgot this phone").
 - [x] Unpairing from the window (Devices → Forget).

@@ -146,7 +146,7 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
         ("send_files", "Send files…", TrayAction::SendFiles),
         ("send_clipboard", "Send clipboard", TrayAction::SendClipboard),
         ("cast", "Cast screen", TrayAction::Cast),
-        ("pair", "Pair a phone…", TrayAction::Pair),
+        ("pair", "Pair…", TrayAction::Pair),
         ("quit", "Quit", TrayAction::Quit),
     ];
     let item = |i: usize| MenuItem::with_id(items[i].0, items[i].1, true, None);
@@ -313,7 +313,7 @@ impl ksni::Tray for DotlinkTray {
             Self::item("Send files…", TrayAction::SendFiles),
             Self::item("Send clipboard", TrayAction::SendClipboard),
             Self::item("Cast screen", TrayAction::Cast),
-            Self::item("Pair a phone…", TrayAction::Pair),
+            Self::item("Pair…", TrayAction::Pair),
             ksni::MenuItem::Separator,
             Self::item("Quit", TrayAction::Quit),
         ]

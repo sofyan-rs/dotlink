@@ -43,6 +43,10 @@ pub struct MainView {
     cast_code: Entity<InputState>,
     /// The pairing QR code, encoded once per URI (the page repaints every second).
     qr: Option<(String, Arc<Qr>)>,
+    /// The Pair page's tab: show this PC's code (0) or join another PC (1).
+    pair_tab: usize,
+    /// Another PC's pairing link, pasted on the Pair page.
+    join_link: Entity<InputState>,
     _subs: Vec<Subscription>,
 }
 
@@ -132,7 +136,8 @@ impl MainView {
         })
         .detach();
         let cast_code = cx.new(|cx| InputState::new(window, cx).placeholder("6-digit code"));
-        Self { model, form, cast_code, qr: None, _subs: subs }
+        let join_link = cx.new(|cx| InputState::new(window, cx).placeholder("dotlink://pair?…"));
+        Self { model, form, cast_code, qr: None, pair_tab: 0, join_link, _subs: subs }
     }
 
     fn go(&mut self, page: Page, cx: &mut Context<Self>) {
@@ -303,7 +308,7 @@ impl MainView {
         let model = self.model.read(cx);
         let connected = model.connected;
         let hostname = model.status.as_ref().map(|s| s.name.clone()).unwrap_or_default();
-        let online = model.online_names().len();
+        let (phones, pcs) = model.online_counts();
         let nav = |id: &'static str, icon: IconName, label: &'static str, target: Page, cx: &mut Context<Self>| {
             let selected = page == target;
             div()
@@ -348,7 +353,7 @@ impl MainView {
                     )
                     .child(mono_label(p, hostname.to_uppercase()).px(px(14.)).pb(px(16.)))
                     .child(nav("nav-devices", IconName::Smartphone, "Devices", Page::Devices, cx))
-                    .child(nav("nav-pair", IconName::ScanLine, "Pair a phone", Page::Pair, cx))
+                    .child(nav("nav-pair", IconName::ScanLine, "Pair", Page::Pair, cx))
                     .child(nav("nav-activity", IconName::ArrowDownUp, "Activity", Page::Activity, cx))
                     .child(nav("nav-setup", IconName::ListChecks, "Setup", Page::Setup, cx))
                     .child(nav("nav-settings", IconName::Settings2, "Settings", Page::Settings, cx)),
@@ -362,11 +367,19 @@ impl MainView {
                     .child(status_dot(if connected { p.positive } else { p.accent }))
                     .child(mono_label(
                         p,
-                        match (connected, online) {
-                            (false, _) => "SERVICE STOPPED".to_string(),
-                            (true, 0) => "NO PHONE ONLINE".to_string(),
-                            (true, 1) => "1 PHONE ONLINE".to_string(),
-                            (true, n) => format!("{n} PHONES ONLINE"),
+                        match (connected, phones, pcs) {
+                            (false, _, _) => "SERVICE STOPPED".to_string(),
+                            (true, 0, 0) => "NO PHONE ONLINE".to_string(),
+                            (true, phones, pcs) => {
+                                let count = |n: usize, one: &str, many: &str| match n {
+                                    0 => None,
+                                    1 => Some(format!("1 {one}")),
+                                    n => Some(format!("{n} {many}")),
+                                };
+                                let parts: Vec<String> =
+                                    [count(phones, "PHONE", "PHONES"), count(pcs, "PC", "PCS")].into_iter().flatten().collect();
+                                format!("{} ONLINE", parts.join(" · "))
+                            }
                         },
                     )),
             )
@@ -383,7 +396,9 @@ impl MainView {
         };
         let status = &status;
         let any_online = status.devices.iter().any(|d| d.online);
-        let streams = self.streams(p, status.camera.clone(), status.mic.clone(), any_online, cx);
+        let phone_online = status.devices.iter().any(|d| d.online && d.is_phone());
+        let any_phone = status.devices.iter().any(|d| d.is_phone());
+        let streams = self.streams(p, status.camera.clone(), status.mic.clone(), phone_online, cx);
         let cast = self.cast_card(p, status, cx);
         // The latest transfers right under the drop zone, so sending shows its progress here.
         let recent: Vec<Transfer> = status.transfers.iter().take(3).cloned().collect();
@@ -392,7 +407,7 @@ impl MainView {
             recent_list = recent_list.child(transfer_row(p, t).when(i > 0, |r| r.border_t_1().border_color(p.line)));
         }
         let mut phones = group(p);
-        if status.devices.is_empty() {
+        if !any_phone {
             phones = phones.child(
                 row(p).child(div().flex_1().min_w_0().text_color(p.ink_muted).child("No phone paired yet.")).child(
                     pill(p, "pair-empty", "Pair a phone", Kind::Primary)
@@ -400,7 +415,7 @@ impl MainView {
                 ),
             );
         }
-        for (i, d) in status.devices.iter().enumerate() {
+        for (i, d) in status.devices.iter().filter(|d| d.is_phone()).enumerate() {
             let id = d.id.clone();
             let subtitle = match (d.online, d.usb) {
                 (true, true) => "Online · USB".to_string(),
@@ -428,12 +443,15 @@ impl MainView {
                     )),
             );
         }
-        // Several phones online: choose where Send files / Send clipboard go.
+        let pcs = self.pcs(p, status, cx);
+        // Several devices online: choose where Send files / Send clipboard go.
         let online: Vec<(Option<String>, String)> =
             status.devices.iter().filter(|d| d.online).map(|d| (Some(d.id.clone()), d.name.clone())).collect();
         let several = online.len() > 1;
+        let only_phones = status.devices.iter().filter(|d| d.online).all(|d| d.is_phone());
         let target = several.then(|| {
-            let options: Vec<_> = std::iter::once((None, "All phones".to_string())).chain(online).collect();
+            let all = if only_phones { "All phones" } else { "All devices" };
+            let options: Vec<_> = std::iter::once((None, all.to_string())).chain(online).collect();
             let model = self.model.clone();
             div().flex().items_center().gap(px(10.)).child(mono_label(p, "TO")).child(phone_picker(
                 "send-to",
@@ -452,9 +470,10 @@ impl MainView {
 
         page(p, "Devices", None)
             .child(section(p, "Phones", phones))
+            .when_some(pcs, |page, pcs| page.child(section(p, "PCs", pcs)))
             .child(section(
                 p,
-                "Send to phone",
+                if any_phone { "Send to phone" } else { "Send" },
                 div()
                     .id("drop")
                     .flex()
@@ -473,9 +492,11 @@ impl MainView {
                     }))
                     .children(target)
                     .child(div().text_color(p.ink_muted).child(if several {
-                        "Drop files here to send them to the chosen phone"
-                    } else if any_online {
+                        "Drop files here to send them where chosen"
+                    } else if any_online && only_phones {
                         "Drop files here to send them to your phone"
+                    } else if any_online {
+                        "Drop files here to send them to the linked PC"
                     } else {
                         "Open Dotlink on your phone to send it files"
                     }))
@@ -530,8 +551,11 @@ impl MainView {
     /// Each phone's screen in its own scrcpy window: one row per connected phone (and any phone
     /// still casting), with its state, Cast/Stop, and pairing when it's needed.
     fn cast_card(&self, p: &Palette, status: &Status, cx: &mut Context<Self>) -> Div {
-        let phones: Vec<&DeviceInfo> =
-            status.devices.iter().filter(|d| d.online || status.casts.contains_key(&d.id)).collect();
+        let phones: Vec<&DeviceInfo> = status
+            .devices
+            .iter()
+            .filter(|d| d.is_phone() && (d.online || status.casts.contains_key(&d.id)))
+            .collect();
         let mut card = group(p);
         if phones.is_empty() {
             return card.child(
@@ -653,7 +677,7 @@ impl MainView {
             .status
             .iter()
             .flat_map(|s| &s.devices)
-            .filter(|d| d.online)
+            .filter(|d| d.online && d.is_phone())
             .map(|d| (Some(d.id.clone()), d.name.clone()))
             .collect();
         let first = usize::from(online.len() > 1);
@@ -793,8 +817,114 @@ impl MainView {
                 ))
                 .into_any_element(),
         };
-        page(p, "Pair a phone", Some("The code works once, for 5 minutes. The phone remembers this PC after that."))
-            .child(body)
+        let tab = self.pair_tab;
+        let view = cx.entity().downgrade();
+        let tabs = segmented(p, "pair-tab", &["THIS PC'S CODE", "JOIN A PC"], tab, move |i, cx| {
+            view.update(cx, |this, cx| {
+                this.pair_tab = i;
+                cx.notify();
+            })
+            .ok();
+        });
+        let (subtitle, body) = if tab == 0 {
+            ("A phone scans the code; another PC pastes the link (Copy link). It works once, for 5 minutes.", body)
+        } else {
+            ("Link this PC to another one to send files and the clipboard both ways.", self.join_form(p, cx))
+        };
+        page(p, "Pair", Some(subtitle)).child(div().flex().child(tabs)).child(body)
+    }
+
+    /// The Pair page's "Join a PC" tab: paste the other PC's link.
+    fn join_form(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .max_w(px(560.))
+            .child(step(p, "1", "On the other PC, open Dotlink → Pair and press Copy link."))
+            .child(step(p, "2", "Send yourself the link (a chat, an email…) and paste it here."))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(div().flex_1().min_w_0().child(Input::new(&self.join_link).h(px(CONTROL))))
+                    .child(pill(p, "join", "Join", Kind::Primary).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        let link = this.join_link.read(cx).value().to_string();
+                        if link.trim().is_empty() {
+                            return;
+                        }
+                        let input = this.join_link.clone();
+                        let window = window.window_handle();
+                        this.model.update(cx, |m, cx| {
+                            m.join(
+                                link,
+                                move |cx| {
+                                    let _ = window.update(cx, |_, window, cx| {
+                                        input.update(cx, |state, cx| state.set_value("", window, cx));
+                                    });
+                                },
+                                cx,
+                            )
+                        });
+                    }))),
+            )
+            .child(div().text_size(px(13.)).text_color(p.ink_muted).child(
+                "The link carries the other PC's certificate fingerprint: Dotlink only talks to that PC. Only files and the clipboard go between PCs.",
+            ))
+            .into_any_element()
+    }
+
+    /// PCs linked with this one: files and the clipboard, nothing phone-only. None when there
+    /// are none.
+    fn pcs(&self, p: &Palette, status: &Status, cx: &mut Context<Self>) -> Option<Div> {
+        let pcs: Vec<&DeviceInfo> = status.devices.iter().filter(|d| !d.is_phone()).collect();
+        if pcs.is_empty() {
+            return None;
+        }
+        let mut list = group(p);
+        for (i, d) in pcs.into_iter().enumerate() {
+            let (id, auto) = (d.id.clone(), d.clipboard_auto);
+            let subtitle = if d.online { "Online".to_string() } else { format!("Linked {}", ago(d.paired_at)) };
+            let switch_id = SharedString::from(format!("clip-auto-{id}"));
+            let toggle_id = id.clone();
+            list = list.child(
+                row(p)
+                    .when(i > 0, |r| r.border_t_1().border_color(p.line))
+                    .child(status_dot(if d.online { p.positive } else { p.ink_faint }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().font_weight(FontWeight::MEDIUM).child(d.name.clone()))
+                            .child(div().text_size(px(13.)).text_color(p.ink_muted).child(subtitle)),
+                    )
+                    .children(d.battery.map(|b| battery(p, b)))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .text_size(px(13.))
+                            .text_color(p.ink_muted)
+                            .child("Clipboard sync")
+                            .child(Switch::new(switch_id).checked(auto).on_click(cx.listener(
+                                move |this, checked: &bool, _, cx| {
+                                    let (id, on) = (toggle_id.clone(), *checked);
+                                    this.model.update(cx, |m, cx| m.set_clipboard_auto(id, on, cx));
+                                },
+                            ))),
+                    )
+                    .child(pill(p, SharedString::from(format!("unpair-{id}")), "Forget", Kind::Ghost).on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            let id = id.clone();
+                            this.model.update(cx, |m, cx| m.unpair(id, cx));
+                        }),
+                    )),
+            );
+        }
+        Some(list)
     }
 
     fn activity(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
