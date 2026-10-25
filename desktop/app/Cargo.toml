@@ -94,6 +94,11 @@ Section WaitForDotlink
       ${EndIf}
   ${EndIf}
 SectionEnd
+
+# Explorer's "Share with Dotlink" (written by the app, core/src/platform/windows/share_menu.rs).
+Section un.RemoveShareMenu
+  DeleteRegKey HKCU "Software\\Classes\\*\\shell\\Dotlink"
+SectionEnd
 """
 
 # `cargo generate-rpm -p app` (cargo install cargo-generate-rpm), after

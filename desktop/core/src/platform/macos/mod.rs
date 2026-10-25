@@ -88,6 +88,11 @@ impl MicSink {
     pub fn write(&mut self, _pcm: axum::body::Bytes) {}
 }
 
+/// TODO(macos): a Finder Share extension or a Quick Action.
+pub mod share_menu {
+    pub fn set(_phones: &[(String, String)]) {}
+}
+
 pub mod autostart {
     use anyhow::{Result, bail};
 

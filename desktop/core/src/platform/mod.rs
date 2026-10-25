@@ -12,6 +12,7 @@
 //! | `default_shell()`, `process_name(pid)` | the Shell screen |
 //! | `autostart::{enabled, set}` | start with the desktop session |
 //! | `setup::{checks, fix}` | permissions and system pieces the features need |
+//! | `share_menu::set(phones)` | "Share with Dotlink" in the file manager's menu, one item per phone |
 //!
 //! Linux is complete, and so is Windows (Windows 11). macOS is stubs that report "not supported
 //! yet" (written on Linux, never compiled there yet); their TODO comments say what to build.

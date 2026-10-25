@@ -6,6 +6,7 @@ pub(crate) mod camera;
 mod input;
 mod media;
 pub mod setup;
+pub mod share_menu;
 
 pub(crate) use super::polling_clipboard as clipboard;
 pub use camera::{CameraHub, find_camera};

@@ -42,6 +42,10 @@ enum Cmd {
         /// Only to this phone (name or id); every connected phone without it.
         #[arg(long)]
         to: Option<String>,
+        /// Report a failure as a desktop notification (Explorer's "Share with Dotlink" has no
+        /// console to print it to).
+        #[arg(long, hide = true)]
+        notify: bool,
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
@@ -166,12 +170,19 @@ async fn command(cmd: Cmd) -> Result<()> {
             })
             .await
         }
-        Cmd::Send { to, files } => {
-            let paths: Vec<String> = files
-                .iter()
-                .map(|p| std::fs::canonicalize(p).map(|p| p.to_string_lossy().into_owned()))
-                .collect::<std::io::Result<_>>()?;
-            simple(json!({ "cmd": "send", "paths": paths, "to": to })).await
+        Cmd::Send { to, notify, files } => {
+            let result = async {
+                let paths: Vec<String> = files
+                    .iter()
+                    .map(|p| std::fs::canonicalize(p).map(|p| p.to_string_lossy().into_owned()))
+                    .collect::<std::io::Result<_>>()?;
+                simple(json!({ "cmd": "send", "paths": paths, "to": to })).await
+            }
+            .await;
+            if notify && let Err(e) = &result {
+                dotlink_core::platform::notify("Could not share", &format!("{e:#}"));
+            }
+            result
         }
         Cmd::Clip { to } => simple(json!({ "cmd": "clip", "to": to })).await,
         Cmd::Unpair { device } => simple(json!({ "cmd": "unpair", "id": device })).await,
