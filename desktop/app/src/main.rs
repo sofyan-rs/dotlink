@@ -37,9 +37,9 @@ enum Cmd {
         #[arg(long)]
         usb: bool,
     },
-    /// Send files to the connected phones.
+    /// Send files to the connected phones and linked PCs.
     Send {
-        /// Only to this phone (name or id); every connected phone without it.
+        /// Only to this device (name or id); every connected one without it.
         #[arg(long)]
         to: Option<String>,
         /// Report a failure as a desktop notification (Explorer's "Share with Dotlink" has no
@@ -49,13 +49,19 @@ enum Cmd {
         #[arg(required = true)]
         files: Vec<PathBuf>,
     },
-    /// Send the current PC clipboard to the connected phones.
+    /// Send the current PC clipboard to the connected phones and linked PCs.
     Clip {
-        /// Only to this phone (name or id).
+        /// Only to this device (name or id).
         #[arg(long)]
         to: Option<String>,
     },
-    /// List paired phones.
+    /// Link this PC to another one: paste the link its `dotlink pair` (or Pair page) shows.
+    /// The two PCs then share files and the clipboard.
+    Join { link: String },
+    /// Send this PC's clipboard changes to a linked PC as they happen (`on`), or only on
+    /// `dotlink clip` (`off`, the default).
+    ClipAuto { device: String, state: OnOff },
+    /// List paired phones and linked PCs.
     Devices,
     /// Forget a paired phone (by name or id).
     Unpair { device: String },
@@ -188,6 +194,10 @@ async fn command(cmd: Cmd) -> Result<()> {
             result
         }
         Cmd::Clip { to } => simple(json!({ "cmd": "clip", "to": to })).await,
+        Cmd::Join { link } => simple(json!({ "cmd": "join", "uri": link })).await,
+        Cmd::ClipAuto { device, state } => {
+            simple(json!({ "cmd": "clipboard_auto", "id": device, "on": matches!(state, OnOff::On) })).await
+        }
         Cmd::Unpair { device } => simple(json!({ "cmd": "unpair", "id": device })).await,
         Cmd::Quit => simple(json!({ "cmd": "quit" })).await,
         Cmd::Url { link } => open_link(&link),
@@ -208,11 +218,12 @@ async fn command(cmd: Cmd) -> Result<()> {
             ipc::request(json!({ "cmd": "devices" }), |v| {
                 let devices = v["devices"].as_array().cloned().unwrap_or_default();
                 if devices.is_empty() {
-                    println!("No paired phones. Run `dotlink pair`.");
+                    println!("No paired phones or linked PCs. Run `dotlink pair`.");
                 }
                 for d in devices {
                     let state = if d["online"].as_bool().unwrap_or(false) { "online" } else { "offline" };
-                    println!("{}  {}  ({state})", d["id"].as_str().unwrap_or(""), d["name"].as_str().unwrap_or(""));
+                    let kind = d["kind"].as_str().unwrap_or("phone");
+                    println!("{}  {}  {kind}  ({state})", d["id"].as_str().unwrap_or(""), d["name"].as_str().unwrap_or(""));
                 }
                 Ok(())
             })

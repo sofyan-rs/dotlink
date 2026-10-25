@@ -121,16 +121,43 @@ pub struct Device {
     pub name: String,
     #[serde(default)]
     pub kind: DeviceKind,
+    /// A PC: send it this PC's clipboard changes as they happen (phones always get them while
+    /// `clipboard_sync` is on).
+    #[serde(default)]
+    pub clipboard_auto: bool,
     /// SHA-256 of the bearer token; the token itself is only known to the phone.
     pub token_sha256: String,
     pub paired_at: u64,
+}
+
+/// A PC this one linked to with its pairing link (`peer.rs`): this PC connects to it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Peer {
+    /// Its `server_id`.
+    pub id: String,
+    pub name: String,
+    /// SHA-256 of its certificate, pinned.
+    pub fingerprint: String,
+    /// Its addresses, the one that answered last first.
+    pub hosts: Vec<String>,
+    pub port: u16,
+    /// What this PC presents to it.
+    pub token: String,
+    pub paired_at: u64,
+    /// Send it this PC's clipboard changes as they happen.
+    #[serde(default)]
+    pub clipboard_auto: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct State {
     /// Random id of this PC, so the phone can tell PCs apart over mDNS.
     pub server_id: String,
+    /// Phones and PCs that paired with this one.
     pub devices: Vec<Device>,
+    /// PCs this one linked to.
+    #[serde(default)]
+    pub peers: Vec<Peer>,
 }
 
 impl State {

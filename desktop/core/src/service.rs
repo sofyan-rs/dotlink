@@ -57,6 +57,7 @@ async fn serve(app: Arc<App>, identity: tls::Identity) -> Result<()> {
     // Always watched; `clipboard_sync` is checked per change so the setting applies live.
     tokio::spawn(platform::clipboard::watch(app.clone()));
     tokio::spawn(crate::usb::watch(app.clone()));
+    crate::peer::start_all(&app);
     let _mdns = advertise(&app).map_err(|e| tracing::warn!("mDNS disabled: {e}")).ok();
 
     let pem = axum_server::tls_rustls::RustlsConfig::from_pem(identity.cert_pem, identity.key_pem).await?;

@@ -14,11 +14,18 @@ arboard = { version = "3.7.0", default-features = false }
 axum = { version = "0.8.9", features = ["ws", "macros"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 base64 = "0.23.1"
+bytes = "1.12.1"
 dirs = "7.0.0"
 futures = "0.3.34"
 getrandom = "0.4"
 hex = "0.4.3"
 hostname = "0.4.2"
+# The client side of a link to another PC (peer.rs): HTTP/1.1 and WebSocket over pinned TLS.
+http-body-util = "0.1.5"
+hyper = { version = "1.12.0", features = ["client", "http1"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["logging", "tls12"] }
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["handshake"] }
 if-addrs = "0.15.0"
 interprocess = { version = "2.4.6", features = ["tokio"] }
 mdns-sd = "0.21.6"

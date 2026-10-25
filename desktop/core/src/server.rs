@@ -60,8 +60,10 @@ pub struct Target {
     pub id: Option<String>,
     /// The phones' names, comma-separated.
     pub names: String,
-    /// The phones: (device id, name).
+    /// The phones and PCs that paired with this one: (device id, name).
     pub phones: Vec<(String, String)>,
+    /// The PCs this one joined: (id, name).
+    pub peers: Vec<(String, String)>,
 }
 
 /// Transfer id of an offer: one transfer per phone when it went to every phone.
@@ -110,6 +112,8 @@ pub struct App {
     pub phones: Mutex<HashMap<String, PhoneInfo>>,
     /// Casting the phone screen with scrcpy.
     pub cast: crate::cast::Cast,
+    /// Links to the PCs this one joined.
+    pub peers: crate::peer::Peers,
     /// "camera" / "mic" → the phone streaming it right now.
     streams: Mutex<BTreeMap<&'static str, String>>,
     /// The window of the app this runs in; None when headless (`dotlink daemon`).
@@ -146,6 +150,7 @@ impl App {
             streams: Mutex::new(BTreeMap::new()),
             phones: Mutex::new(HashMap::new()),
             cast: crate::cast::Cast::default(),
+            peers: crate::peer::Peers::default(),
             ui: Mutex::new(None),
             shutdown: Notify::new(),
         })
@@ -200,7 +205,7 @@ impl App {
     }
 
     /// Adds or updates a transfer in the history and tells the window.
-    fn put_transfer(&self, t: Transfer) {
+    pub(crate) fn put_transfer(&self, t: Transfer) {
         let mut list = self.transfers.lock().unwrap();
         match list.iter_mut().find(|x| x.id == t.id) {
             Some(x) => *x = t.clone(),
@@ -236,8 +241,22 @@ impl App {
                         .and_then(|p| p.battery)
                         .filter(|_| online.get(&d.id).copied().unwrap_or(0) > 0)
                         .map(|(level, charging)| json!({ "level": level, "charging": charging })),
+                    "clipboard_auto": d.clipboard_auto,
                 })
             })
+            .chain(state.peers.iter().map(|p| {
+                json!({
+                    "id": p.id,
+                    "name": p.name,
+                    "kind": DeviceKind::Pc,
+                    "online": self.peers.online(&p.id),
+                    "paired_at": p.paired_at,
+                    "usb": false,
+                    // This PC joined it (rather than it joining this PC).
+                    "joined": true,
+                    "clipboard_auto": p.clipboard_auto,
+                })
+            }))
             .collect()
     }
 
@@ -265,14 +284,58 @@ impl App {
         if text.is_empty() || !self.config.lock().unwrap().clipboard_sync || !self.remember_clip(&text) {
             return;
         }
-        let online = self.online_devices();
-        if online.is_empty() {
+        // Phones always; PCs only when asked to (two PCs copying would keep overwriting each other).
+        let (ids, mut names): (Vec<String>, Vec<String>) = {
+            let online = self.online.lock().unwrap();
+            let state = self.state.lock().unwrap();
+            state
+                .devices
+                .iter()
+                .filter(|d| online.get(&d.id).copied().unwrap_or(0) > 0)
+                .filter(|d| d.kind == DeviceKind::Phone || d.clipboard_auto)
+                .map(|d| (d.id.clone(), d.name.clone()))
+                .unzip()
+        };
+        let msg = json!({ "t": "clip", "text": text });
+        for id in &ids {
+            self.send_control_to(Some(id), msg.clone());
+        }
+        let peers: Vec<(String, String)> = {
+            let state = self.state.lock().unwrap();
+            state.peers.iter().filter(|p| p.clipboard_auto).map(|p| (p.id.clone(), p.name.clone())).collect()
+        };
+        for (id, name) in peers {
+            if self.peers.send(&id, &msg) {
+                names.push(name);
+            }
+        }
+        if names.is_empty() {
             return;
         }
-        tracing::info!("clipboard to phone ({} chars)", text.chars().count());
         let chars = text.chars().count();
-        self.send_control(json!({ "t": "clip", "text": text }));
-        self.emit(Event::Clipboard { to_phone: true, device: online.join(", "), chars });
+        tracing::info!("clipboard to {} ({chars} chars)", names.join(", "));
+        self.emit(Event::Clipboard { to_phone: true, device: names.join(", "), chars });
+    }
+
+    /// Turns sending clipboard changes as they happen on or off for a PC (`key`: name or id).
+    pub fn set_clipboard_auto(&self, key: &str, on: bool) -> Result<String> {
+        let mut state = self.state.lock().unwrap();
+        let name = if let Some(d) = state.devices.iter_mut().find(|d| d.id == key || d.name.eq_ignore_ascii_case(key)) {
+            if d.kind == DeviceKind::Phone {
+                bail!("{} is a phone: it follows the clipboard sync setting", d.name);
+            }
+            d.clipboard_auto = on;
+            d.name.clone()
+        } else if let Some(p) = state.peers.iter_mut().find(|p| p.id == key || p.name.eq_ignore_ascii_case(key)) {
+            p.clipboard_auto = on;
+            p.name.clone()
+        } else {
+            bail!("no paired device \"{key}\"");
+        };
+        state.save()?;
+        drop(state);
+        self.emit(Event::Devices);
+        Ok(name)
     }
 
     /// Asks the phones to start or stop streaming the camera or mic (`kind`: "camera" | "mic").
@@ -310,7 +373,13 @@ impl App {
         };
         self.remember_clip(&text);
         let chars = text.chars().count();
-        self.send_control_to(target.id.as_deref(), json!({ "t": "clip", "text": text }));
+        let msg = json!({ "t": "clip", "text": text });
+        if !target.phones.is_empty() {
+            self.send_control_to(target.id.as_deref(), msg.clone());
+        }
+        for (id, _) in &target.peers {
+            self.peers.send(id, &msg);
+        }
         self.emit(Event::Clipboard { to_phone: true, device: target.names, chars });
         Ok(())
     }
@@ -328,11 +397,26 @@ impl App {
         let kind_ok = |d: &Device| !phones_only || d.kind == DeviceKind::Phone;
         match to {
             Some(key) => {
-                let dev = state
-                    .devices
-                    .iter()
-                    .find(|d| d.id == key || d.name.eq_ignore_ascii_case(key))
-                    .ok_or_else(|| anyhow!("no paired device \"{key}\""))?;
+                let matches = |id: &str, name: &str| id == key || name.eq_ignore_ascii_case(key);
+                let Some(dev) = state.devices.iter().find(|d| matches(&d.id, &d.name)) else {
+                    let peer = state
+                        .peers
+                        .iter()
+                        .find(|p| matches(&p.id, &p.name))
+                        .ok_or_else(|| anyhow!("no paired device \"{key}\""))?;
+                    if phones_only {
+                        bail!("{} is a PC, not a phone", peer.name);
+                    }
+                    if !self.peers.online(&peer.id) {
+                        bail!("{} is not connected", peer.name);
+                    }
+                    return Ok(Target {
+                        id: Some(peer.id.clone()),
+                        names: peer.name.clone(),
+                        phones: Vec::new(),
+                        peers: vec![(peer.id.clone(), peer.name.clone())],
+                    });
+                };
                 if !kind_ok(dev) {
                     bail!("{} is a PC, not a phone", dev.name);
                 }
@@ -343,16 +427,27 @@ impl App {
                     id: Some(dev.id.clone()),
                     names: dev.name.clone(),
                     phones: vec![(dev.id.clone(), dev.name.clone())],
+                    peers: Vec::new(),
                 })
             }
             None => {
                 let phones: Vec<(String, String)> =
                     state.devices.iter().filter(|d| is_online(d) && kind_ok(d)).map(|d| (d.id.clone(), d.name.clone())).collect();
-                if phones.is_empty() {
-                    bail!("no phone connected");
+                let peers: Vec<(String, String)> = if phones_only {
+                    Vec::new()
+                } else {
+                    state
+                        .peers
+                        .iter()
+                        .filter(|p| self.peers.online(&p.id))
+                        .map(|p| (p.id.clone(), p.name.clone()))
+                        .collect()
+                };
+                if phones.is_empty() && peers.is_empty() {
+                    bail!(if phones_only { "no phone connected" } else { "no device connected" });
                 }
-                let names = phones.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>().join(", ");
-                Ok(Target { id: None, names, phones })
+                let names = phones.iter().chain(&peers).map(|(_, n)| n.as_str()).collect::<Vec<_>>().join(", ");
+                Ok(Target { id: None, names, phones, peers })
             }
         }
     }
@@ -430,8 +525,14 @@ impl App {
 
     /// Offers files to a phone (`to`: its name or id) or, for None, to every connected phone.
     /// The phone downloads them right away. Returns the count and the phones' names.
-    pub fn offer_files(&self, paths: &[PathBuf], to: Option<&str>) -> Result<(usize, String)> {
+    pub fn offer_files(self: &Arc<Self>, paths: &[PathBuf], to: Option<&str>) -> Result<(usize, String)> {
         let target = self.target(to)?;
+        for (id, _) in &target.peers {
+            crate::peer::send_files(self, id, paths.to_vec())?;
+        }
+        if target.phones.is_empty() {
+            return Ok((paths.len(), target.names));
+        }
         let mut offers = self.offers.lock().unwrap();
         offers.retain(|_, o| o.created.elapsed() < OFFER_TTL);
         let mut count = 0;
@@ -484,13 +585,18 @@ impl App {
         update_share_menu(&state);
     }
 
-    pub fn unpair(&self, key: &str) -> Result<String> {
+    pub fn unpair(self: &Arc<Self>, key: &str) -> Result<String> {
         let mut state = self.state.lock().unwrap();
-        let idx = state
-            .devices
-            .iter()
-            .position(|d| d.id == key || d.name.eq_ignore_ascii_case(key))
-            .ok_or_else(|| anyhow!("no paired device \"{key}\""))?;
+        let Some(idx) = state.devices.iter().position(|d| d.id == key || d.name.eq_ignore_ascii_case(key)) else {
+            let peer = state
+                .peers
+                .iter()
+                .find(|p| p.id == key || p.name.eq_ignore_ascii_case(key))
+                .map(|p| p.id.clone())
+                .ok_or_else(|| anyhow!("no paired device \"{key}\""))?;
+            drop(state);
+            return crate::peer::forget(self, &peer);
+        };
         let dev = state.devices.remove(idx);
         state.save()?;
         update_share_menu(&state);
@@ -516,7 +622,7 @@ fn update_share_menu(state: &State) {
 
 pub fn router(app: Arc<App>) -> Router {
     Router::new()
-        .route("/pair", post(pair))
+        .route("/pair", post(pair).delete(unpair_self))
         .route("/pair/usb", get(usb_pair_probe).post(usb_pair_request))
         .route("/ping", get(ping))
         .route("/ws/control", get(ws_control))
@@ -584,6 +690,11 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
     if req.device_id == app.server_id() {
         return (StatusCode::BAD_REQUEST, "this is the same PC").into_response();
     }
+    // One link per pair of PCs: this one already joined that PC.
+    if let Some(peer) = app.state.lock().unwrap().peers.iter().find(|p| p.id == req.device_id) {
+        return (StatusCode::CONFLICT, format!("already linked: {} joined {} before", app.name(), peer.name))
+            .into_response();
+    }
     let done = {
         let mut pairing = app.pairing.lock().unwrap();
         let valid = pairing.as_ref().is_some_and(|p| p.expires > Instant::now() && ct_eq(&p.secret, &req.secret));
@@ -610,6 +721,7 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
             id: req.device_id.chars().take(64).collect(),
             name: name.clone(),
             kind: req.kind,
+            clipboard_auto: false,
             token_sha256: sha256_hex(token.as_bytes()),
             paired_at: now_secs(),
         });
@@ -626,6 +738,14 @@ async fn pair(AxState(app): AxState<Arc<App>>, Json(req): Json<PairReq>) -> Resp
     let what = if req.kind == DeviceKind::Pc { "PC" } else { "Phone" };
     notify(&format!("{what} paired"), &format!("{name} can now connect to this PC"));
     Json(json!({ "token": token, "server_id": app.server_id(), "server_name": app.name() })).into_response()
+}
+
+/// A PC linked to this one unlinked it: forget it here too.
+async fn unpair_self(AxState(app): AxState<Arc<App>>, Authed(dev): Authed) -> Response {
+    match app.unpair(&dev.id) {
+        Ok(_) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 /// Through `adb reverse` the phone connects from this PC's loopback.
@@ -1052,7 +1172,7 @@ async fn upload(
         },
     );
     let sha = headers.get("x-sha256").and_then(|v| v.to_str().ok());
-    match save_upload(&app, &name, sha, body, &mut progress).await {
+    match save_stream(&app, &name, sha, body.into_data_stream(), &mut progress).await {
         Ok(path) => {
             let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
             progress.transfer.name = name.clone();
@@ -1068,7 +1188,19 @@ async fn upload(
     }
 }
 
-async fn save_upload(app: &App, name: &str, sha: Option<&str>, body: Body, progress: &mut Progress) -> Result<PathBuf> {
+/// Saves a received file into the download folder: a `.part` file, checked against `sha`
+/// (when given), then renamed to a free name.
+pub(crate) async fn save_stream<S, E>(
+    app: &App,
+    name: &str,
+    sha: Option<&str>,
+    mut stream: S,
+    progress: &mut Progress,
+) -> Result<PathBuf>
+where
+    S: futures::Stream<Item = std::result::Result<bytes::Bytes, E>> + Unpin,
+    E: std::error::Error + Send + Sync + 'static,
+{
     let dir = app.config().download_dir();
     tokio::fs::create_dir_all(&dir).await?;
     let dest = unique_path(&dir, name);
@@ -1077,7 +1209,6 @@ async fn save_upload(app: &App, name: &str, sha: Option<&str>, body: Body, progr
     // TLS records, so batch them.
     let mut file = tokio::io::BufWriter::with_capacity(1024 * 1024, tokio::fs::File::create(&part).await?);
     let mut hasher = Sha256::new();
-    let mut stream = body.into_data_stream();
     let result: Result<()> = async {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
@@ -1168,7 +1299,7 @@ async fn download(AxState(app): AxState<Arc<App>>, Authed(dev): Authed, Path(id)
 
 // ---------- helpers ----------
 
-fn sanitize_name(name: &str) -> Option<String> {
+pub(crate) fn sanitize_name(name: &str) -> Option<String> {
     let base = name.rsplit(['/', '\\']).next()?.trim();
     let clean: String = base.chars().filter(|c| !c.is_control()).collect();
     let clean = clean.trim_start_matches('.').to_string();
@@ -1220,20 +1351,20 @@ impl Drop for Streaming {
 
 /// A transfer in progress. Reports to the window at most 4 times a second; dropping it
 /// before `finish` marks the transfer failed (the phone went away).
-struct Progress {
+pub(crate) struct Progress {
     app: Arc<App>,
-    transfer: Transfer,
+    pub(crate) transfer: Transfer,
     last_report: Instant,
     finished: bool,
 }
 
 impl Progress {
-    fn new(app: &Arc<App>, transfer: Transfer) -> Self {
+    pub(crate) fn new(app: &Arc<App>, transfer: Transfer) -> Self {
         app.put_transfer(transfer.clone());
         Self { app: app.clone(), transfer, last_report: Instant::now(), finished: false }
     }
 
-    fn add(&mut self, bytes: u64) {
+    pub(crate) fn add(&mut self, bytes: u64) {
         self.transfer.done += bytes;
         if self.last_report.elapsed() >= Duration::from_millis(250) {
             self.last_report = Instant::now();
@@ -1241,7 +1372,7 @@ impl Progress {
         }
     }
 
-    fn finish(&mut self, result: std::result::Result<(), String>) {
+    pub(crate) fn finish(&mut self, result: std::result::Result<(), String>) {
         if self.finished {
             return;
         }

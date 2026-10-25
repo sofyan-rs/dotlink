@@ -6,6 +6,7 @@ pub mod config;
 pub mod events;
 pub mod input;
 pub mod ipc;
+pub mod peer;
 pub mod platform;
 pub mod server;
 pub mod service;

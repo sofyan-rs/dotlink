@@ -134,6 +134,17 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
             let msg = result(app.send_clipboard(req["to"].as_str()).await.map(|()| "clipboard sent".into()));
             w.write_all(reply(msg).as_bytes()).await?;
         }
+        "join" => {
+            let msg = result(crate::peer::join(&app, req["uri"].as_str().unwrap_or("")).await.map(|name| format!("linked to {name}")));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "clipboard_auto" => {
+            let on = req["on"].as_bool().unwrap_or(false);
+            let msg = result(app.set_clipboard_auto(req["id"].as_str().unwrap_or(""), on).map(|name| {
+                format!("{name} {} this PC's clipboard changes", if on { "gets" } else { "no longer gets" })
+            }));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
         "devices" => {
             w.write_all(reply(json!({ "devices": app.devices_json() })).as_bytes()).await?;
         }
