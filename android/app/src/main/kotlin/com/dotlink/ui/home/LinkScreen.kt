@@ -186,7 +186,7 @@ fun LinkScreen(
 }
 
 @Composable
-private fun TransferRow(t: Transfer) {
+internal fun TransferRow(t: Transfer) {
     val arrow = if (t.incoming) "↓" else "↑"
     val subtitle =
         when (t.status) {

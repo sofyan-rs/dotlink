@@ -142,6 +142,8 @@ private fun DotlinkRoot(
     // Pairing another PC while one is paired already.
     var addingPc by rememberSaveable { mutableStateOf(false) }
     var pairingPhone by rememberSaveable { mutableStateOf(false) }
+    // Settings from the Phones screen (no PC, so no tabs).
+    var phonesSettings by rememberSaveable { mutableStateOf(false) }
     // No PC, but phones: their own home screen instead of the PC pairing screen.
     val phonesHome = state is LinkState.Unpaired && phones.isNotEmpty() && !addingPc && pairLink == null
     // Pairing or choosing a PC: no tabs (and no tab bar under the snackbar).
@@ -152,8 +154,10 @@ private fun DotlinkRoot(
         CompositionLocalProvider(LocalNavRail provides rail) {
             if (pairingPhone) {
                 PhonePairScreen(onDone = { pairingPhone = false })
+            } else if (phonesHome && phonesSettings) {
+                SettingsScreen(onBack = { phonesSettings = false })
             } else if (phonesHome) {
-                PhonesHomeScreen(onPairPhone = { pairingPhone = true }, onPairPc = { addingPc = true })
+                PhonesHomeScreen(onPairPhone = { pairingPhone = true }, onPairPc = { addingPc = true }, onSettings = { phonesSettings = true })
             } else if (state is LinkState.Unpaired) {
                 PairScreen(
                     initialLink = pairLink,

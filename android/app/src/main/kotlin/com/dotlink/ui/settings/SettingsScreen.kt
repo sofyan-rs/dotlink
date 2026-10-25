@@ -4,6 +4,7 @@
  */
 package com.dotlink.ui.settings
 
+import androidx.activity.compose.BackHandler
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
@@ -48,6 +49,7 @@ import com.dotlink.ui.dotline.ListGroup
 import com.dotlink.ui.dotline.ListRow
 import com.dotlink.ui.dotline.ListRowChevron
 import com.dotlink.ui.dotline.ScreenTitle
+import com.dotlink.ui.dotline.ScreenTitleAction
 import com.dotlink.ui.dotline.SecondaryButton
 import com.dotlink.ui.dotline.SegmentOption
 import com.dotlink.ui.dotline.SegmentedControl
@@ -60,14 +62,25 @@ import kotlinx.coroutines.launch
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(
+    /** Opened from the Phones screen (no PC paired): a back arrow, and nothing about a PC. */
+    onBack: (() -> Unit)? = null,
+) {
     val link = DotlinkApp.link
     val prefs = link.prefs
     val context = LocalContext.current
     val state by link.state.collectAsStateWithLifecycle()
+    // Remote, Shell, the PC clipboard and the paired PC only mean something with a PC.
+    val pc = prefs.paired
+    if (onBack != null) BackHandler(onBack = onBack)
 
     TabScreen {
-        ScreenTitle(title = "Settings")
+        ScreenTitle(
+            title = "Settings",
+            actions = {
+                if (onBack != null) ScreenTitleAction(DotlineIcons.Close, contentDescription = "Close", onClick = onBack)
+            },
+        )
 
         Section("This phone") {
             val name = rememberTextFieldState(prefs.phoneName)
@@ -79,28 +92,30 @@ fun SettingsScreen() {
                 state = name,
                 label = "Name",
                 placeholder = link.systemDeviceName(),
-                helperText = "What your PCs call this phone.",
+                helperText = "What your PCs and phones call this phone.",
             )
         }
 
-        Section("Clipboard") {
-            var auto by remember { mutableStateOf(prefs.autoClipboard) }
-            ListGroup {
-                ListRow(
-                    title = "Send when I open Dotlink",
-                    subtitle = "Android only lets apps read the clipboard while open",
-                    leadingIcon = DotlineIcons.Clipboard,
-                    role = Role.Switch,
-                    onClick = {
-                        auto = !auto
-                        prefs.autoClipboard = auto
-                    },
-                    trailing = { KuSwitch(checked = auto, onCheckedChange = null) },
-                )
+        if (pc) {
+            Section("Clipboard") {
+                var auto by remember { mutableStateOf(prefs.autoClipboard) }
+                ListGroup {
+                    ListRow(
+                        title = "Send when I open Dotlink",
+                        subtitle = "Android only lets apps read the clipboard while open",
+                        leadingIcon = DotlineIcons.Clipboard,
+                        role = Role.Switch,
+                        onClick = {
+                            auto = !auto
+                            prefs.autoClipboard = auto
+                        },
+                        trailing = { KuSwitch(checked = auto, onCheckedChange = null) },
+                    )
+                }
+                Hint("PC → phone is automatic. Phone → PC: open Dotlink, use Share → Dotlink, or the notification button.")
             }
-            Hint("PC → phone is automatic. Phone → PC: open Dotlink, use Share → Dotlink, or the notification button.")
-        }
 
+        }
         Section("Received files") {
             ListGroup {
                 ListRow(
@@ -111,93 +126,99 @@ fun SettingsScreen() {
                     leadingIcon = DotlineIcons.Folder,
                 )
             }
-            Hint("Files from the PC always go here; open it in your Files app. This can't be changed yet.")
+            Hint("Files from the PC and from phones always go here; open it in your Files app. This can't be changed yet.")
         }
 
-        Section("Remote") {
-            val speeds = listOf(1.0f, 1.4f, 2.0f)
-            Choice(listOf("Slow", "Normal", "Fast"), speeds.indexOfFirst { it >= prefs.pointerSpeed }.coerceAtLeast(0)) {
-                prefs.pointerSpeed = speeds[it]
-            }
-        }
-
-        Section("Shell") {
-            val sizes = listOf(11, 13, 15)
-            Choice(listOf("Small", "Medium", "Large"), sizes.indexOf(prefs.terminalFontSize).coerceAtLeast(0)) {
-                prefs.terminalFontSize = sizes[it]
-            }
-        }
-
-        Section("Paired PC") {
-            var confirm by remember { mutableStateOf(false) }
-            ListGroup {
-                ListRow(
-                    title = prefs.serverName,
-                    subtitle = (prefs.fingerprint ?: "").chunked(4).take(8).joinToString(" "),
-                    subtitleIsData = true,
-                    leadingIcon = DotlineIcons.Monitor,
-                )
-                ListDivider()
-                ListRow(
-                    title = "Addresses",
-                    subtitle = (listOfNotNull(prefs.lastHost) + prefs.hosts).distinct().joinToString(", ") + " · port ${prefs.port}",
-                    subtitleIsData = true,
-                    leadingIcon = DotlineIcons.Link,
-                )
-            }
-            Spacer(Modifier.height(Dotline.space.s3))
-            // Each PC has its own PIN: a fresh field (and save target) per PC, so switching PCs
-            // never writes one PC's PIN into another.
-            val pcId = prefs.active?.id
-            key(pcId) {
-                val pin = rememberTextFieldState(prefs.terminalPin)
-                var show by remember { mutableStateOf(false) }
-                LaunchedEffect(pin) {
-                    snapshotFlow { pin.text.toString() }.drop(1).collect { if (pcId != null) prefs.setTerminalPin(pcId, it) }
+        if (pc) {
+            Section("Remote") {
+                val speeds = listOf(1.0f, 1.4f, 2.0f)
+                Choice(listOf("Slow", "Normal", "Fast"), speeds.indexOfFirst { it >= prefs.pointerSpeed }.coerceAtLeast(0)) {
+                    prefs.pointerSpeed = speeds[it]
                 }
-                DotlinePasswordField(
-                    state = pin,
-                    label = "Terminal PIN",
-                    placeholder = "No PIN",
-                    passwordVisible = show,
-                    onPasswordVisibleChange = { show = it },
-                    helperText = "Each PC has its own. Only needed if ${prefs.serverName}'s Dotlink sets a terminal PIN.",
-                )
             }
-            Spacer(Modifier.height(Dotline.space.s4))
-            Column(Modifier.padding(horizontal = Dotline.space.s1)) {
-                val disconnected = state is LinkState.Disconnected
-                SecondaryButton(
-                    text = if (disconnected) "Reconnect" else "Disconnect for now",
-                    onClick = { LinkService.send(context, if (disconnected) null else LinkService.ACTION_DISCONNECT) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(Dotline.space.s2))
-                DestructiveButton(text = "Forget this PC", onClick = { confirm = true }, modifier = Modifier.fillMaxWidth())
-            }
-            if (confirm) {
-                DotlineDialog(
-                    onDismissRequest = { confirm = false },
-                    title = "Forget ${prefs.serverName}?",
-                    body = "This phone stops connecting to it. To link again, pair from the PC's Dotlink app.",
-                    confirmButton = {
-                        DestructiveButton(
-                            text = "Forget",
-                            compact = true,
-                            onClick = {
-                                confirm = false
-                                prefs.active?.let { link.forget(it.id) }
-                            },
-                            modifier = Modifier.weight(1f),
-                        )
-                    },
-                    dismissButton = {
-                        SecondaryButton(text = "Cancel", compact = true, onClick = { confirm = false }, modifier = Modifier.weight(1f))
-                    },
-                )
-            }
-        }
 
+        }
+        if (pc) {
+            Section("Shell") {
+                val sizes = listOf(11, 13, 15)
+                Choice(listOf("Small", "Medium", "Large"), sizes.indexOf(prefs.terminalFontSize).coerceAtLeast(0)) {
+                    prefs.terminalFontSize = sizes[it]
+                }
+            }
+
+        }
+        if (pc) {
+            Section("Paired PC") {
+                var confirm by remember { mutableStateOf(false) }
+                ListGroup {
+                    ListRow(
+                        title = prefs.serverName,
+                        subtitle = (prefs.fingerprint ?: "").chunked(4).take(8).joinToString(" "),
+                        subtitleIsData = true,
+                        leadingIcon = DotlineIcons.Monitor,
+                    )
+                    ListDivider()
+                    ListRow(
+                        title = "Addresses",
+                        subtitle = (listOfNotNull(prefs.lastHost) + prefs.hosts).distinct().joinToString(", ") + " · port ${prefs.port}",
+                        subtitleIsData = true,
+                        leadingIcon = DotlineIcons.Link,
+                    )
+                }
+                Spacer(Modifier.height(Dotline.space.s3))
+                // Each PC has its own PIN: a fresh field (and save target) per PC, so switching PCs
+                // never writes one PC's PIN into another.
+                val pcId = prefs.active?.id
+                key(pcId) {
+                    val pin = rememberTextFieldState(prefs.terminalPin)
+                    var show by remember { mutableStateOf(false) }
+                    LaunchedEffect(pin) {
+                        snapshotFlow { pin.text.toString() }.drop(1).collect { if (pcId != null) prefs.setTerminalPin(pcId, it) }
+                    }
+                    DotlinePasswordField(
+                        state = pin,
+                        label = "Terminal PIN",
+                        placeholder = "No PIN",
+                        passwordVisible = show,
+                        onPasswordVisibleChange = { show = it },
+                        helperText = "Each PC has its own. Only needed if ${prefs.serverName}'s Dotlink sets a terminal PIN.",
+                    )
+                }
+                Spacer(Modifier.height(Dotline.space.s4))
+                Column(Modifier.padding(horizontal = Dotline.space.s1)) {
+                    val disconnected = state is LinkState.Disconnected
+                    SecondaryButton(
+                        text = if (disconnected) "Reconnect" else "Disconnect for now",
+                        onClick = { LinkService.send(context, if (disconnected) null else LinkService.ACTION_DISCONNECT) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(Dotline.space.s2))
+                    DestructiveButton(text = "Forget this PC", onClick = { confirm = true }, modifier = Modifier.fillMaxWidth())
+                }
+                if (confirm) {
+                    DotlineDialog(
+                        onDismissRequest = { confirm = false },
+                        title = "Forget ${prefs.serverName}?",
+                        body = "This phone stops connecting to it. To link again, pair from the PC's Dotlink app.",
+                        confirmButton = {
+                            DestructiveButton(
+                                text = "Forget",
+                                compact = true,
+                                onClick = {
+                                    confirm = false
+                                    prefs.active?.let { link.forget(it.id) }
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        },
+                        dismissButton = {
+                            SecondaryButton(text = "Cancel", compact = true, onClick = { confirm = false }, modifier = Modifier.weight(1f))
+                        },
+                    )
+                }
+            }
+
+        }
         Section("Theme") {
             Choice(listOf("System", "Light", "Dark"), prefs.themeMode) {
                 prefs.themeMode = it

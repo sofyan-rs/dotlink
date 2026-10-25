@@ -35,6 +35,8 @@ import com.dotlink.ui.dotline.ListGroup
 import com.dotlink.ui.dotline.ListRow
 import com.dotlink.ui.dotline.PrimaryButton
 import com.dotlink.ui.dotline.ScreenTitle
+import com.dotlink.ui.dotline.ScreenTitleAction
+import com.dotlink.ui.home.TransferRow
 import com.dotlink.ui.dotline.SecondaryButton
 import com.dotlink.ui.theme.Dotline
 import kotlinx.coroutines.launch
@@ -150,10 +152,26 @@ private fun PhoneSheet(
 fun PhonesHomeScreen(
     onPairPhone: () -> Unit,
     onPairPc: () -> Unit,
+    onSettings: () -> Unit,
 ) {
+    val transfers by DotlinkApp.link.transfers.collectAsStateWithLifecycle()
     TabScreen {
-        ScreenTitle(title = "Phones", subline = "No PC paired")
+        ScreenTitle(
+            title = "Phones",
+            subline = "No PC paired",
+            actions = { ScreenTitleAction(DotlineIcons.Settings, contentDescription = "Settings", onClick = onSettings) },
+        )
         PhonesSection(onPairPhone = onPairPhone)
+        if (transfers.isNotEmpty()) {
+            Section("Transfers") {
+                ListGroup {
+                    transfers.take(8).forEachIndexed { i, t ->
+                        if (i > 0) ListDivider()
+                        TransferRow(t)
+                    }
+                }
+            }
+        }
         Section("PC") {
             ListGroup {
                 ListRow(
