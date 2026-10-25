@@ -15,7 +15,8 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
-    Devices,
+    Phones,
+    Pcs,
     Pair,
     Activity,
     Setup,
@@ -109,7 +110,7 @@ impl Model {
             owns_service,
             connected: false,
             status: None,
-            page: Page::Devices,
+            page: Page::Phones,
             pairing: Pairing::Idle,
             pairing_id: 0,
             checks: Vec::new(),
@@ -419,11 +420,70 @@ impl Model {
         .detach();
     }
 
-    /// [Model::send_to] while that phone is online; otherwise every connected phone.
-    pub fn send_target(&self) -> Option<String> {
+    /// [Model::send_to] while that device is online and of the kind asked for (`phones`);
+    /// otherwise None (every connected one of that kind).
+    pub fn send_target(&self, phones: bool) -> Option<String> {
         let id = self.send_to.as_ref()?;
-        let online = self.status.as_ref()?.devices.iter().any(|d| &d.id == id && d.online);
-        online.then(|| id.clone())
+        let ok = self.status.as_ref()?.devices.iter().any(|d| &d.id == id && d.online && d.is_phone() == phones);
+        ok.then(|| id.clone())
+    }
+
+    /// Where Send goes on the Phones (`phones`) or PCs page: the device picked there, or every
+    /// connected one of that kind.
+    fn send_ids(&self, phones: bool) -> Vec<String> {
+        if let Some(id) = self.send_target(phones) {
+            return vec![id];
+        }
+        self.status
+            .iter()
+            .flat_map(|s| &s.devices)
+            .filter(|d| d.online && d.is_phone() == phones)
+            .map(|d| d.id.clone())
+            .collect()
+    }
+
+    /// Sends files to the phones (`phones`) or the PCs, as chosen on that page.
+    pub fn send_files_to(&mut self, paths: Vec<PathBuf>, phones: bool, cx: &mut Context<Self>) {
+        let ids = self.send_ids(phones);
+        if paths.is_empty() || ids.is_empty() {
+            return;
+        }
+        let calls: Vec<_> = ids.into_iter().map(|id| self.client.send_files(paths.clone(), Some(id))).collect();
+        self.report_all(calls, cx);
+    }
+
+    /// Sends the clipboard to the phones (`phones`) or the PCs, as chosen on that page.
+    pub fn send_clipboard_to(&mut self, phones: bool, cx: &mut Context<Self>) {
+        let ids = self.send_ids(phones);
+        let calls: Vec<_> = ids.into_iter().map(|id| self.client.send_clipboard(Some(id))).collect();
+        self.report_all(calls, cx);
+    }
+
+    /// One toast for several sends: the errors if any, else what was done.
+    fn report_all(
+        &mut self,
+        calls: Vec<impl std::future::Future<Output = anyhow::Result<String>> + 'static>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            let mut ok = Vec::new();
+            let mut failed = Vec::new();
+            for call in calls {
+                match call.await {
+                    Ok(msg) => ok.push(msg),
+                    Err(e) => failed.push(format!("{e:#}")),
+                }
+            }
+            this.update(cx, |this, cx| {
+                if failed.is_empty() {
+                    this.notice(capitalize(&ok.join("; ")), false, cx)
+                } else {
+                    this.notice(capitalize(&failed.join("; ")), true, cx)
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// [Model::stream_from] while that phone is online; otherwise the first online phone.
@@ -444,7 +504,8 @@ impl Model {
         if paths.is_empty() {
             return;
         }
-        let send = self.client.send_files(paths, self.send_target());
+        // The tray's Send files: every connected device.
+        let send = self.client.send_files(paths, None);
         cx.spawn(async move |this, cx| {
             let result = send.await;
             this.update(cx, |this, cx| match result {
@@ -457,7 +518,7 @@ impl Model {
     }
 
     pub fn send_clipboard(&mut self, cx: &mut Context<Self>) {
-        let send = self.client.send_clipboard(self.send_target());
+        let send = self.client.send_clipboard(None);
         cx.spawn(async move |this, cx| {
             let result = send.await;
             this.update(cx, |this, cx| match result {
@@ -584,7 +645,7 @@ impl Model {
             this.update(cx, |this, cx| match result {
                 Ok(msg) => {
                     this.notice(capitalize(&msg), false, cx);
-                    this.page = Page::Devices;
+                    this.page = Page::Pcs;
                     this.refresh(cx);
                     done(cx);
                 }
@@ -603,7 +664,7 @@ impl Model {
             this.update(cx, |this, cx| match result {
                 Ok(msg) => {
                     this.notice(capitalize(&msg), false, cx);
-                    this.page = Page::Devices;
+                    this.page = Page::Pcs;
                     this.refresh(cx);
                     done(cx);
                 }

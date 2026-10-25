@@ -324,7 +324,7 @@ attestation signing: too much to start with. Instead:
 1. Setup asks the user to install **VB-CABLE** (free for users; redistributing it needs a
    licence from VB-Audio).
 2. `MicSink` plays the PCM into "CABLE Input" through WASAPI (`cpal`), with a low buffer.
-3. Apps pick "CABLE Output" as their microphone; the Devices page says so.
+3. Apps pick "CABLE Output" as their microphone; the Phones page says so.
 
 ### macOS webcam
 

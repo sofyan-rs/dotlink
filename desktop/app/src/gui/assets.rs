@@ -4,7 +4,7 @@
 use gpui::{AssetSource, SharedString};
 use std::borrow::Cow;
 
-gpui_kit_assets::icon_assets!(pub Lucide, [Smartphone, ScanLine, ArrowDownUp, ListChecks, Settings2]);
+gpui_kit_assets::icon_assets!(pub Lucide, [Smartphone, Monitor, ScanLine, ArrowDownUp, ListChecks, Settings2]);
 
 pub struct Assets;
 

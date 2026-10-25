@@ -121,7 +121,7 @@ with several PCs: tap the PC's name at the top of the app to switch.
 Two PCs can send each other files and the clipboard. On the first PC, open **Pair**: it shows a
 6-digit code. On the second, open **Pair → Join a PC**, pick the first PC, type the code and press
 **Join** (or `dotlink nearby`, then `dotlink join "<name>" --code 123456`). Instead of the code,
-**Copy link** on the first PC and paste the link on the second also works (`dotlink join "<link>"`). The PC then shows under **PCs** on the Devices page. Clipboard changes go
+**Copy link** on the first PC and paste the link on the second also works (`dotlink join "<link>"`). The PC then shows on the **PCs** page. Clipboard changes go
 to it only with **Clipboard sync** on for that PC (`dotlink clip-auto <pc> on`); **Send clipboard**
 works either way. A laptop's battery shows there too.
 
@@ -144,11 +144,11 @@ Dotlink).
 
 - Closing the window keeps Dotlink in the tray, so the phone stays connected. Quit from the tray or
   Settings.
-- The webcam and mic start from the phone, or from **Devices** on the PC (`dotlink camera on`). If
+- The webcam and mic start from the phone, or from **Phones** on the PC (`dotlink camera on`). If
   the phone app isn't open, the phone shows a notification: tap **Start**.
 - Phone → PC clipboard happens when you open the app: Android only lets the app in front read the
   clipboard.
-- **Devices** shows each connected phone's battery level and whether it's charging.
+- **Phones** shows each connected phone's battery level and whether it's charging.
 
 ## CLI
 
@@ -193,7 +193,7 @@ theme = "system"           # "system", "light" or "dark"
 
 The phone pins the PC's certificate when pairing, and every connection uses TLS plus a token.
 **A paired phone can open a shell on your PC**: turn the Shell off or set a PIN if that worries you.
-Forget a phone in **Devices** (or `dotlink unpair`) to cut it off right away.
+Forget a phone in **Phones** (or `dotlink unpair`) to cut it off right away.
 
 ## Limits
 

@@ -129,7 +129,7 @@ Control messages (`{"t": …}`):
 | phone → PC | `clip` | phone clipboard text |
 | phone → PC | `info` | phone name, model, Wireless debugging on, Developer options on (for Cast) |
 | phone → PC | `media` | `state: needs_tap`: starting camera/mic waits for a tap |
-| phone → PC | `battery` | `level` (percent), `charging`; on connect and when either changes. The Devices page shows it while the phone is connected |
+| phone → PC | `battery` | `level` (percent), `charging`; on connect and when either changes. The Phones page shows it while the phone is connected |
 
 ### Wi-Fi or USB
 
@@ -213,7 +213,7 @@ request line in, one or more reply lines out.
   voice-processing input is silent outside a call (vivo / iQOO) fall back to the plain mic.
   The phone offers 30 or 60 fps, only what the lens in use lists; the Windows camera offers
   both rates and paces by the one the app picks.
-- **Battery.** The phone reports its level and charging state (`battery`); the Devices page
+- **Battery.** The phone reports its level and charging state (`battery`); the Phones page
   shows it for connected phones. Linked PCs send each other the same message when they have
   a battery (`platform::battery()`: `GetSystemPowerStatus` on Windows, `/sys/class/power_supply`
   on Linux, `pmset -g batt` on macOS), on connect and when it changes (read once a minute).

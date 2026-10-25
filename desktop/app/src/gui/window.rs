@@ -125,7 +125,7 @@ impl MainView {
                     // Pairing countdown, and "Starting…" running out; only on the page showing it.
                     let ticking = match m.page {
                         Page::Pair => matches!(m.pairing, Pairing::Waiting { .. }),
-                        Page::Devices => !m.starting.is_empty(),
+                        Page::Phones => !m.starting.is_empty(),
                         _ => false,
                     };
                     if ticking {
@@ -156,7 +156,8 @@ impl MainView {
         });
     }
 
-    fn pick_and_send(&mut self, cx: &mut Context<Self>) {
+    /// Picks files and sends them to the phones (`phones`) or the PCs, as chosen on that page.
+    fn pick_and_send(&mut self, phones: bool, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -166,7 +167,7 @@ impl MainView {
         let model = self.model.clone();
         cx.spawn(async move |_, cx| {
             if let Ok(Ok(Some(paths))) = picked.await {
-                model.update(cx, |m, cx| m.send_files(paths, cx));
+                model.update(cx, |m, cx| m.send_files_to(paths, phones, cx));
             }
         })
         .detach();
@@ -263,7 +264,8 @@ impl Render for MainView {
         let p = palette(cx);
         let page = self.model.read(cx).page;
         let content = match page {
-            Page::Devices => self.devices(&p, cx).into_any_element(),
+            Page::Phones => self.phones_page(&p, cx).into_any_element(),
+            Page::Pcs => self.pcs_page(&p, cx).into_any_element(),
             Page::Pair => self.pair(&p, cx).into_any_element(),
             Page::Activity => self.activity(&p, cx).into_any_element(),
             Page::Setup => self.setup(&p, cx).into_any_element(),
@@ -356,7 +358,8 @@ impl MainView {
                             .child("DOTLINK"),
                     )
                     .child(mono_label(p, hostname.to_uppercase()).px(px(14.)).pb(px(16.)))
-                    .child(nav("nav-devices", IconName::Smartphone, "Devices", Page::Devices, cx))
+                    .child(nav("nav-phones", IconName::Smartphone, "Phones", Page::Phones, cx))
+                    .child(nav("nav-pcs", IconName::Monitor, "PCs", Page::Pcs, cx))
                     .child(nav("nav-pair", IconName::ScanLine, "Pair", Page::Pair, cx))
                     .child(nav("nav-activity", IconName::ArrowDownUp, "Activity", Page::Activity, cx))
                     .child(nav("nav-setup", IconName::ListChecks, "Setup", Page::Setup, cx))
@@ -373,7 +376,7 @@ impl MainView {
                         p,
                         match (connected, phones, pcs) {
                             (false, _, _) => "SERVICE STOPPED".to_string(),
-                            (true, 0, 0) => "NO PHONE ONLINE".to_string(),
+                            (true, 0, 0) => "NOTHING ONLINE".to_string(),
                             (true, phones, pcs) => {
                                 let count = |n: usize, one: &str, many: &str| match n {
                                     0 => None,
@@ -393,29 +396,26 @@ impl MainView {
 // ---------- pages ----------
 
 impl MainView {
-    fn devices(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Phones: the paired phones, sending to them, Cast and the webcam/mic (all phone-only).
+    fn phones_page(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         // A copy, so `cx` is free for the listeners below.
         let Some(status) = self.model.read(cx).status.clone() else {
-            return page(p, "Devices", None).child(self.not_connected(p, cx)).into_any_element();
+            return page(p, "Phones", None).child(self.not_connected(p, cx)).into_any_element();
         };
         let status = &status;
-        let any_online = status.devices.iter().any(|d| d.online);
         let phone_online = status.devices.iter().any(|d| d.online && d.is_phone());
         let any_phone = status.devices.iter().any(|d| d.is_phone());
         let streams = self.streams(p, status.camera.clone(), status.mic.clone(), phone_online, cx);
         let cast = self.cast_card(p, status, cx);
-        // The latest transfers right under the drop zone, so sending shows its progress here.
-        let recent: Vec<Transfer> = status.transfers.iter().take(3).cloned().collect();
-        let mut recent_list = group(p);
-        for (i, t) in recent.iter().enumerate() {
-            recent_list = recent_list.child(transfer_row(p, t).when(i > 0, |r| r.border_t_1().border_color(p.line)));
-        }
+        let recent = self.recent(p, status, true, cx);
         let mut phones = group(p);
         if !any_phone {
             phones = phones.child(
                 row(p).child(div().flex_1().min_w_0().text_color(p.ink_muted).child("No phone paired yet.")).child(
-                    pill(p, "pair-empty", "Pair a phone", Kind::Primary)
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go(Page::Pair, cx))),
+                    pill(p, "pair-empty", "Pair a phone", Kind::Primary).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.pair_tab = 0;
+                        this.go(Page::Pair, cx)
+                    })),
                 ),
             );
         }
@@ -447,96 +447,14 @@ impl MainView {
                     )),
             );
         }
-        let pcs = self.pcs(p, status, cx);
-        // Several devices online: choose where Send files / Send clipboard go.
-        let online: Vec<(Option<String>, String)> =
-            status.devices.iter().filter(|d| d.online).map(|d| (Some(d.id.clone()), d.name.clone())).collect();
-        let several = online.len() > 1;
-        let only_phones = status.devices.iter().filter(|d| d.online).all(|d| d.is_phone());
-        let target = several.then(|| {
-            let all = if only_phones { "All phones" } else { "All devices" };
-            let options: Vec<_> = std::iter::once((None, all.to_string())).chain(online).collect();
-            let model = self.model.clone();
-            div().flex().items_center().gap(px(10.)).child(mono_label(p, "TO")).child(phone_picker(
-                "send-to",
-                options,
-                self.model.read(cx).send_target(),
-                move |id, cx| {
-                    model.update(cx, |m, cx| {
-                        m.send_to = id;
-                        cx.notify();
-                    })
-                },
-            ))
-        });
-        let accent = p.accent;
         let addresses = status.addresses.iter().map(|a| format!("{a}:{}", status.port)).collect::<Vec<_>>().join("  ");
 
-        page(p, "Devices", None)
-            .child(section(p, "Phones", phones))
-            .when_some(pcs, |page, pcs| page.child(section(p, "PCs", pcs)))
-            .child(section(
-                p,
-                if any_phone { "Send to phone" } else { "Send" },
-                div()
-                    .id("drop")
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(14.))
-                    .py(px(28.))
-                    .rounded(px(CARD_RADIUS))
-                    .border_1()
-                    .border_dashed()
-                    .border_color(p.line_strong)
-                    .drag_over::<ExternalPaths>(move |s, _, _, _| s.border_color(accent).bg(accent.opacity(0.06)))
-                    .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-                        let paths = paths.paths().to_vec();
-                        this.model.update(cx, |m, cx| m.send_files(paths, cx));
-                    }))
-                    .children(target)
-                    .child(div().text_color(p.ink_muted).child(if several {
-                        "Drop files here to send them where chosen"
-                    } else if any_online && only_phones {
-                        "Drop files here to send them to your phone"
-                    } else if any_online {
-                        "Drop files here to send them to the linked PC"
-                    } else {
-                        "Open Dotlink on your phone to send it files"
-                    }))
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(8.))
-                            .child(
-                                enabled(pill(p, "send-files", "Send files…", Kind::Primary), any_online)
-                                    .when(any_online, |b| {
-                                        b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.pick_and_send(cx)))
-                                    }),
-                            )
-                            .child(enabled(pill(p, "send-clip", "Send clipboard", Kind::Secondary), any_online).when(
-                                any_online,
-                                |b| {
-                                    b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                        this.model.update(cx, |m, cx| m.send_clipboard(cx))
-                                    }))
-                                },
-                            )),
-                    ),
-            ))
-            .child(section(p, "Cast screen", cast))
-            .when_some(streams, |page, streams| page.child(section(p, "Webcam & mic", streams)))
-            .when(!recent.is_empty(), |page| {
-                page.child(section_with(
-                    p,
-                    "Recent",
-                    Some(
-                        pill(p, "see-activity", "See all", Kind::Ghost)
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go(Page::Activity, cx))),
-                    ),
-                    recent_list,
-                ))
-            })
+        page(p, "Phones", None)
+            .child(section(p, "Paired", phones))
+            .when(any_phone, |page| page.child(section(p, "Send to phone", self.send_zone(p, status, true, cx))))
+            .when(any_phone, |page| page.child(section(p, "Cast screen", cast)))
+            .when_some(streams.filter(|_| any_phone), |page, streams| page.child(section(p, "Webcam & mic", streams)))
+            .when_some(recent, |page, recent| page.child(recent))
             .child(section(
                 p,
                 "This PC",
@@ -550,6 +468,131 @@ impl MainView {
                     ),
             ))
             .into_any_element()
+    }
+
+    /// PCs: other PCs linked with this one (files and the clipboard), and sending to them.
+    fn pcs_page(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(status) = self.model.read(cx).status.clone() else {
+            return page(p, "PCs", None).child(self.not_connected(p, cx)).into_any_element();
+        };
+        let status = &status;
+        let pcs = self.pcs(p, status, cx).unwrap_or_else(|| {
+            group(p).child(
+                row(p)
+                    .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("No PC linked yet."))
+                    .child(pill(p, "join-empty", "Join a PC", Kind::Primary).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.pair_tab = 1;
+                            this.model.update(cx, |m, cx| m.refresh_nearby(cx));
+                            this.go(Page::Pair, cx)
+                        },
+                    ))),
+            )
+        });
+        let any_pc = status.devices.iter().any(|d| !d.is_phone());
+        let recent = self.recent(p, status, false, cx);
+        page(p, "PCs", Some("Other PCs linked with this one send each other files and the clipboard."))
+            .child(section(p, "Linked", pcs))
+            .when(any_pc, |page| page.child(section(p, "Send to PC", self.send_zone(p, status, false, cx))))
+            .when_some(recent, |page, recent| page.child(recent))
+            .into_any_element()
+    }
+
+    /// The latest transfers with phones (`phones`) or with PCs, under the drop zone so sending
+    /// shows its progress there. None when there are none.
+    fn recent(&self, p: &Palette, status: &Status, phones: bool, cx: &mut Context<Self>) -> Option<Div> {
+        let names: Vec<&str> = status.devices.iter().filter(|d| d.is_phone() == phones).map(|d| d.name.as_str()).collect();
+        let recent: Vec<&Transfer> = status.transfers.iter().filter(|t| names.contains(&t.device.as_str())).take(3).collect();
+        if recent.is_empty() {
+            return None;
+        }
+        let mut list = group(p);
+        for (i, t) in recent.into_iter().enumerate() {
+            list = list.child(transfer_row(p, t).when(i > 0, |r| r.border_t_1().border_color(p.line)));
+        }
+        Some(section_with(
+            p,
+            "Recent",
+            Some(
+                pill(p, if phones { "see-activity-phones" } else { "see-activity-pcs" }, "See all", Kind::Ghost)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go(Page::Activity, cx))),
+            ),
+            list,
+        ))
+    }
+
+    /// Drop files here, Send files…, Send clipboard: to the phones (`phones`) or the PCs, with a
+    /// picker when several are connected.
+    fn send_zone(&self, p: &Palette, status: &Status, phones: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+        let online: Vec<(Option<String>, String)> = status
+            .devices
+            .iter()
+            .filter(|d| d.online && d.is_phone() == phones)
+            .map(|d| (Some(d.id.clone()), d.name.clone()))
+            .collect();
+        let any_online = !online.is_empty();
+        let several = online.len() > 1;
+        let target = several.then(|| {
+            let all = if phones { "All phones" } else { "All PCs" };
+            let options: Vec<_> = std::iter::once((None, all.to_string())).chain(online).collect();
+            let model = self.model.clone();
+            div().flex().items_center().gap(px(10.)).child(mono_label(p, "TO")).child(phone_picker(
+                if phones { "send-to-phone" } else { "send-to-pc" },
+                options,
+                self.model.read(cx).send_target(phones),
+                move |id, cx| {
+                    model.update(cx, |m, cx| {
+                        m.send_to = id;
+                        cx.notify();
+                    })
+                },
+            ))
+        });
+        let accent = p.accent;
+        let hint = match (phones, several, any_online) {
+            (_, true, _) => "Drop files here to send them where chosen",
+            (true, _, true) => "Drop files here to send them to your phone",
+            (false, _, true) => "Drop files here to send them to the linked PC",
+            (true, _, false) => "Open Dotlink on your phone to send it files",
+            (false, _, false) => "The linked PC isn't connected",
+        };
+        div()
+            .id(if phones { "drop-phones" } else { "drop-pcs" })
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(14.))
+            .py(px(28.))
+            .rounded(px(CARD_RADIUS))
+            .border_1()
+            .border_dashed()
+            .border_color(p.line_strong)
+            .drag_over::<ExternalPaths>(move |s, _, _, _| s.border_color(accent).bg(accent.opacity(0.06)))
+            .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
+                let paths = paths.paths().to_vec();
+                this.model.update(cx, |m, cx| m.send_files_to(paths, phones, cx));
+            }))
+            .children(target)
+            .child(div().text_color(p.ink_muted).child(hint))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(
+                        enabled(pill(p, if phones { "send-files-phones" } else { "send-files-pcs" }, "Send files…", Kind::Primary), any_online)
+                            .when(any_online, |b| {
+                                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.pick_and_send(phones, cx)))
+                            }),
+                    )
+                    .child(
+                        enabled(pill(p, if phones { "send-clip-phones" } else { "send-clip-pcs" }, "Send clipboard", Kind::Secondary), any_online)
+                            .when(any_online, |b| {
+                                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.model.update(cx, |m, cx| m.send_clipboard_to(phones, cx))
+                                }))
+                            }),
+                    ),
+            )
     }
 
     /// Each phone's screen in its own scrcpy window: one row per connected phone (and any phone
@@ -820,7 +863,7 @@ impl MainView {
                         .gap(px(8.))
                         .child(
                             pill(p, "paired-done", "Done", Kind::Primary)
-                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go(Page::Devices, cx))),
+                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go(Page::Phones, cx))),
                         )
                         .child(pill(p, "pair-another", "Pair another", Kind::Ghost).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.start_pairing(cx)),
@@ -1030,15 +1073,28 @@ impl MainView {
         if transfers.is_empty() {
             files = files.child(row(p).text_color(p.ink_muted).child("Nothing sent or received yet."));
         }
+        // "PC" after a linked PC's name: the names alone don't tell a phone from a PC.
+        let pc_names: Vec<String> = model
+            .status
+            .iter()
+            .flat_map(|s| &s.devices)
+            .filter(|d| !d.is_phone())
+            .map(|d| d.name.clone())
+            .collect();
         for (i, t) in transfers.iter().enumerate() {
-            files = files.child(transfer_row(p, t).when(i > 0, |r| r.border_t_1().border_color(p.line)));
+            let mut t = t.clone();
+            if pc_names.contains(&t.device) {
+                t.device = format!("{} (PC)", t.device);
+            }
+            files = files.child(transfer_row(p, &t).when(i > 0, |r| r.border_t_1().border_color(p.line)));
         }
         let mut clips = group(p);
         if model.clips.is_empty() {
             clips = clips.child(row(p).text_color(p.ink_muted).child("No clipboard sync since Dotlink started."));
         }
         for (i, c) in model.clips.iter().enumerate() {
-            let what = if c.to_phone { format!("To {}", c.device) } else { format!("From {}", c.device) };
+            let device = if pc_names.contains(&c.device) { format!("{} (PC)", c.device) } else { c.device.clone() };
+            let what = if c.to_phone { format!("To {device}") } else { format!("From {device}") };
             clips = clips.child(
                 row(p)
                     .when(i > 0, |r| r.border_t_1().border_color(p.line))
