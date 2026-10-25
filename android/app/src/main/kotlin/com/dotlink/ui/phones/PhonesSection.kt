@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,7 +21,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import com.dotlink.DotlinkApp
 import com.dotlink.link.PhonePeer
 import com.dotlink.ui.Hint
@@ -33,9 +38,9 @@ import com.dotlink.ui.dotline.DotlineIcons
 import com.dotlink.ui.dotline.ListDivider
 import com.dotlink.ui.dotline.ListGroup
 import com.dotlink.ui.dotline.ListRow
+import com.dotlink.ui.dotline.ListRowValue
 import com.dotlink.ui.dotline.PrimaryButton
 import com.dotlink.ui.dotline.ScreenTitle
-import com.dotlink.ui.dotline.ScreenTitleAction
 import com.dotlink.ui.home.TransferRow
 import com.dotlink.ui.dotline.SecondaryButton
 import com.dotlink.ui.theme.Dotline
@@ -44,17 +49,38 @@ import kotlinx.coroutines.launch
 @Composable
 fun PhonesSection(onPairPhone: () -> Unit) {
     val phones by DotlinkApp.phones.list.collectAsStateWithLifecycle()
+    val online by DotlinkApp.phones.online.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf<PhonePeer?>(null) }
-    Section("Phones") {
+    // Looking for them only while the list is on screen (and the app in front).
+    val owner = LocalLifecycleOwner.current
+    var looking by remember { mutableStateOf(true) }
+    LaunchedEffect(owner, phones.isEmpty()) {
+        if (phones.isEmpty()) return@LaunchedEffect
+        owner.repeatOnLifecycle(Lifecycle.State.STARTED) { DotlinkApp.phones.watch() }
+    }
+    LaunchedEffect(Unit) {
+        delay(5000)
+        looking = false
+    }
+    Section("Paired") {
         ListGroup {
             phones.forEachIndexed { i, p ->
                 if (i > 0) ListDivider()
+                val here = p.id in online
                 ListRow(
                     title = p.name,
-                    subtitle = "Send files or the clipboard",
-                    leadingIcon = DotlineIcons.Share,
+                    subtitle =
+                        when {
+                            here -> "Send files or the clipboard"
+                            looking -> "Looking…"
+                            else -> "Not on this Wi-Fi · open Dotlink on it"
+                        },
+
+                    leadingIcon = DotlineIcons.Smartphone,
                     onClick = { open = p },
-                    trailing = { Text("›", style = Dotline.type.body, color = Dotline.colors.inkMuted) },
+                    trailing = {
+                        if (here) ListRowValue("Online", color = Dotline.colors.positive) else Text("›", style = Dotline.type.body, color = Dotline.colors.inkMuted)
+                    },
                 )
             }
             if (phones.isNotEmpty()) ListDivider()
@@ -147,39 +173,52 @@ private fun PhoneSheet(
     }
 }
 
-/** Home when phones are paired but no PC is. */
+/**
+ * The Phones tab: paired phones (with whether they're on this network), files sent between
+ * phones, and pairing. Without a PC it is the app's home, with a way to pair one.
+ */
 @Composable
-fun PhonesHomeScreen(
+fun PhonesScreen(
     onPairPhone: () -> Unit,
-    onPairPc: () -> Unit,
-    onSettings: () -> Unit,
+    /** Set when no PC is paired. */
+    onPairPc: (() -> Unit)? = null,
 ) {
     val transfers by DotlinkApp.link.transfers.collectAsStateWithLifecycle()
+    val phoneTransfers = transfers.filter { it.phone != null }
+    val phones by DotlinkApp.phones.list.collectAsStateWithLifecycle()
+    val online by DotlinkApp.phones.online.collectAsStateWithLifecycle()
     TabScreen {
         ScreenTitle(
             title = "Phones",
-            subline = "No PC paired",
-            actions = { ScreenTitleAction(DotlineIcons.Settings, contentDescription = "Settings", onClick = onSettings) },
+            subline =
+                when {
+                    phones.isEmpty() -> "None paired yet"
+                    else -> "${phones.size} paired · ${online.size} on this Wi-Fi"
+                },
         )
         PhonesSection(onPairPhone = onPairPhone)
-        if (transfers.isNotEmpty()) {
-            Section("Transfers") {
+        Section("Transfers") {
+            if (phoneTransfers.isEmpty()) {
+                Hint("Nothing yet. Files from phones land in Download/Dotlink.")
+            } else {
                 ListGroup {
-                    transfers.take(8).forEachIndexed { i, t ->
+                    phoneTransfers.take(8).forEachIndexed { i, t ->
                         if (i > 0) ListDivider()
                         TransferRow(t)
                     }
                 }
             }
         }
-        Section("PC") {
-            ListGroup {
-                ListRow(
-                    title = "Pair a PC",
-                    subtitle = "Remote, Shell, webcam, mic and more with Dotlink on a PC",
-                    leadingIcon = DotlineIcons.Monitor,
-                    onClick = onPairPc,
-                )
+        if (onPairPc != null) {
+            Section("PC") {
+                ListGroup {
+                    ListRow(
+                        title = "Pair a PC",
+                        subtitle = "Remote, Shell, webcam, mic and more with Dotlink on a PC",
+                        leadingIcon = DotlineIcons.Monitor,
+                        onClick = onPairPc,
+                    )
+                }
             }
         }
     }

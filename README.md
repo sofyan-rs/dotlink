@@ -119,10 +119,10 @@ with several PCs: tap the PC's name at the top of the app to switch.
 ### Linking two phones
 
 Two phones with Dotlink on the same Wi-Fi send each other files and the clipboard, with or
-without a PC. On one phone, open **Link → Phones → Pair a phone** (or, without a PC, **Pair with
+without a PC. On one phone, open the **Phones** tab → **Pair a phone** (or, without a PC, **Pair with
 another phone**): it shows a QR code. On the other, do the same and tap **Scan the other phone's
 code**. Then pick the phone in **Phones** to send files or the clipboard, or choose it in
-**Share → Dotlink**.
+**Share → Dotlink**. Phones on the same Wi-Fi show as Online there.
 
 ### Linking two PCs
 

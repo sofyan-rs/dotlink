@@ -177,8 +177,10 @@ and no PC involved (`android/.../peer/`).
   `POST /forget`.
 - **Sending** tries the stored addresses, then looks the phone up over NSD by id. A 401 means it
   forgot this phone, which then forgets it too.
-- The Link tab lists paired phones; with phones but no PC, the app opens on a Phones screen.
-  Share → Dotlink asks where to send when phones are paired.
+- The Phones tab lists paired phones, Online while NSD finds them (looked for only while the
+  list is on screen), and the files sent between phones; the PC tab keeps to the PC. With phones
+  but no PC, only the Phones and Settings tabs show. Share → Dotlink asks where to send when
+  phones are paired.
 - After the phone restarts, it receives again once Dotlink has been opened (no boot receiver).
 
 ### Linking two PCs

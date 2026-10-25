@@ -82,6 +82,8 @@ data class Transfer(
     val name: String,
     val incoming: Boolean,
     val size: Long,
+    /** The other phone's name; null for a transfer with the PC. */
+    val phone: String? = null,
     val done: Long = 0,
     val status: Status = Status.Running,
     val error: String? = null,
@@ -714,8 +716,9 @@ class Link(
         name: String,
         incoming: Boolean,
         size: Long,
+        phone: String? = null,
     ): Transfer {
-        val t = Transfer(transferIds.getAndIncrement(), name, incoming = incoming, size = size)
+        val t = Transfer(transferIds.getAndIncrement(), name, incoming = incoming, size = size, phone = phone)
         transfers.update { listOf(t) + it.take(30) }
         return t
     }

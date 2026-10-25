@@ -4,7 +4,6 @@
  */
 package com.dotlink.ui.settings
 
-import androidx.activity.compose.BackHandler
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
@@ -49,7 +48,6 @@ import com.dotlink.ui.dotline.ListGroup
 import com.dotlink.ui.dotline.ListRow
 import com.dotlink.ui.dotline.ListRowChevron
 import com.dotlink.ui.dotline.ScreenTitle
-import com.dotlink.ui.dotline.ScreenTitleAction
 import com.dotlink.ui.dotline.SecondaryButton
 import com.dotlink.ui.dotline.SegmentOption
 import com.dotlink.ui.dotline.SegmentedControl
@@ -62,25 +60,16 @@ import kotlinx.coroutines.launch
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
-fun SettingsScreen(
-    /** Opened from the Phones screen (no PC paired): a back arrow, and nothing about a PC. */
-    onBack: (() -> Unit)? = null,
-) {
+fun SettingsScreen() {
     val link = DotlinkApp.link
     val prefs = link.prefs
     val context = LocalContext.current
     val state by link.state.collectAsStateWithLifecycle()
     // Remote, Shell, the PC clipboard and the paired PC only mean something with a PC.
     val pc = prefs.paired
-    if (onBack != null) BackHandler(onBack = onBack)
 
     TabScreen {
-        ScreenTitle(
-            title = "Settings",
-            actions = {
-                if (onBack != null) ScreenTitleAction(DotlineIcons.Close, contentDescription = "Close", onClick = onBack)
-            },
-        )
+        ScreenTitle(title = "Settings")
 
         Section("This phone") {
             val name = rememberTextFieldState(prefs.phoneName)

@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.util.Log
 import android.widget.Toast
 import com.dotlink.link.Discovery
@@ -13,8 +14,12 @@ import com.dotlink.link.Link
 import com.dotlink.link.PhonePeer
 import com.dotlink.link.toHex
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -27,7 +32,9 @@ import java.net.NetworkInterface
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 
 /**
  * Phones linked with this one: each phone runs a small HTTPS server ([PhoneServer]) and the
@@ -51,6 +58,9 @@ class Phones(
     )
 
     @Volatile private var invite: Invite? = null
+
+    /** Paired phones seen on the network right now, by id ([watch] keeps it current). */
+    val online = MutableStateFlow<Set<String>>(emptySet())
 
     /** Set when a phone paired by scanning this one's code: its name (the pair screen closes). */
     val pairedByScan = MutableStateFlow<String?>(null)
@@ -107,6 +117,85 @@ class Phones(
             }
         runCatching { nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener) }.onSuccess { registration = listener }
     }
+
+    /**
+     * Looks for the paired phones on the network until cancelled (while the Phones list is on
+     * screen): [online] follows them, and where they are now is remembered for sending.
+     */
+    @Suppress("DEPRECATION") // resolveService: the replacement needs API 34.
+    suspend fun watch() {
+        val wifi = app.getSystemService(WifiManager::class.java)
+        val lock = wifi.createMulticastLock("dotlink-phones").apply { setReferenceCounted(false) }
+        val found = Channel<NsdServiceInfo>(Channel.UNLIMITED)
+        // Service name → phone id, to know which phone left when its service is lost.
+        val names = ConcurrentHashMap<String, String>()
+        val listener =
+            object : NsdManager.DiscoveryListener {
+                override fun onServiceFound(info: NsdServiceInfo) {
+                    found.trySend(info)
+                }
+
+                override fun onServiceLost(info: NsdServiceInfo) {
+                    names.remove(info.serviceName)?.let { id -> online.update { it - id } }
+                }
+
+                override fun onStartDiscoveryFailed(
+                    serviceType: String,
+                    errorCode: Int,
+                ) {
+                    found.close()
+                }
+
+                override fun onDiscoveryStarted(serviceType: String) = Unit
+
+                override fun onDiscoveryStopped(serviceType: String) = Unit
+
+                override fun onStopDiscoveryFailed(
+                    serviceType: String,
+                    errorCode: Int,
+                ) = Unit
+            }
+        lock.acquire()
+        try {
+            nsd.discoverServices(SERVICE, NsdManager.PROTOCOL_DNS_SD, listener)
+            // One resolve at a time: older Android refuses a second while one runs.
+            for (info in found) {
+                val resolved = withTimeoutOrNull(4000) { resolve(info) } ?: continue
+                val id = resolved.attributes["id"]?.decodeToString() ?: continue
+                val host = resolved.host?.hostAddress ?: continue
+                val peer = prefs.phones.find { it.id == id } ?: continue
+                names[info.serviceName] = id
+                online.update { it + id }
+                if (peer.hosts.firstOrNull() != host || peer.port != resolved.port) {
+                    save(peer.copy(hosts = listOf(host) + peer.hosts.filter { it != host }, port = resolved.port))
+                }
+            }
+        } finally {
+            runCatching { nsd.stopServiceDiscovery(listener) }
+            lock.release()
+            online.value = emptySet()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private suspend fun resolve(info: NsdServiceInfo): NsdServiceInfo? =
+        suspendCancellableCoroutine { cont ->
+            nsd.resolveService(
+                info,
+                object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(
+                        info: NsdServiceInfo,
+                        errorCode: Int,
+                    ) {
+                        if (cont.isActive) cont.resume(null)
+                    }
+
+                    override fun onServiceResolved(info: NsdServiceInfo) {
+                        if (cont.isActive) cont.resume(info)
+                    }
+                },
+            )
+        }
 
     // ---------- pairing ----------
 
@@ -219,7 +308,7 @@ class Phones(
             var ok = 0
             for (uri in uris) {
                 val (name, size) = link.queryName(uri)
-                val t = link.newTransfer(name, incoming = false, size = size)
+                val t = link.newTransfer(name, incoming = false, size = size, phone = peer.name)
                 try {
                     val body =
                         object : RequestBody() {
@@ -383,7 +472,7 @@ class Phones(
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() && it != "." && it != ".." }
                 ?: return PhoneResponse.error(400, "bad file name")
-        val t = link.newTransfer(name, incoming = true, size = req.contentLength)
+        val t = link.newTransfer(name, incoming = true, size = req.contentLength, phone = peer.name)
         return runCatching { link.saveIncoming(t, peer.name, req.body) }.fold(
             onSuccess = { PhoneResponse.json(JSONObject().put("ok", true)) },
             onFailure = { PhoneResponse.error(500, it.message ?: "couldn't save it") },
