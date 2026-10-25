@@ -12,25 +12,11 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dotlink.DotlinkApp
@@ -44,7 +30,7 @@ import com.dotlink.ui.dotline.ListGroup
 import com.dotlink.ui.dotline.ListRow
 import com.dotlink.ui.dotline.ListRowValue
 import com.dotlink.ui.dotline.SecondaryButton
-import com.dotlink.ui.dotline.SheetDotHandle
+import com.dotlink.ui.dotline.DotlineBottomSheet
 import com.dotlink.ui.dotline.SheetHeader
 import com.dotlink.ui.theme.Dotline
 import com.dotlink.ui.theme.DotlinkTheme
@@ -83,88 +69,67 @@ class ShareActivity : ComponentActivity() {
             DotlinkTheme(dark = isAppInDarkTheme()) {
                 val transfers by link.transfers.collectAsStateWithLifecycle()
                 val mine = transfers.filter { !it.incoming && it.id >= firstId }.reversed()
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(Dotline.colors.scrim)
-                        .clickable(MutableInteractionSource(), indication = null) { finish() },
-                    contentAlignment = Alignment.BottomCenter,
-                ) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(Dotline.radius.sheet)
-                            .background(Dotline.colors.surface)
-                            .clickable(MutableInteractionSource(), indication = null) {}
-                            .windowInsetsPadding(WindowInsets.navigationBars)
-                            .padding(horizontal = Dotline.space.s4),
-                    ) {
-                        SheetDotHandle(Modifier.align(Alignment.CenterHorizontally))
-                        Spacer(Modifier.height(Dotline.space.s3))
-                        val what = if (uris.isEmpty()) "the text" else if (uris.size == 1) "1 file" else "${uris.size} files"
-                        if (choosing) {
-                            SheetHeader(icon = DotlineIcons.Share, title = "Send $what to…", subtitle = null)
-                            Spacer(Modifier.height(Dotline.space.s4))
-                            ListGroup(inSheet = true) {
-                                if (link.prefs.paired) {
-                                    ListRow(
-                                        title = link.prefs.serverName,
-                                        subtitle = "PC",
-                                        leadingIcon = DotlineIcons.Monitor,
-                                        inSheet = true,
-                                        onClick = {
-                                            choosing = false
-                                            sendToPc(uris, text)
-                                        },
-                                    )
-                                }
-                                phones.forEachIndexed { i, phone ->
-                                    if (i > 0 || link.prefs.paired) ListDivider()
-                                    ListRow(
-                                        title = phone.name,
-                                        subtitle = "Phone",
-                                        leadingIcon = DotlineIcons.Share,
-                                        inSheet = true,
-                                        onClick = {
-                                            choosing = false
-                                            sendToPhone(phone.id, phone.name, uris, text)
-                                        },
-                                    )
-                                }
+                // The same sheet as everywhere else in the app: its handle, drag to dismiss, scrim.
+                DotlineBottomSheet(onDismissRequest = { finish() }) {
+                    val what = if (uris.isEmpty()) "the text" else if (uris.size == 1) "1 file" else "${uris.size} files"
+                    if (choosing) {
+                        SheetHeader(icon = DotlineIcons.Upload, title = "Send $what to…", subtitle = null)
+                        ListGroup(inSheet = true) {
+                            if (link.prefs.paired) {
+                                ListRow(
+                                    title = link.prefs.serverName,
+                                    subtitle = if (link.state.value is LinkState.Online) "PC · Connected" else "PC",
+                                    leadingIcon = DotlineIcons.Monitor,
+                                    inSheet = true,
+                                    onClick = {
+                                        choosing = false
+                                        sendToPc(uris, text)
+                                    },
+                                )
                             }
-                        } else {
-                            SheetHeader(
-                                icon = DotlineIcons.Upload,
-                                title = if (uris.isEmpty()) "Sending the text" else if (uris.size == 1) "Sending 1 file" else "Sending ${uris.size} files",
-                                subtitle = status,
-                            )
-                            Spacer(Modifier.height(Dotline.space.s4))
-                            if (mine.isNotEmpty()) {
-                                ListGroup(inSheet = true) {
-                                    mine.forEachIndexed { i, t ->
-                                        if (i > 0) ListDivider()
-                                        ListRow(
-                                            title = t.name,
-                                            subtitle = formatSize(t.size),
-                                            subtitleIsData = true,
-                                            inSheet = true,
-                                            trailing = {
-                                                when (t.status) {
-                                                    Transfer.Status.Running ->
-                                                        DotMeter(8, if (t.size > 0) (t.done * 8 / t.size).toInt() else 0, "Progress")
-                                                    Transfer.Status.Done -> ListRowValue("Done", color = Dotline.colors.positive)
-                                                    Transfer.Status.Failed -> ListRowValue("Failed", color = Dotline.colors.accentText)
-                                                }
-                                            },
-                                        )
-                                    }
+                            phones.forEachIndexed { i, phone ->
+                                if (i > 0 || link.prefs.paired) ListDivider()
+                                ListRow(
+                                    title = phone.name,
+                                    subtitle = "Phone",
+                                    leadingIcon = DotlineIcons.Smartphone,
+                                    inSheet = true,
+                                    onClick = {
+                                        choosing = false
+                                        sendToPhone(phone.id, phone.name, uris, text)
+                                    },
+                                )
+                            }
+                        }
+                    } else {
+                        SheetHeader(
+                            icon = DotlineIcons.Upload,
+                            title = if (uris.isEmpty()) "Sending the text" else if (uris.size == 1) "Sending 1 file" else "Sending ${uris.size} files",
+                            subtitle = status,
+                        )
+                        if (mine.isNotEmpty()) {
+                            ListGroup(inSheet = true) {
+                                mine.forEachIndexed { i, t ->
+                                    if (i > 0) ListDivider()
+                                    ListRow(
+                                        title = t.name,
+                                        subtitle = formatSize(t.size),
+                                        subtitleIsData = true,
+                                        inSheet = true,
+                                        trailing = {
+                                            when (t.status) {
+                                                Transfer.Status.Running ->
+                                                    DotMeter(8, if (t.size > 0) (t.done * 8 / t.size).toInt() else 0, "Progress")
+                                                Transfer.Status.Done -> ListRowValue("Done", color = Dotline.colors.positive)
+                                                Transfer.Status.Failed -> ListRowValue("Failed", color = Dotline.colors.accentText)
+                                            }
+                                        },
+                                    )
                                 }
                             }
                         }
-                        Spacer(Modifier.height(Dotline.space.s4))
-                        SecondaryButton(text = if (choosing) "Cancel" else "Hide", compact = true, onClick = { finish() }, modifier = Modifier.fillMaxWidth())
-                        Spacer(Modifier.height(Dotline.space.s4))
                     }
+                    SecondaryButton(text = if (choosing) "Cancel" else "Hide", compact = true, onClick = { finish() }, modifier = Modifier.fillMaxWidth())
                 }
             }
         }
