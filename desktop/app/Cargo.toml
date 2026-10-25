@@ -3,6 +3,7 @@ name = "dotlink"
 description = "Link your Android phone with this PC"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 default-run = "dotlink"
 
 [features]
@@ -110,8 +111,7 @@ SectionEnd
 # `cargo build --release -p dotlink`. Writes desktop/target/generate-rpm/dotlink-*.rpm.
 [package.metadata.generate-rpm]
 summary = "Link your Android phone with this PC"
-# TODO: the project has no license yet; set it here (and `license` in the workspace) once chosen.
-license = "Unspecified"
+license = "GPL-3.0-or-later"
 assets = [
     { source = "target/release/dotlink", dest = "/usr/bin/dotlink", mode = "755" },
     { source = "assets/dev.dotlink.Dotlink.desktop", dest = "/usr/share/applications/dev.dotlink.Dotlink.desktop", mode = "644" },

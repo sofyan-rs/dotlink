@@ -3,6 +3,7 @@ name = "dotlink-core"
 description = "Dotlink service: pairing, the HTTPS/WebSocket API for the phone, local control socket"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
