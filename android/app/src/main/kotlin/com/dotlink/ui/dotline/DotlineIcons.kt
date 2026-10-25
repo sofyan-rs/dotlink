@@ -277,6 +277,9 @@ object DotlineIcons {
     /** The paired PC. Lucide: monitor. */
     val Monitor: ImageVector by lazy { lineIcon("Monitor", "M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM8 21h8M12 17v4") }
 
+    /** Another phone. Lucide: smartphone. */
+    val Smartphone: ImageVector by lazy { lineIcon("Smartphone", "M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM12 18h.01") }
+
     /** Scan a QR code. Lucide: scan-line. */
     val Scan: ImageVector by lazy { lineIcon("Scan", "M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10") }
 

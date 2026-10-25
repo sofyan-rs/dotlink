@@ -52,7 +52,9 @@ fun LinkScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by link.state.collectAsStateWithLifecycle()
+    // Files with the PC; the Phones tab lists those with phones.
     val transfers by link.transfers.collectAsStateWithLifecycle()
+    val pcTransfers = transfers.filter { it.phone == null }
     val cameraOn by link.cameraOn.collectAsStateWithLifecycle()
     val micOn by link.micOn.collectAsStateWithLifecycle()
     val online = state is LinkState.Online
@@ -166,11 +168,11 @@ fun LinkScreen(
         }
 
         Section("Transfers") {
-            if (transfers.isEmpty()) {
+            if (pcTransfers.isEmpty()) {
                 Hint("Nothing yet. Files from the PC (dotlink send FILE) land in Download/Dotlink.")
             } else {
                 ListGroup {
-                    transfers.take(8).forEachIndexed { i, t ->
+                    pcTransfers.take(8).forEachIndexed { i, t ->
                         if (i > 0) ListDivider()
                         TransferRow(t)
                     }
@@ -182,12 +184,17 @@ fun LinkScreen(
 }
 
 @Composable
-private fun TransferRow(t: Transfer) {
+internal fun TransferRow(t: Transfer) {
     val arrow = if (t.incoming) "↓" else "↑"
     val subtitle =
         when (t.status) {
             Transfer.Status.Running -> "$arrow ${formatSize(t.done)} of ${formatSize(t.size)}"
-            Transfer.Status.Done -> if (t.incoming) "$arrow Download/Dotlink · ${formatSize(t.size)}" else "$arrow Sent · ${formatSize(t.size)}"
+            Transfer.Status.Done ->
+                when {
+                    t.phone != null -> "$arrow ${if (t.incoming) "from" else "to"} ${t.phone} · ${formatSize(t.size)}"
+                    t.incoming -> "$arrow Download/Dotlink · ${formatSize(t.size)}"
+                    else -> "$arrow Sent · ${formatSize(t.size)}"
+                }
             Transfer.Status.Failed -> "$arrow ${t.error ?: "Failed"}"
         }
     ListRow(

@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Bundle
 import com.dotlink.link.Link
+import com.dotlink.peer.Phones
 
 class DotlinkApp : Application() {
     /** Activities between onStart and onStop. */
@@ -14,6 +15,7 @@ class DotlinkApp : Application() {
     override fun onCreate() {
         super.onCreate()
         link = Link(this)
+        phones = Phones(this, link)
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CHANNEL_LINK, "Connection", NotificationManager.IMPORTANCE_MIN))
         nm.createNotificationChannel(NotificationChannel(CHANNEL_FILES, "Received files", NotificationManager.IMPORTANCE_DEFAULT))
@@ -71,6 +73,10 @@ class DotlinkApp : Application() {
 
         /** The one connection to the paired PC. */
         lateinit var link: Link
+            private set
+
+        /** Phones paired with this one. */
+        lateinit var phones: Phones
             private set
     }
 }

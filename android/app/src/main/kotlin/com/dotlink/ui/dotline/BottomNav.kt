@@ -72,12 +72,13 @@ interface BottomNavTab {
     val icon: ImageVector
 }
 
-/** The four main tabs of the app, in bar order. */
+/** The main tabs of the app, in bar order. Without a PC only [Phones] and [Settings] show. */
 enum class MainTab(
     override val label: String,
     override val icon: ImageVector,
 ) : BottomNavTab {
-    Link("LINK", DotlineIcons.Monitor),
+    Link("PC", DotlineIcons.Monitor),
+    Phones("PHONES", DotlineIcons.Smartphone),
     Remote("REMOTE", DotlineIcons.Mouse),
     Shell("SHELL", DotlineIcons.Terminal),
     Camera("CAMERA", DotlineIcons.Camera),

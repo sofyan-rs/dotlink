@@ -52,6 +52,44 @@ data class Pc(
 }
 
 /**
+ * Another phone paired with this one (files and the clipboard, sent directly; see
+ * `com.dotlink.peer.Phones`). Each side keeps the token it presents ([tokenOut]) and the
+ * SHA-256 of the one the other presents ([tokenInSha256]).
+ */
+data class PhonePeer(
+    val id: String,
+    val name: String,
+    val fingerprint: String,
+    val hosts: List<String>,
+    val port: Int,
+    val tokenOut: String,
+    val tokenInSha256: String,
+) {
+    fun toJson(): JSONObject =
+        JSONObject()
+            .put("id", id)
+            .put("name", name)
+            .put("fingerprint", fingerprint)
+            .put("hosts", JSONArray(hosts))
+            .put("port", port)
+            .put("token_out", tokenOut)
+            .put("token_in_sha256", tokenInSha256)
+
+    companion object {
+        fun fromJson(o: JSONObject) =
+            PhonePeer(
+                id = o.getString("id"),
+                name = o.optString("name", "Phone"),
+                fingerprint = o.getString("fingerprint"),
+                hosts = o.optJSONArray("hosts")?.let { a -> List(a.length()) { a.getString(it) } }.orEmpty(),
+                port = o.optInt("port", 47391),
+                tokenOut = o.getString("token_out"),
+                tokenInSha256 = o.getString("token_in_sha256"),
+            )
+    }
+}
+
+/**
  * Pairing data and user settings, in private SharedPreferences. Several PCs can be paired;
  * one is active at a time, and the pairing properties ([token], [hosts]…) are the active one's.
  */
@@ -86,6 +124,15 @@ class Prefs(
             pcsCache = v
             sp.edit { putString("pcs", JSONArray(v.map { it.toJson() }).toString()) }
         }
+
+    /** Other phones paired with this one. */
+    var phones: List<PhonePeer>
+        get() =
+            runCatching {
+                val a = JSONArray(sp.getString("phones", "[]"))
+                List(a.length()) { PhonePeer.fromJson(a.getJSONObject(it)) }
+            }.getOrDefault(emptyList())
+        set(v) = sp.edit { putString("phones", JSONArray(v.map { it.toJson() }).toString()) }
 
     var activeId: String?
         get() = sp.getString("active_pc", null)

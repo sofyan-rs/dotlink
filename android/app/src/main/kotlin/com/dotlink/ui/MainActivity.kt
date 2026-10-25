@@ -38,6 +38,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dotlink.DotlinkApp
 import com.dotlink.link.LinkService
+import com.dotlink.ui.phones.PhonePairScreen
+import com.dotlink.ui.phones.PhonesScreen
 import com.dotlink.link.LinkState
 import com.dotlink.ui.dotline.BottomNav
 import com.dotlink.ui.dotline.LocalNavRail
@@ -105,7 +107,12 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // After "Disconnect for now" only Reconnect brings the link back.
         // Nor before a PC is picked (several paired).
-        if (link.prefs.paired && link.state.value !is LinkState.Disconnected && !link.choosePc.value) LinkService.send(this)
+        if (link.prefs.paired && link.state.value !is LinkState.Disconnected && !link.choosePc.value) {
+            LinkService.send(this)
+        } else if (DotlinkApp.phones.needed) {
+            // No PC (or not now), but paired phones: keep receiving from them.
+            LinkService.send(this)
+        }
     }
 
     // Android only lets the focused app read the clipboard, so we send it when we gain focus.
@@ -131,19 +138,40 @@ private fun DotlinkRoot(
     }
     LaunchedEffect(Unit) { Updater.checkOnStart(context) }
     UpdateDialog()
+    val phones by DotlinkApp.phones.list.collectAsStateWithLifecycle()
     // Pairing another PC while one is paired already.
     var addingPc by rememberSaveable { mutableStateOf(false) }
+    var pairingPhone by rememberSaveable { mutableStateOf(false) }
+    val pcPaired = state !is LinkState.Unpaired
+    // No PC but phones: the Phones and Settings tabs, instead of the PC pairing screen.
+    val phonesOnly = !pcPaired && phones.isNotEmpty() && !addingPc && pairLink == null
     // Pairing or choosing a PC: no tabs (and no tab bar under the snackbar).
-    val fullScreen = state is LinkState.Unpaired || addingPc || pairLink != null || choosePc
+    val fullScreen = (!pcPaired && !phonesOnly) || addingPc || pairLink != null || choosePc || pairingPhone
     BoxWithConstraints(Modifier.fillMaxSize().background(Dotline.colors.bg)) {
         // Landscape or a wide screen: the tabs on the left instead of along the bottom.
         val rail = !fullScreen && (maxWidth > maxHeight || maxWidth >= NavRailMinWidth)
         CompositionLocalProvider(LocalNavRail provides rail) {
-            if (state is LinkState.Unpaired) {
-                PairScreen(initialLink = pairLink, onPaired = {
-                    onPairLinkUsed()
-                    LinkService.send(context)
-                })
+            if (pairingPhone) {
+                PhonePairScreen(onDone = { pairingPhone = false })
+            } else if (!pcPaired && !phonesOnly) {
+                PairScreen(
+                    initialLink = pairLink,
+                    onPaired = {
+                        addingPc = false
+                        onPairLinkUsed()
+                        LinkService.send(context)
+                    },
+                    onCancel =
+                        if (phones.isNotEmpty()) {
+                            {
+                                addingPc = false
+                                onPairLinkUsed()
+                            }
+                        } else {
+                            null
+                        },
+                    onPairPhone = { pairingPhone = true },
+                )
             } else if (addingPc || pairLink != null) {
                 fun close() {
                     addingPc = false
@@ -168,10 +196,15 @@ private fun DotlinkRoot(
                     onAddPc = { addingPc = true },
                 )
             } else {
-                var tab by rememberSaveable { mutableStateOf(MainTab.Link) }
+                val tabs = if (pcPaired) MainTab.entries else listOf(MainTab.Phones, MainTab.Settings)
+                var chosen by rememberSaveable { mutableStateOf(MainTab.Link) }
+                // A tab that isn't shown (the PC ones, with no PC) falls back to the first.
+                val tab = chosen.takeIf { it in tabs } ?: tabs.first()
                 val screen: @Composable () -> Unit = {
                     when (tab) {
-                        MainTab.Link -> LinkScreen(onOpenTab = { tab = it }, onAddPc = { addingPc = true })
+                        MainTab.Link -> LinkScreen(onOpenTab = { chosen = it }, onAddPc = { addingPc = true })
+                        MainTab.Phones ->
+                            PhonesScreen(onPairPhone = { pairingPhone = true }, onPairPc = if (pcPaired) null else ({ addingPc = true }))
                         MainTab.Remote -> RemoteScreen()
                         MainTab.Shell -> ShellScreen()
                         MainTab.Camera -> CameraScreen()
@@ -181,7 +214,7 @@ private fun DotlinkRoot(
                 if (rail) {
                     // The rail stays with the keyboard open: it takes width, not height.
                     Row(Modifier.fillMaxSize()) {
-                        NavRail(tabs = MainTab.entries, selectedTab = tab, onTabClick = { tab = it })
+                        NavRail(tabs = tabs, selectedTab = tab, onTabClick = { chosen = it })
                         Box(Modifier.weight(1f).fillMaxHeight()) { screen() }
                     }
                 } else {
@@ -190,9 +223,9 @@ private fun DotlinkRoot(
                 // The keyboard needs the room in Remote and Shell; the tabs come back when it closes.
                 if (!rail && !WindowInsets.isImeVisible) {
                     BottomNav(
-                        tabs = MainTab.entries,
+                        tabs = tabs,
                         selectedTab = tab,
-                        onTabClick = { tab = it },
+                        onTabClick = { chosen = it },
                         modifier = Modifier.align(Alignment.BottomCenter),
                     )
                 }
