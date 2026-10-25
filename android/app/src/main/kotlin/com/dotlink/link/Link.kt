@@ -697,8 +697,40 @@ class Link(
         name: String,
         size: Long,
     ) {
-        val t = Transfer(transferIds.getAndIncrement(), name, incoming = true, size = size)
+        val t = newTransfer(name, incoming = true, size = size)
+        try {
+            transferClient().newCall(request("/download/$id").build()).execute().use { res ->
+                if (!res.isSuccessful) error("PC answered ${res.code}")
+                saveIncoming(t, prefs.serverName, res.body!!.byteStream())
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "download $name failed", e)
+            finish(t.id, e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    /** A transfer for the list (and the progress notification). */
+    fun newTransfer(
+        name: String,
+        incoming: Boolean,
+        size: Long,
+    ): Transfer {
+        val t = Transfer(transferIds.getAndIncrement(), name, incoming = incoming, size = size)
         transfers.update { listOf(t) + it.take(30) }
+        return t
+    }
+
+    /**
+     * Saves a received file into Download/Dotlink from [input] and says so in a notification
+     * ("Received from [from]"). Throws when it fails, after removing the partial file and
+     * marking [t] failed.
+     */
+    fun saveIncoming(
+        t: Transfer,
+        from: String,
+        input: java.io.InputStream,
+    ) {
+        val name = t.name
         val resolver = app.contentResolver
         val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
         val values =
@@ -711,31 +743,28 @@ class Link(
         val item = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
         if (item == null) {
             finish(t.id, "can't create file")
-            return
+            error("can't create file")
         }
         try {
-            transferClient().newCall(request("/download/$id").build()).execute().use { res ->
-                if (!res.isSuccessful) error("PC answered ${res.code}")
-                resolver.openOutputStream(item)!!.use { out ->
-                    val input = res.body!!.byteStream()
-                    val buf = ByteArray(256 * 1024)
-                    var got = 0L
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        out.write(buf, 0, n)
-                        got += n
-                        progress(t.id, got)
-                    }
+            resolver.openOutputStream(item)!!.use { out ->
+                val buf = ByteArray(256 * 1024)
+                var got = 0L
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    got += n
+                    progress(t.id, got)
                 }
+                if (t.size >= 0 && got != t.size) error("cut off after ${got} of ${t.size} bytes")
             }
             resolver.update(item, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
             finish(t.id, null)
-            notifyReceived(name, item, mime)
+            notifyReceived(from, name, item, mime)
         } catch (e: Exception) {
             resolver.delete(item, null, null)
-            Log.w(TAG, "download $name failed", e)
             finish(t.id, e.message ?: e.javaClass.simpleName)
+            throw e
         }
     }
 
@@ -748,7 +777,7 @@ class Link(
 
     private var lastProgress = 0L
 
-    private fun progress(
+    fun progress(
         id: Long,
         done: Long,
     ) {
@@ -758,7 +787,7 @@ class Link(
         transfers.update { list -> list.map { if (it.id == id) it.copy(done = done) else it } }
     }
 
-    private fun finish(
+    fun finish(
         id: Long,
         error: String?,
     ) {
@@ -777,6 +806,7 @@ class Link(
 
     @SuppressLint("MissingPermission") // Checked by NotificationManager.areNotificationsEnabled.
     private fun notifyReceived(
+        from: String,
         name: String,
         uri: Uri,
         mime: String,
@@ -790,7 +820,7 @@ class Link(
             NotificationCompat
                 .Builder(app, DotlinkApp.CHANNEL_FILES)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("Received from ${prefs.serverName}")
+                .setContentTitle("Received from $from")
                 .setContentText(name)
                 .setContentIntent(pi)
                 .setAutoCancel(true)
@@ -798,7 +828,7 @@ class Link(
         nm.notify(uri.hashCode(), n)
     }
 
-    private fun queryName(uri: Uri): Pair<String, Long> {
+    fun queryName(uri: Uri): Pair<String, Long> {
         var name = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
         var size = -1L
         app.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
@@ -810,7 +840,7 @@ class Link(
         return name to size
     }
 
-    private fun sha256(uri: Uri): String {
+    fun sha256(uri: Uri): String {
         val md = MessageDigest.getInstance("SHA-256")
         app.contentResolver.openInputStream(uri)!!.use { input ->
             val buf = ByteArray(256 * 1024)

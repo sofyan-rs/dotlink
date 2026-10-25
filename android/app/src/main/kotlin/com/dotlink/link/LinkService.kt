@@ -22,6 +22,7 @@ import com.dotlink.R
 import com.dotlink.ui.ClipboardActivity
 import com.dotlink.ui.MainActivity
 import com.dotlink.ui.StreamActivity
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -31,6 +32,7 @@ import kotlinx.coroutines.launch
  */
 class LinkService : LifecycleService() {
     private val link get() = DotlinkApp.link
+    private val phones get() = DotlinkApp.phones
     private var camera: CameraStreamer? = null
 
     /** Start the camera again as soon as the current one has fully stopped (new settings). */
@@ -59,10 +61,22 @@ class LinkService : LifecycleService() {
         promote()
         link.start()
         lifecycleScope.launch {
-            combine(link.state, link.cameraOn, link.micOn) { s, c, m -> Triple(s, c, m) }.collect { (s, c, m) ->
+            combine(link.state, link.cameraOn, link.micOn, phones.list) { s, c, m, _ -> Triple(s, c, m) }.collect { (s, c, m) ->
                 lowLatency.hold(s is LinkState.Online)
                 highPerf.hold(s is LinkState.Online && (c || m))
-                if (s is LinkState.Unpaired) stopSelf() else promote()
+                // Paired phones send to this one at any time: keep listening for them.
+                if (phones.needed) phones.startServer() else phones.stopServer()
+                if (s is LinkState.Unpaired && !phones.needed) stopSelf() else promote()
+            }
+        }
+        // A code shown on screen expires after 5 minutes: stop listening then if nothing else needs it.
+        lifecycleScope.launch {
+            while (true) {
+                delay(60_000)
+                if (!phones.needed) {
+                    phones.stopServer()
+                    if (link.state.value is LinkState.Unpaired) stopSelf()
+                }
             }
         }
         lifecycleScope.launch {
@@ -99,7 +113,8 @@ class LinkService : LifecycleService() {
                 camera?.stop()
                 mic?.stop()
                 link.disconnect()
-                stopSelf()
+                // Paired phones still send here: only the PC link stops then.
+                if (phones.needed) promote() else stopSelf()
             }
             ACTION_SWITCH -> {
                 // Streams go to the old PC; stop them before leaving it.
@@ -258,6 +273,7 @@ class LinkService : LifecycleService() {
             when (state) {
                 is LinkState.Online -> "Connected to ${state.pcName}"
                 LinkState.Connecting -> "Connecting to ${link.prefs.serverName}…"
+                LinkState.Unpaired -> "Ready for your phones"
                 else -> "${link.prefs.serverName} is offline"
             }
         val extras = listOfNotNull("Webcam on".takeIf { link.cameraOn.value }, "Mic on".takeIf { link.micOn.value })
@@ -284,6 +300,7 @@ class LinkService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        phones.stopServer()
         networkCallback?.let { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) }
         camera?.stop()
         mic?.stop()

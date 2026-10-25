@@ -51,7 +51,9 @@ desktop/                 Rust workspace
 android/                 Kotlin + Jetpack Compose app
   link/                  Link (connection), LinkService (foreground service), streamers,
                          Prefs (paired PCs, settings)
-  ui/                    screens (pair/ also picks a PC; home/PcSheet switches PCs);
+  peer/                  phone ↔ phone: PhoneTls (Keystore key + certificate), PhoneServer
+                         (a minimal HTTPS server), Phones (pairing, sending, NSD)
+  ui/                    screens (pair/ also picks a PC; home/PcSheet switches PCs; phones/);
                          ui/dotline is the Dotline design system
 scripts/install.sh       build + install for the current user (Linux)
 scripts/make-windows-icon.py  draws desktop/app/assets/dotlink.ico
@@ -154,6 +156,30 @@ several phones can pair at once and the QR code on the PC's screen keeps working
 addresses, port, certificate fingerprint and a one-time secret valid for 5 minutes. The phone
 pins `fp` and trades `c` for a token. When the PC's IP changes, the phone finds it again with
 mDNS (`_dotlink._tcp`, matched by server id).
+
+### Phone ↔ phone
+
+Two phones send each other files and the clipboard directly; there is no lasting connection
+and no PC involved (`android/.../peer/`).
+
+- **Server.** While a phone is paired with another (or shows its pairing code), LinkService runs
+  `PhoneServer`: HTTPS on the first free port from 47391, one request per connection, bodies by
+  Content-Length. Its certificate is the self-signed one the Android Keystore makes for an EC key
+  (`PhoneTls`), so no crypto library. It is advertised over NSD as `_dotlink-phone._tcp` (TXT `id`,
+  `fp`).
+- **Pairing.** One phone shows a QR code, `dotlink://phone?h=…&p=…&fp=…&c=…&id=…&n=…` (a one-time
+  secret, 5 minutes); the other scans it (or pastes it) and sends `POST /pair` over TLS pinned to
+  `fp`, with the secret, its own fingerprint, addresses and a token for the shower to present. The
+  reply carries the token the scanner presents. Each side stores the other in `Prefs.phones`:
+  fingerprint, addresses, the token it presents and the SHA-256 of the one it accepts.
+- **Endpoints** (Bearer token): `POST /upload?name=` (into Download/Dotlink, with a notification),
+  `POST /clip` (`{"text"}`, set right away: Android only restricts reading the clipboard),
+  `POST /forget`.
+- **Sending** tries the stored addresses, then looks the phone up over NSD by id. A 401 means it
+  forgot this phone, which then forgets it too.
+- The Link tab lists paired phones; with phones but no PC, the app opens on a Phones screen.
+  Share → Dotlink asks where to send when phones are paired.
+- After the phone restarts, it receives again once Dotlink has been opened (no boot receiver).
 
 ### Linking two PCs
 

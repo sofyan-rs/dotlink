@@ -38,6 +38,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dotlink.DotlinkApp
 import com.dotlink.link.LinkService
+import com.dotlink.ui.phones.PhonePairScreen
+import com.dotlink.ui.phones.PhonesHomeScreen
 import com.dotlink.link.LinkState
 import com.dotlink.ui.dotline.BottomNav
 import com.dotlink.ui.dotline.LocalNavRail
@@ -105,7 +107,12 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // After "Disconnect for now" only Reconnect brings the link back.
         // Nor before a PC is picked (several paired).
-        if (link.prefs.paired && link.state.value !is LinkState.Disconnected && !link.choosePc.value) LinkService.send(this)
+        if (link.prefs.paired && link.state.value !is LinkState.Disconnected && !link.choosePc.value) {
+            LinkService.send(this)
+        } else if (DotlinkApp.phones.needed) {
+            // No PC (or not now), but paired phones: keep receiving from them.
+            LinkService.send(this)
+        }
     }
 
     // Android only lets the focused app read the clipboard, so we send it when we gain focus.
@@ -131,19 +138,41 @@ private fun DotlinkRoot(
     }
     LaunchedEffect(Unit) { Updater.checkOnStart(context) }
     UpdateDialog()
+    val phones by DotlinkApp.phones.list.collectAsStateWithLifecycle()
     // Pairing another PC while one is paired already.
     var addingPc by rememberSaveable { mutableStateOf(false) }
+    var pairingPhone by rememberSaveable { mutableStateOf(false) }
+    // No PC, but phones: their own home screen instead of the PC pairing screen.
+    val phonesHome = state is LinkState.Unpaired && phones.isNotEmpty() && !addingPc && pairLink == null
     // Pairing or choosing a PC: no tabs (and no tab bar under the snackbar).
-    val fullScreen = state is LinkState.Unpaired || addingPc || pairLink != null || choosePc
+    val fullScreen = state is LinkState.Unpaired || addingPc || pairLink != null || choosePc || pairingPhone
     BoxWithConstraints(Modifier.fillMaxSize().background(Dotline.colors.bg)) {
         // Landscape or a wide screen: the tabs on the left instead of along the bottom.
         val rail = !fullScreen && (maxWidth > maxHeight || maxWidth >= NavRailMinWidth)
         CompositionLocalProvider(LocalNavRail provides rail) {
-            if (state is LinkState.Unpaired) {
-                PairScreen(initialLink = pairLink, onPaired = {
-                    onPairLinkUsed()
-                    LinkService.send(context)
-                })
+            if (pairingPhone) {
+                PhonePairScreen(onDone = { pairingPhone = false })
+            } else if (phonesHome) {
+                PhonesHomeScreen(onPairPhone = { pairingPhone = true }, onPairPc = { addingPc = true })
+            } else if (state is LinkState.Unpaired) {
+                PairScreen(
+                    initialLink = pairLink,
+                    onPaired = {
+                        addingPc = false
+                        onPairLinkUsed()
+                        LinkService.send(context)
+                    },
+                    onCancel =
+                        if (phones.isNotEmpty()) {
+                            {
+                                addingPc = false
+                                onPairLinkUsed()
+                            }
+                        } else {
+                            null
+                        },
+                    onPairPhone = { pairingPhone = true },
+                )
             } else if (addingPc || pairLink != null) {
                 fun close() {
                     addingPc = false
@@ -171,7 +200,7 @@ private fun DotlinkRoot(
                 var tab by rememberSaveable { mutableStateOf(MainTab.Link) }
                 val screen: @Composable () -> Unit = {
                     when (tab) {
-                        MainTab.Link -> LinkScreen(onOpenTab = { tab = it }, onAddPc = { addingPc = true })
+                        MainTab.Link -> LinkScreen(onOpenTab = { tab = it }, onAddPc = { addingPc = true }, onPairPhone = { pairingPhone = true })
                         MainTab.Remote -> RemoteScreen()
                         MainTab.Shell -> ShellScreen()
                         MainTab.Camera -> CameraScreen()

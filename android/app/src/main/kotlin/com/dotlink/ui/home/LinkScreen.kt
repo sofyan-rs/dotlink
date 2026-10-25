@@ -40,6 +40,7 @@ import com.dotlink.ui.dotline.QuickActionRow
 import com.dotlink.ui.dotline.ScreenTitle
 import com.dotlink.ui.dotline.ScreenTitleAction
 import com.dotlink.ui.formatSize
+import com.dotlink.ui.phones.PhonesSection
 import com.dotlink.ui.theme.Dotline
 import kotlinx.coroutines.launch
 
@@ -47,6 +48,7 @@ import kotlinx.coroutines.launch
 fun LinkScreen(
     onOpenTab: (MainTab) -> Unit,
     onAddPc: () -> Unit,
+    onPairPhone: () -> Unit,
 ) {
     val link = DotlinkApp.link
     val context = LocalContext.current
@@ -164,6 +166,8 @@ fun LinkScreen(
             }
             Hint("Pick \"Dotlink Camera\" and \"Dotlink Mic\" in your call, browser or OBS.")
         }
+
+        PhonesSection(onPairPhone = onPairPhone)
 
         Section("Transfers") {
             if (transfers.isEmpty()) {

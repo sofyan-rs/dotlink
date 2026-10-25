@@ -7,21 +7,30 @@ import android.net.wifi.WifiManager
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Finds the paired PC on the LAN through mDNS (`_dotlink._tcp`), matching its server id. */
+/** Finds the paired PC (or a paired phone) on the LAN through mDNS, matching its id. */
 object Discovery {
     private const val SERVICE = "_dotlink._tcp."
 
-    @Suppress("DEPRECATION") // resolveService: the replacement needs API 34.
+    /** The PC's address (`_dotlink._tcp`, its server id). */
     suspend fun find(
         context: Context,
         serverId: String,
         timeoutMs: Long = 4000,
-    ): String? {
+    ): String? = findService(context, SERVICE, serverId, timeoutMs)?.first
+
+    /** Host and port of the [service] instance whose TXT `id` is [serverId]. */
+    @Suppress("DEPRECATION") // resolveService: the replacement needs API 34.
+    suspend fun findService(
+        context: Context,
+        service: String,
+        serverId: String,
+        timeoutMs: Long = 4000,
+    ): Pair<String, Int>? {
         if (serverId.isEmpty()) return null
         val nsd = context.getSystemService(NsdManager::class.java)
         val wifi = context.applicationContext.getSystemService(WifiManager::class.java)
         val lock = wifi.createMulticastLock("dotlink-discovery").apply { setReferenceCounted(false) }
-        val result = CompletableDeferred<String?>()
+        val result = CompletableDeferred<Pair<String, Int>?>()
         val listener =
             object : NsdManager.DiscoveryListener {
                 override fun onServiceFound(info: NsdServiceInfo) {
@@ -36,7 +45,7 @@ object Discovery {
                             override fun onServiceResolved(info: NsdServiceInfo) {
                                 val id = info.attributes["id"]?.decodeToString()
                                 val host = info.host?.hostAddress
-                                if (id == serverId && host != null) result.complete(host)
+                                if (id == serverId && host != null) result.complete(host to info.port)
                             }
                         },
                     )
@@ -62,7 +71,7 @@ object Discovery {
             }
         lock.acquire()
         return try {
-            nsd.discoverServices(SERVICE, NsdManager.PROTOCOL_DNS_SD, listener)
+            nsd.discoverServices(service, NsdManager.PROTOCOL_DNS_SD, listener)
             withTimeoutOrNull(timeoutMs) { result.await() }
         } finally {
             runCatching { nsd.stopServiceDiscovery(listener) }

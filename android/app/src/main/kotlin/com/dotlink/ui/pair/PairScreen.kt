@@ -91,6 +91,8 @@ fun PairScreen(
     onPaired: () -> Unit,
     /** Set when adding another PC: back and the Cancel button leave without pairing. */
     onCancel: (() -> Unit)? = null,
+    /** Pair with another phone instead (files and the clipboard, no PC needed). */
+    onPairPhone: (() -> Unit)? = null,
 ) {
     val link = DotlinkApp.link
     val context = LocalContext.current
@@ -113,8 +115,9 @@ fun PairScreen(
         busy = true
         error = null
         scope.launch {
-            link
-                .pair(code)
+            // Another phone's code, scanned here by mistake or opened as a link: pair with it.
+            val pairing = if (code.trim().startsWith("dotlink://phone")) DotlinkApp.phones.pair(code) else link.pair(code)
+            pairing
                 .onSuccess {
                     link.notices.tryEmit("Paired with $it")
                     onPaired()
@@ -251,6 +254,10 @@ fun PairScreen(
             onClick = { pair(pasted.text.toString()) },
             modifier = Modifier.fillMaxWidth(),
         )
+        if (onPairPhone != null) {
+            Spacer(Modifier.height(Dotline.space.s2))
+            SecondaryButton(text = "Pair with another phone", icon = DotlineIcons.Share, onClick = onPairPhone, modifier = Modifier.fillMaxWidth())
+        }
         if (onCancel != null) {
             Spacer(Modifier.height(Dotline.space.s2))
             SecondaryButton(text = "Cancel", onClick = onCancel, modifier = Modifier.fillMaxWidth())
@@ -261,9 +268,10 @@ fun PairScreen(
 
 @OptIn(ExperimentalGetImage::class)
 @Composable
-private fun QrScanner(
+internal fun QrScanner(
     onCode: (String) -> Unit,
     modifier: Modifier = Modifier,
+    hint: String = "Point at the code from dotlink pair",
 ) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
@@ -314,7 +322,7 @@ private fun QrScanner(
     }
     Spacer(Modifier.height(Dotline.space.s3))
     Text(
-        "Point at the code from dotlink pair",
+        hint,
         style = Dotline.type.bodyS,
         color = Dotline.colors.inkMuted,
         modifier = Modifier.fillMaxWidth(),
