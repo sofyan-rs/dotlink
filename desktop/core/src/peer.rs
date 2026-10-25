@@ -54,6 +54,8 @@ struct Link {
     tx: Option<mpsc::UnboundedSender<String>>,
     /// Where it answered last.
     addr: Option<SocketAddr>,
+    /// Its battery (laptops), while connected: (percent, on power).
+    battery: Option<(u8, bool)>,
 }
 
 impl Peers {
@@ -67,12 +69,25 @@ impl Peers {
         links.get(id).and_then(|l| l.tx.as_ref()).is_some_and(|tx| tx.send(msg.to_string()).is_ok())
     }
 
+    pub fn battery(&self, id: &str) -> Option<(u8, bool)> {
+        self.links.lock().unwrap().get(id).filter(|l| l.tx.is_some()).and_then(|l| l.battery)
+    }
+
+    fn set_battery(&self, id: &str, battery: (u8, bool)) {
+        if let Some(link) = self.links.lock().unwrap().get_mut(id) {
+            link.battery = Some(battery);
+        }
+    }
+
     fn addr(&self, id: &str) -> Option<SocketAddr> {
         self.links.lock().unwrap().get(id).and_then(|l| l.addr)
     }
 
     fn set_online(&self, id: &str, tx: Option<mpsc::UnboundedSender<String>>, addr: Option<SocketAddr>) {
         if let Some(link) = self.links.lock().unwrap().get_mut(id) {
+            if tx.is_none() {
+                link.battery = None;
+            }
             link.tx = tx;
             if addr.is_some() {
                 link.addr = addr;
@@ -91,7 +106,7 @@ pub fn start_all(app: &Arc<App>) {
 
 fn start(app: &Arc<App>, id: String) {
     let stop = CancellationToken::new();
-    let old = app.peers.links.lock().unwrap().insert(id.clone(), Link { stop: stop.clone(), tx: None, addr: None });
+    let old = app.peers.links.lock().unwrap().insert(id.clone(), Link { stop: stop.clone(), tx: None, addr: None, battery: None });
     if let Some(old) = old {
         old.stop.cancel();
     }
@@ -296,6 +311,9 @@ async fn session(app: &Arc<App>, peer: &Peer) -> Result<()> {
     tracing::info!("linked to {} at {addr}", peer.name);
     let info = json!({ "t": "info", "kind": "pc", "name": app.name(), "os": std::env::consts::OS });
     tx.send(Message::text(info.to_string())).await?;
+    if let Some(battery) = app.battery_msg() {
+        tx.send(Message::text(battery.to_string())).await?;
+    }
     let mut ping = tokio::time::interval(PING_EVERY);
     let mut last_heard = tokio::time::Instant::now();
     loop {
@@ -333,6 +351,12 @@ async fn handle(app: &Arc<App>, peer: &Peer, addr: SocketAddr, v: Value) {
             if let Some(name) = v["name"].as_str() {
                 rename(app, &peer.id, name);
             }
+        }
+        Some("battery") => {
+            let Some(level) = v["level"].as_u64() else { return };
+            let charging = v["charging"].as_bool().unwrap_or(false);
+            app.peers.set_battery(&peer.id, (level.min(100) as u8, charging));
+            app.emit(Event::Devices);
         }
         Some("clip") => {
             let Some(text) = v["text"].as_str() else { return };

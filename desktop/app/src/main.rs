@@ -223,7 +223,16 @@ async fn command(cmd: Cmd) -> Result<()> {
                 for d in devices {
                     let state = if d["online"].as_bool().unwrap_or(false) { "online" } else { "offline" };
                     let kind = d["kind"].as_str().unwrap_or("phone");
-                    println!("{}  {}  {kind}  ({state})", d["id"].as_str().unwrap_or(""), d["name"].as_str().unwrap_or(""));
+                    let battery = match d["battery"]["level"].as_u64() {
+                        Some(level) if d["battery"]["charging"].as_bool() == Some(true) => format!("  {level}% charging"),
+                        Some(level) => format!("  {level}%"),
+                        None => String::new(),
+                    };
+                    println!(
+                        "{}  {}  {kind}  ({state}){battery}",
+                        d["id"].as_str().unwrap_or(""),
+                        d["name"].as_str().unwrap_or("")
+                    );
                 }
                 Ok(())
             })

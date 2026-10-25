@@ -17,6 +17,11 @@ pub use media::{CameraHub, MicSink, find_camera};
 use super::Features;
 use std::path::Path;
 
+/// The laptop's battery: (percent, on power); None on a desktop.
+pub fn battery() -> Option<(u8, bool)> {
+    super::battery::from_sysfs(Path::new("/sys/class/power_supply"))
+}
+
 pub fn features() -> Features {
     Features { clipboard: true, remote: true, camera: true, mic: true, shell: true }
 }

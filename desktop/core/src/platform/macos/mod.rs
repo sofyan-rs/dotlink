@@ -23,6 +23,12 @@ use crate::input::InputMsg;
 use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
 
+/// The MacBook's battery: (percent, on power); None on a Mac without one.
+pub fn battery() -> Option<(u8, bool)> {
+    let out = std::process::Command::new("pmset").args(["-g", "batt"]).output().ok()?;
+    super::battery::from_pmset(&String::from_utf8_lossy(&out.stdout))
+}
+
 pub fn features() -> Features {
     Features { clipboard: true, remote: false, camera: false, mic: false, shell: true }
 }
