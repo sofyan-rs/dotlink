@@ -223,6 +223,7 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
         }
         // A second launch of the app: show the running one's window.
         "show" => {
+            tracing::info!("another launch of Dotlink asked for the window");
             let msg = if app.request_ui(UiRequest::Show) {
                 json!({ "ok": "shown" })
             } else {

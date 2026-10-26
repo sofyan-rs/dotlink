@@ -213,6 +213,12 @@ pub fn instance_suffix() -> String {
     }
 }
 
+/// The log every launch appends to (a GUI program has no terminal to print to). At 1 MB it
+/// moves to `dotlink.old.log` and starts again.
+pub fn log_path() -> PathBuf {
+    config_dir().join("dotlink.log")
+}
+
 pub fn config_path() -> PathBuf {
     config_dir().join("config.toml")
 }

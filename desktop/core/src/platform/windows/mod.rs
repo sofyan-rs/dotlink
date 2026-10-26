@@ -306,6 +306,38 @@ pub(crate) fn find_on_path(exe: &str) -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?).map(|dir| dir.join(exe)).find(|p| p.is_file())
 }
 
+/// The program that started this one ("explorer", "powershell"…), for the log: Explorer
+/// means a shortcut or a notification, PowerShell the updater.
+pub fn parent_process() -> Option<String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+    };
+    let me = std::process::id();
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        // Every process with its parent and exe name, in one pass.
+        let mut all = Vec::new();
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut ok = Process32FirstW(snapshot, &mut entry) != 0;
+        while ok {
+            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+            all.push((entry.th32ProcessID, entry.th32ParentProcessID, String::from_utf16_lossy(&entry.szExeFile[..len])));
+            ok = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+        let parent = all.iter().find(|(pid, _, _)| *pid == me)?.1;
+        Some(match all.iter().find(|(pid, _, _)| *pid == parent) {
+            Some((_, _, name)) => name.trim_end_matches(".exe").to_string(),
+            None => format!("pid {parent}, gone"),
+        })
+    }
+}
+
 /// Name of a running program ("pwsh", "cmd"…), from its exe.
 pub fn process_name(pid: u32) -> Option<String> {
     use windows_sys::Win32::Foundation::CloseHandle;
