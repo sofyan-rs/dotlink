@@ -301,6 +301,7 @@ named pipe above.
 | Path | Content |
 |---|---|
 | `~/.config/dotlink/config.toml` | settings (also edited by Settings) |
+| `~/.config/dotlink/dotlink.log` | what each launch did: who started it, with which arguments, and why the window opened (moves to `dotlink.old.log` at 1 MB) |
 | `~/.config/dotlink/state.json` | server id, paired devices (kind, token hashes), linked PCs (fingerprint, addresses, token), 0600 |
 | `~/.config/dotlink/cert.pem`, `key.pem` | the certificate the phone pins |
 | `~/.local/share/dotlink/scrcpy/<version>/` | scrcpy + adb, when Dotlink downloaded them |

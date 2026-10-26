@@ -13,6 +13,7 @@
 //! | `default_shell()`, `process_name(pid)` | the Shell screen |
 //! | `autostart::{enabled, set}` | start with the desktop session |
 //! | `setup::{checks, fix}` | permissions and system pieces the features need |
+//! | `parent_process()` | the program that started Dotlink, for the log |
 //! | `share_menu::set(phones)` | "Share with Dotlink" in the file manager's menu, one item per phone |
 //! | `battery()` | the laptop's battery: (percent, on power); None without one |
 //!

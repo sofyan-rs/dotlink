@@ -152,13 +152,33 @@ fn attach_console() {
 #[cfg(not(all(windows, feature = "gui")))]
 fn attach_console() {}
 
+/// To the terminal (when there is one) and to `config::log_path()`, so what happened at login,
+/// from a notification or the tray can be read afterwards.
 fn init_logging() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "dotlink=info,dotlink_core=info".into()),
-        )
-        .init();
+    use tracing_subscriber::fmt::writer::MakeWriterExt;
+    let filter = || {
+        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "dotlink=info,dotlink_core=info".into())
+    };
+    match open_log() {
+        Some(file) => tracing_subscriber::fmt()
+            .with_env_filter(filter())
+            .with_ansi(false)
+            .with_writer(std::io::stdout.and(std::sync::Mutex::new(file)))
+            .init(),
+        None => tracing_subscriber::fmt().with_env_filter(filter()).init(),
+    }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let parent = dotlink_core::platform::parent_process().unwrap_or_else(|| "?".into());
+    tracing::info!("dotlink {} started (pid {}) by {parent} with {args:?}", env!("CARGO_PKG_VERSION"), std::process::id());
+}
+
+fn open_log() -> Option<std::fs::File> {
+    let path = dotlink_core::config::log_path();
+    std::fs::create_dir_all(path.parent()?).ok()?;
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 1024 * 1024) {
+        let _ = std::fs::rename(&path, path.with_file_name("dotlink.old.log"));
+    }
+    std::fs::OpenOptions::new().create(true).append(true).open(path).ok()
 }
 
 async fn command(cmd: Cmd) -> Result<()> {

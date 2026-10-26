@@ -49,6 +49,14 @@ pub fn notify_incoming(app: &std::sync::Arc<crate::server::App>, incoming: &crat
     });
 }
 
+/// The program that started this one, for the log.
+pub fn parent_process() -> Option<String> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    // The command name is in parentheses and may hold spaces: the ppid follows its end.
+    let ppid = stat.rsplit(')').next()?.split_whitespace().nth(1)?;
+    std::fs::read_to_string(format!("/proc/{ppid}/comm")).ok().map(|s| s.trim().to_string())
+}
+
 /// notify-send's notification expires by itself (`-t`): nothing to take away.
 pub fn dismiss_incoming(_id: &str) {}
 

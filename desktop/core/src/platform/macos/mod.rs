@@ -44,6 +44,11 @@ pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &cra
 
 pub fn dismiss_incoming(_id: &str) {}
 
+/// TODO(macos): the parent's name (proc_pidinfo); only for the log.
+pub fn parent_process() -> Option<String> {
+    None
+}
+
 pub fn notify_file(from: &str, name: &str, _path: &Path) {
     notify(&format!("Received from {from}"), name);
 }

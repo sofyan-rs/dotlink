@@ -59,8 +59,10 @@ pub fn run(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
         }
         // Already running: started at login again, nothing to do.
         if background {
+            tracing::info!("already running: nothing to do");
             std::process::exit(0);
         }
+        tracing::info!("already running: asking it to show its window");
         // A Dotlink app with a window shows it and we're done.
         let shown = ipc::call(json!({ "cmd": "show" })).await?;
         if shown["ok"].is_string() {
@@ -141,7 +143,10 @@ pub fn run(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
 
             // Without a tray there is no way back to a hidden window, so always show it.
             if !background || !has_tray {
+                tracing::info!("opening the window: {}", if background { "no tray icon" } else { "started without --background" });
                 show_window(cx);
+            } else {
+                tracing::info!("in the tray, no window");
             }
             listen_service(ui_rx, stopped_rx, cx);
             listen_tray(tray_rx, cx);
@@ -211,7 +216,10 @@ fn listen_service(
     cx.spawn(async move |cx: &mut AsyncApp| {
         while let Some(req) = rx.recv().await {
             match req {
-                UiRequest::Show => cx.update(show_window),
+                UiRequest::Show => {
+                    tracing::info!("opening the window: asked by another launch");
+                    cx.update(show_window)
+                }
             }
         }
     })
@@ -232,7 +240,10 @@ fn listen_tray(mut rx: futures::channel::mpsc::UnboundedReceiver<TrayAction>, cx
             cx.update(|cx| {
                 let model = cx.global::<State>().model.clone();
                 match action {
-                    TrayAction::Open => show_window(cx),
+                    TrayAction::Open => {
+                        tracing::info!("opening the window: tray");
+                        show_window(cx)
+                    }
                     TrayAction::Pair => {
                         model.update(cx, |m, cx| {
                             m.page = Page::Pair;
