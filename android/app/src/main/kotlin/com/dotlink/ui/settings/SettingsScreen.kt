@@ -65,8 +65,12 @@ fun SettingsScreen() {
     val prefs = link.prefs
     val context = LocalContext.current
     val state by link.state.collectAsStateWithLifecycle()
+    // Prefs aren't observable: read the active PC again when the link state changes or a PC is
+    // forgotten, so its sections go the moment it does.
+    var forgotten by remember { mutableIntStateOf(0) }
+    val pcId = remember(state, forgotten) { prefs.active?.id }
     // Remote, Shell, the PC clipboard and the paired PC only mean something with a PC.
-    val pc = prefs.paired
+    val pc = pcId != null
 
     TabScreen {
         ScreenTitle(title = "Settings")
@@ -170,7 +174,6 @@ fun SettingsScreen() {
                 Spacer(Modifier.height(Dotline.space.s3))
                 // Each PC has its own PIN: a fresh field (and save target) per PC, so switching PCs
                 // never writes one PC's PIN into another.
-                val pcId = prefs.active?.id
                 key(pcId) {
                     val pin = rememberTextFieldState(prefs.terminalPin)
                     var show by remember { mutableStateOf(false) }
@@ -208,7 +211,8 @@ fun SettingsScreen() {
                                 compact = true,
                                 onClick = {
                                     confirm = false
-                                    prefs.active?.let { link.forget(it.id) }
+                                    pcId?.let { link.forget(it) }
+                                    forgotten++
                                 },
                                 modifier = Modifier.weight(1f),
                             )
