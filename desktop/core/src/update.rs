@@ -1,6 +1,8 @@
 //! Updates from the GitHub releases. Windows runs the new setup .exe (it closes Dotlink, installs
-//! and starts it again); an AppImage replaces itself. Other Linux installs (.deb, .rpm, built from
-//! source) get the release page: their package manager or `install.sh` updates them.
+//! and starts it again); an AppImage replaces itself; on macOS the .app is swapped for the one in
+//! the new .dmg. Other Linux installs (.deb, .rpm, built from source) and a Mac app in a folder
+//! this user can't write get the release page: their package manager, `install.sh` or a drag to
+//! Applications updates them.
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
@@ -187,9 +189,64 @@ fn own_asset(name: &str) -> bool {
         name.ends_with("-setup.exe")
     } else if cfg!(target_os = "linux") {
         appimage().is_some() && name.ends_with(".AppImage")
+    } else if cfg!(target_os = "macos") {
+        app_bundle().is_some() && name.ends_with(".dmg")
     } else {
         false
     }
+}
+
+/// The Dotlink.app this process runs from, when its folder can take the new one; None from
+/// `cargo run`, the mounted .dmg or a folder of another user (/Applications without admin).
+fn app_bundle() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    // Dotlink.app/Contents/MacOS/dotlink
+    let bundle = exe.parent()?.parent()?.parent()?;
+    if bundle.extension().is_none_or(|e| e != "app") {
+        return None;
+    }
+    let folder = bundle.parent()?;
+    let probe = folder.join(format!(".dotlink-update-{}", std::process::id()));
+    std::fs::write(&probe, b"").ok()?;
+    let _ = std::fs::remove_file(&probe);
+    Some(bundle.to_path_buf())
+}
+
+/// Copies the app out of the downloaded .dmg next to the running one (the same folder, so
+/// the swap in [launch] is a rename), and returns the copy.
+#[cfg(target_os = "macos")]
+fn unpack_dmg(dmg: &std::path::Path) -> Result<PathBuf> {
+    use std::process::Command;
+    let bundle = app_bundle().context("can't replace this copy of Dotlink")?;
+    let staged = bundle.with_file_name(".Dotlink.app.update");
+    let mount = std::env::temp_dir().join(format!("dotlink-update-{}", std::process::id()));
+    std::fs::create_dir_all(&mount)?;
+    let attached = Command::new("hdiutil")
+        .args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint"])
+        .arg(&mount)
+        .arg(dmg)
+        .output()
+        .context("hdiutil")?;
+    if !attached.status.success() {
+        bail!("can't open the update: {}", String::from_utf8_lossy(&attached.stderr).trim());
+    }
+    let copied = (|| -> Result<()> {
+        let app = std::fs::read_dir(&mount)?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .find(|p| p.extension().is_some_and(|e| e == "app"))
+            .context("no app in the update")?;
+        let _ = std::fs::remove_dir_all(&staged);
+        // ditto keeps the bundle's signature, symlinks and attributes intact.
+        let status = Command::new("ditto").arg(&app).arg(&staged).status().context("ditto")?;
+        if !status.success() {
+            bail!("can't copy the update");
+        }
+        Ok(())
+    })();
+    let _ = Command::new("hdiutil").args(["detach", "-quiet"]).arg(&mount).status();
+    let _ = std::fs::remove_dir(&mount);
+    let _ = std::fs::remove_file(dmg);
+    copied.map(|()| staged)
 }
 
 /// The AppImage this process runs from (its runtime sets `APPIMAGE`).
@@ -197,10 +254,10 @@ fn appimage() -> Option<PathBuf> {
     std::env::var_os("APPIMAGE").map(PathBuf::from).filter(|p| p.is_file())
 }
 
-/// Downloads `asset` and gets it ready: the installer's path (Windows) or the replaced AppImage.
-/// `progress` gets 0.0–1.0. Blocking.
+/// Downloads `asset` and gets it ready: the installer's path (Windows), the replaced AppImage, or
+/// the new .app next to the running one (macOS). `progress` gets 0.0–1.0. Blocking.
 pub fn download(asset: &Asset, progress: impl Fn(f32)) -> Result<PathBuf> {
-    let dest = if cfg!(windows) {
+    let dest = if cfg!(any(windows, target_os = "macos")) {
         std::env::temp_dir().join(&asset.name)
     } else {
         let current = appimage().context("not running from an AppImage")?;
@@ -234,7 +291,9 @@ pub fn download(asset: &Asset, progress: impl Fn(f32)) -> Result<PathBuf> {
         let _ = std::fs::remove_file(&dest);
         bail!("the download stopped early");
     }
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    let dest = unpack_dmg(&dest)?;
+    #[cfg(target_os = "linux")]
     let dest = {
         use std::os::unix::fs::PermissionsExt;
         let current = appimage().context("not running from an AppImage")?;
@@ -246,8 +305,8 @@ pub fn download(asset: &Asset, progress: impl Fn(f32)) -> Result<PathBuf> {
 }
 
 /// Starts the update downloaded by [download]. The caller quits right after: a hidden
-/// PowerShell (Windows) or a small shell (AppImage) waits for this process to end, then runs the
-/// installer or starts Dotlink again.
+/// PowerShell (Windows) or a small shell waits for this process to end, then runs the installer,
+/// starts the AppImage again, or swaps the .app for the new one and opens it (macOS).
 pub fn launch(path: &std::path::Path) -> Result<()> {
     #[cfg(windows)]
     {
@@ -267,7 +326,21 @@ pub fn launch(path: &std::path::Path) -> Result<()> {
             .spawn()
             .context("can't start the installer")?;
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let bundle = app_bundle().context("can't replace this copy of Dotlink")?;
+        let pid = std::process::id().to_string();
+        let script = r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
+rm -rf "$3" && mv "$2" "$3" && exec open "$3""#;
+        std::process::Command::new("sh")
+            .args(["-c", script, "sh", &pid])
+            .arg(path)
+            .arg(&bundle)
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .context("can't restart Dotlink")?;
+    }
+    #[cfg(target_os = "linux")]
     {
         let pid = std::process::id().to_string();
         std::process::Command::new("sh")
