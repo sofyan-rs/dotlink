@@ -235,14 +235,13 @@ pub fn download(asset: &Asset, progress: impl Fn(f32)) -> Result<PathBuf> {
         bail!("the download stopped early");
     }
     #[cfg(unix)]
-    {
+    let dest = {
         use std::os::unix::fs::PermissionsExt;
         let current = appimage().context("not running from an AppImage")?;
         std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))?;
         std::fs::rename(&dest, &current).context("can't replace the AppImage")?;
-        return Ok(current);
-    }
-    #[cfg(not(unix))]
+        current
+    };
     Ok(dest)
 }
 

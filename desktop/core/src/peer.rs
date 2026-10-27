@@ -338,7 +338,7 @@ async fn json_reply(name: &str, reply: Response<Incoming>) -> Result<Value> {
     if !status.is_success() {
         return Err(Refused(format!("{name}: {}", text.trim())).into());
     }
-    Ok(serde_json::from_str(&text).context("pairing reply")?)
+    serde_json::from_str(&text).context("pairing reply")
 }
 
 /// Forgets a linked PC here, and tells it to forget this one (when it can be reached).

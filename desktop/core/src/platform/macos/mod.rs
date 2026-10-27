@@ -1,20 +1,19 @@
 //! macOS. Files, clipboard, notifications and pairing should work as is; the rest are stubs.
-//! Written on Linux and not compiled for this OS yet: expect small fixes on the first build.
 //!
 //! TODO(macos), roughly in order of value:
 //! - [ ] `Input`: CGEventCreateMouseEvent / CGEventCreateScrollWheelEvent2 /
-//!       CGEventCreateKeyboardEvent (`core-graphics` crate, or `enigo`). Needs the
-//!       Accessibility permission: `setup` should check AXIsProcessTrusted() and open
-//!       System Settings → Privacy & Security → Accessibility.
+//!   CGEventCreateKeyboardEvent (`core-graphics` crate, or `enigo`). Needs the
+//!   Accessibility permission: `setup` should check AXIsProcessTrusted() and open
+//!   System Settings → Privacy & Security → Accessibility.
 //! - [ ] `process_name`: shell tab titles (`proc_name` from libproc for the foreground pid).
 //! - [ ] `autostart`: a LaunchAgent plist in ~/Library/LaunchAgents running
-//!       "<app>/Contents/MacOS/dotlink --background" (or SMAppService on macOS 13+).
+//!   "<app>/Contents/MacOS/dotlink --background" (or SMAppService on macOS 13+).
 //! - [ ] `setup`: Local Network permission (macOS 15+) is asked on first mDNS use; the app
-//!       firewall asks on first listen. Explain both in the Setup screen.
+//!   firewall asks on first listen. Explain both in the Setup screen.
 //! - [ ] `CameraHub`: a CoreMediaIO Camera Extension (system extension inside the .app,
-//!       needs a signed + notarized build); the app feeds it frames over its sink stream.
+//!   needs a signed + notarized build); the app feeds it frames over its sink stream.
 //! - [ ] `MicSink`: an AudioServerPlugIn driver (like BlackHole) installed by the .pkg, fed
-//!       over shared memory; or ask the user to install BlackHole and play into it.
+//!   over shared memory; or ask the user to install BlackHole and play into it.
 
 pub(crate) use super::polling_clipboard as clipboard;
 
