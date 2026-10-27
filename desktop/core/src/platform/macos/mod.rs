@@ -1,10 +1,6 @@
-//! macOS. Files, clipboard, notifications and pairing should work as is; the rest are stubs.
+//! macOS. Files, clipboard, notifications, pairing and the Remote work; the rest are stubs.
 //!
 //! TODO(macos), roughly in order of value:
-//! - [ ] `Input`: CGEventCreateMouseEvent / CGEventCreateScrollWheelEvent2 /
-//!   CGEventCreateKeyboardEvent (`core-graphics` crate, or `enigo`). Needs the
-//!   Accessibility permission: `setup` should check AXIsProcessTrusted() and open
-//!   System Settings → Privacy & Security → Accessibility.
 //! - [ ] `autostart`: a LaunchAgent plist in ~/Library/LaunchAgents running
 //!   "<app>/Contents/MacOS/dotlink --background" (or SMAppService on macOS 13+).
 //! - [ ] `setup`: Local Network permission (macOS 15+) is asked on first mDNS use; the app
@@ -16,8 +12,10 @@
 
 pub(crate) use super::polling_clipboard as clipboard;
 
+mod input;
+pub use input::Input;
+
 use super::{Check, Features};
-use crate::input::InputMsg;
 use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
 
@@ -36,7 +34,7 @@ pub fn battery() -> Option<(u8, bool)> {
 }
 
 pub fn features() -> Features {
-    Features { clipboard: true, remote: false, camera: false, mic: false, shell: true }
+    Features { clipboard: true, remote: true, camera: false, mic: false, shell: true }
 }
 
 /// The bundle id notifications are sent under.
@@ -96,18 +94,6 @@ pub fn process_name(pid: u32) -> Option<String> {
     (n > 0).then(|| String::from_utf8_lossy(&buf[..n as usize]).into_owned())
 }
 
-pub struct Input;
-
-impl Input {
-    pub fn new() -> Result<Self> {
-        bail!("remote control is not supported on macOS yet")
-    }
-
-    pub fn handle(&mut self, _msg: InputMsg) -> Result<()> {
-        Ok(())
-    }
-}
-
 pub fn find_camera(_configured: &str) -> Result<PathBuf> {
     bail!("the phone camera as a webcam is not supported on macOS yet")
 }
@@ -158,16 +144,70 @@ pub mod setup {
     use super::Check;
     use anyhow::{Result, bail};
 
+    const ACCESSIBILITY_SETTINGS: &str =
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+
     pub fn checks(_port: u16) -> Vec<Check> {
-        Vec::new()
+        let mut out = Vec::new();
+
+        let trusted = super::input::trusted();
+        out.push(Check {
+            id: "accessibility".into(),
+            feature: "Remote".into(),
+            title: "Accessibility permission".into(),
+            ok: trusted,
+            detail: if trusted {
+                String::new()
+            } else {
+                "macOS lets Dotlink move the pointer and type only with it. Fix opens System Settings: turn \
+                 Dotlink on (from a terminal, the terminal app)."
+                    .into()
+            },
+            fixable: !trusted,
+        });
+
+        // Cast. The scrcpy download includes adb; Cast also downloads it on first use.
+        let downloadable = crate::cast::can_install();
+        for (id, title) in [("adb", "adb (Android platform tools)"), ("scrcpy", "scrcpy")] {
+            let ok = crate::cast::find_tool(id).is_some();
+            out.push(Check {
+                id: id.into(),
+                feature: "Cast".into(),
+                title: title.into(),
+                ok,
+                detail: if ok {
+                    String::new()
+                } else if downloadable {
+                    "Fix downloads scrcpy with adb (from GitHub). Or install: brew install scrcpy".into()
+                } else {
+                    "Install: brew install scrcpy".into()
+                },
+                fixable: !ok && downloadable,
+            });
+        }
+        out
     }
 
     pub async fn fix(id: &str, _port: u16) -> Result<()> {
-        bail!("nothing to fix for \"{id}\"")
+        match id {
+            "accessibility" => {
+                // The prompt adds Dotlink to the list; the switch is the user's to turn on.
+                if !super::input::ask_trust() {
+                    super::open_path(std::path::Path::new(ACCESSIBILITY_SETTINGS));
+                }
+                Ok(())
+            }
+            "adb" | "scrcpy" => crate::cast::install().await,
+            _ => bail!("nothing to fix for \"{id}\""),
+        }
     }
 
     pub async fn fix_many(ids: &[String], port: u16) -> Result<()> {
-        for id in ids {
+        // One download covers both.
+        if ids.iter().any(|id| id == "adb" || id == "scrcpy") {
+            crate::cast::install().await?;
+        }
+        for id in ids.iter().filter(|id| *id != "adb" && *id != "scrcpy") {
             fix(id, port).await?;
         }
         Ok(())
