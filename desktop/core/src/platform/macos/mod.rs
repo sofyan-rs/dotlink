@@ -173,11 +173,9 @@ pub mod setup {
             ok: blackhole.is_some(),
             detail: match &blackhole {
                 Some((_, name)) => format!("In your app, pick \"{name}\" as the microphone."),
-                None => format!(
-                    "The phone mic plays into it, and apps use it as their microphone. Install it with \
-                     {}, or Fix opens its download page; then restart Dotlink.",
-                    super::media::BLACKHOLE_BREW
-                ),
+                None => "The phone mic plays into it, and apps use it as their microphone. Fix downloads and \
+                         installs it (asks for your password); then restart Dotlink."
+                    .into(),
             },
             fixable: blackhole.is_none(),
         });
@@ -214,11 +212,7 @@ pub mod setup {
                 Ok(())
             }
             "adb" | "scrcpy" => crate::cast::install().await,
-            // A driver only its own installer adds (it asks for the admin password).
-            "blackhole" => {
-                super::open_path(std::path::Path::new(super::media::BLACKHOLE_URL));
-                Ok(())
-            }
+            "blackhole" => super::media::install_blackhole().await,
             _ => bail!("nothing to fix for \"{id}\""),
         }
     }
