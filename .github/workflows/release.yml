@@ -1,4 +1,5 @@
-# Builds Dotlink for Linux (.deb, .AppImage, .rpm), Windows (setup .exe) and Android (APK).
+# Builds Dotlink for Linux (.deb, .AppImage, .rpm), Windows (setup .exe), macOS (.dmg) and Android
+# (APK).
 #
 # Push a tag like v0.2.0 to publish a GitHub release; a tag with a suffix (v0.2.0-beta.1) publishes
 # a pre-release. The tag must match `version` in desktop/Cargo.toml (the Android app uses it too).
@@ -94,6 +95,48 @@ jobs:
           name: windows
           path: desktop/target/packages/*-setup.exe
 
+  macos:
+    needs: version
+    runs-on: macos-14
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: Packager
+        run: cargo install cargo-packager --locked
+      # One binary for Apple Silicon and Intel. The native build goes where the packager's
+      # before-packaging-command builds too, so that one has nothing left to do.
+      - name: Universal binary
+        working-directory: desktop
+        run: |
+          cargo build --release -p dotlink -p dotlink-camera
+          cargo build --release -p dotlink --target x86_64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create -output target/universal-apple-darwin/release/dotlink \
+            target/release/dotlink target/x86_64-apple-darwin/release/dotlink
+      - name: .app
+        working-directory: desktop/app
+        run: cargo packager --release -f app --target universal-apple-darwin
+      # No Developer ID: signed ad hoc, so macOS asks once (Privacy & Security → Open Anyway).
+      # The packager's own signing adds a timestamp, which ad hoc signatures can't have.
+      - name: .dmg
+        working-directory: desktop/target/packages
+        run: |
+          codesign --force --deep -s - Dotlink.app
+          mkdir dmg && cp -R Dotlink.app dmg/ && ln -s /Applications dmg/Applications
+          mkdir -p ../../../dist
+          hdiutil create -volname Dotlink -srcfolder dmg -format UDZO -ov "../../../dist/Dotlink-$VERSION.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.dmg
+
   android:
     needs: version
     runs-on: ubuntu-latest
@@ -142,7 +185,7 @@ jobs:
 
   release:
     if: github.ref_type == 'tag'
-    needs: [version, linux, windows, android]
+    needs: [version, linux, windows, macos, android]
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.ref_name }}
@@ -179,12 +222,16 @@ jobs:
           |---|---|
           | \`$(file '*.apk')\` | Android 10 or newer |
           | \`$(file '*-setup.exe')\` | Windows 11 (x64) |
+          | \`$(file '*.dmg')\` | macOS 13 or newer (Apple Silicon and Intel) |
           | \`$(file '*.deb')\` | Debian, Ubuntu and derivatives |
           | \`$(file '*.rpm')\` | Fedora, openSUSE and derivatives |
           | \`$(file '*.AppImage')\` | Any other Linux (x86_64) |
 
           Installed apps check for this update and install it from Settings → About (Windows, the
-          AppImage and Android). Update a .deb or .rpm install by installing the new package.
+          AppImage, macOS and Android). Update a .deb or .rpm install by installing the new package.
+
+          macOS: drag Dotlink to Applications. It isn't signed with an Apple Developer ID, so the
+          first time macOS refuses to open it: System Settings → Privacy & Security → Open Anyway.
           MD
       - name: Publish
         run: |
