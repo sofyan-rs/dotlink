@@ -144,9 +144,9 @@ pub struct App {
 
 impl App {
     pub fn new(config: Config, state: State, fingerprint: String) -> Arc<Self> {
-        let hostname = hostname::get()
-            .map(|h| h.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| std::env::consts::OS.into());
+        let hostname = crate::platform::computer_name().unwrap_or_else(|| {
+            hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or_else(|_| std::env::consts::OS.into())
+        });
         let camera = CameraHub::start(config.camera_device.clone(), config.camera_size());
         update_share_menu(&state);
         Arc::new(Self {

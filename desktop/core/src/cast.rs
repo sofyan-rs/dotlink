@@ -597,6 +597,15 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
     {
         return Some(found);
     }
+    // A Mac app opened from Finder gets a PATH without Homebrew's folders.
+    if cfg!(target_os = "macos")
+        && let Some(found) = ["/opt/homebrew/bin", "/usr/local/bin"]
+            .iter()
+            .map(|d| std::path::Path::new(d).join(&exe))
+            .find(|p| p.is_file())
+    {
+        return Some(found);
+    }
     if name == "adb" {
         // Android Studio's default SDK location on each OS.
         let sdk = std::env::var_os("ANDROID_HOME").map(PathBuf::from).or_else(|| {

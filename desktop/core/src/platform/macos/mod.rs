@@ -5,7 +5,6 @@
 //!   CGEventCreateKeyboardEvent (`core-graphics` crate, or `enigo`). Needs the
 //!   Accessibility permission: `setup` should check AXIsProcessTrusted() and open
 //!   System Settings → Privacy & Security → Accessibility.
-//! - [ ] `process_name`: shell tab titles (`proc_name` from libproc for the foreground pid).
 //! - [ ] `autostart`: a LaunchAgent plist in ~/Library/LaunchAgents running
 //!   "<app>/Contents/MacOS/dotlink --background" (or SMAppService on macOS 13+).
 //! - [ ] `setup`: Local Network permission (macOS 15+) is asked on first mDNS use; the app
@@ -21,6 +20,14 @@ use super::{Check, Features};
 use crate::input::InputMsg;
 use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
+
+/// "MacBook Air", as set in System Settings → General → Sharing. The hostname often isn't it:
+/// a Mac on DHCP may get its IP address (192.168.1.3) as hostname.
+pub fn computer_name() -> Option<String> {
+    let out = std::process::Command::new("scutil").args(["--get", "ComputerName"]).output().ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !name.is_empty()).then_some(name)
+}
 
 /// The MacBook's battery: (percent, on power); None on a Mac without one.
 pub fn battery() -> Option<(u8, bool)> {
@@ -43,9 +50,10 @@ pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &cra
 
 pub fn dismiss_incoming(_id: &str) {}
 
-/// TODO(macos): the parent's name (proc_pidinfo); only for the log.
+/// The parent's name, for the log.
 pub fn parent_process() -> Option<String> {
-    None
+    // SAFETY: getppid can't fail.
+    process_name(unsafe { libc::getppid() } as u32)
 }
 
 pub fn notify_file(from: &str, name: &str, _path: &Path) {
@@ -64,8 +72,13 @@ pub fn default_shell() -> (String, Vec<String>) {
     (std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()), vec!["-l".into()])
 }
 
-pub fn process_name(_pid: u32) -> Option<String> {
-    None
+/// The program's name ("zsh", "nvim"), as Activity Monitor shows it.
+pub fn process_name(pid: u32) -> Option<String> {
+    // proc_name truncates to MAXCOMLEN (16) bytes; 2 × that is what it accepts at most.
+    let mut buf = [0u8; 2 * 16];
+    // SAFETY: proc_name writes at most `buf.len()` bytes and returns how many it wrote.
+    let n = unsafe { libc::proc_name(pid as libc::c_int, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    (n > 0).then(|| String::from_utf8_lossy(&buf[..n as usize]).into_owned())
 }
 
 pub struct Input;

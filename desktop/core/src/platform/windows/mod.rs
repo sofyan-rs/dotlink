@@ -26,6 +26,11 @@ pub const APP_ID: &str = "dev.dotlink.Dotlink";
 /// Keeps console programs (netsh, powershell) from flashing a console window.
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// The hostname is the name the user gave this PC.
+pub fn computer_name() -> Option<String> {
+    None
+}
+
 /// The laptop's battery: (percent, on power); None on a desktop.
 pub fn battery() -> Option<(u8, bool)> {
     use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
