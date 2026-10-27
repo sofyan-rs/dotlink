@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged by cargo-packager into the .app's Info.plist (it adds the bundle id, name, version
+     and icon from app/Cargo.toml). -->
+<plist version="1.0">
+<dict>
+	<!-- The Dock icon is switched at run time (app/src/gui/mac.rs), not hidden for good. -->
+	<key>LSUIElement</key>
+	<false/>
+	<!-- macOS 15 asks before an app talks to the local network; without these mDNS browsing
+	     fails silently (the phone, linked PCs and Cast's Wireless debugging aren't found). -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Dotlink connects to your phone and your other PCs on this network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_dotlink._tcp</string>
+		<string>_adb-tls-connect._tcp</string>
+		<string>_adb-tls-pairing._tcp</string>
+	</array>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
