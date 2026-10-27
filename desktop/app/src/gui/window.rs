@@ -748,7 +748,7 @@ impl MainView {
                     row(p)
                         .border_t_1()
                         .border_color(p.line)
-                        .child(div().w(px(200.)).child(Input::new(&self.cast_code).h(px(CONTROL))))
+                        .child(div().w(px(200.)).child(Styled::h(Input::new(&self.cast_code), px(CONTROL))))
                         .child(pill(p, "cast-pair", "Pair", Kind::Primary).on_click(cx.listener(
                             move |this, _: &ClickEvent, _, cx| {
                                 let code = this.cast_code.read(cx).value().to_string();
@@ -1023,7 +1023,7 @@ impl MainView {
                 div()
                     .flex()
                     .gap(px(8.))
-                    .child(div().w(px(200.)).child(Input::new(&self.join_code).h(px(CONTROL))))
+                    .child(div().w(px(200.)).child(Styled::h(Input::new(&self.join_code), px(CONTROL))))
                     .child(enabled(pill(p, "join-code", "Join", Kind::Primary), can_join).when(can_join, |b| {
                         b.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                             let (Some(id), code) = (this.join_pick.clone(), this.join_code.read(cx).value().to_string()) else {
@@ -1054,7 +1054,7 @@ impl MainView {
                 div()
                     .flex()
                     .gap(px(8.))
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.join_link).h(px(CONTROL))))
+                    .child(div().flex_1().min_w_0().child(Styled::h(Input::new(&self.join_link), px(CONTROL))))
                     .child(pill(p, "join", "Join", Kind::Primary).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                         let link = this.join_link.read(cx).value().to_string();
                         if link.trim().is_empty() {
@@ -1330,7 +1330,7 @@ impl MainView {
                         .child(title)
                         .child(div().text_size(px(13.)).text_color(p.ink_muted).child(detail)),
                 )
-                .child(div().flex_1().min_w_0().child(Input::new(state).h(px(CONTROL))))
+                .child(div().flex_1().min_w_0().child(Styled::h(Input::new(state), px(CONTROL))))
         };
 
         let view = cx.entity().downgrade();
