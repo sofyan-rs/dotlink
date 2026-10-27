@@ -36,7 +36,7 @@ means Windows 11 only: Windows 10 isn't supported.
 | Setup checks and fixes | ✅ | ✅ | 🟡 |
 | Control socket (CLI ↔ app) | ✅ | ✅ | 🟡 |
 | Link over a USB cable (`adb reverse`) | ✅ | ✅ | 🔧 |
-| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | 🔧 .app (unsigned) |
+| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | 🔧 .dmg, signed ad hoc (built in CI, not run yet) |
 
 ## Wi-Fi or USB
 
@@ -226,7 +226,7 @@ switches to the plain microphone.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | `cargo packager` (.deb, AppImage, pacman), `cargo generate-rpm` | `cargo packager -f nsis`: a per-user setup .exe with `dotlink_camera.dll` next to `dotlink.exe`; install and uninstall tested (settings and pairing are kept). Not Authenticode-signed yet, so SmartScreen and the firewall show "Unknown publisher" | ❌ (plan: signed, notarized .app in a .dmg) |
+| Method | `cargo packager` (.deb, AppImage, pacman), `cargo generate-rpm` | `cargo packager -f nsis`: a per-user setup .exe with `dotlink_camera.dll` next to `dotlink.exe`; install and uninstall tested (settings and pairing are kept). Not Authenticode-signed yet, so SmartScreen and the firewall show "Unknown publisher" | universal .app (lipo) in a .dmg, signed ad hoc: no Developer ID, so Gatekeeper asks once (Open Anyway) and Accessibility is asked again after an update. Updates: the .dmg is mounted and its app swapped in (`update.rs`) when the app's folder is writable |
 
 ## Still to do
 

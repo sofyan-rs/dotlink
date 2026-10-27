@@ -3,7 +3,7 @@
 Link your Android phone with your PC, over Wi-Fi or a USB cable. No account, no cloud.
 
 On the PC it's one app: a window, a tray icon and a background service. Linux and Windows 11
-are supported; macOS is planned.
+are supported; macOS works without the webcam and the microphone yet.
 
 ## What it does
 
@@ -27,7 +27,7 @@ Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on
 | **Phone** | Android 10 or newer; Cast over Wi-Fi needs Android 11+ | iQOO I2218, realme RMX5085 (Android 16) |
 | **Linux** | x86_64, a desktop with PipeWire; any Wayland or X11 desktop | Fedora 44: GNOME, KDE Plasma, Hyprland |
 | **Windows** | Windows 11, x64 (Windows 10 isn't supported) | Windows 11 Pro 26H2 (build 26300) |
-| **macOS** | not supported yet (planned: macOS 13 Ventura or newer) | — |
+| **macOS** | macOS 13 Ventura or newer, Apple Silicon or Intel | macOS 15.8 (MacBook Air, Apple Silicon) |
 
 Other distros and desktops (Ubuntu, Debian, Arch, openSUSE; Sway, niri, X11 desktops) are expected to
 work, since `install.sh` and Setup handle their packages, but haven't been tested on every release.
@@ -37,7 +37,7 @@ What has been tested per feature: [docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEAT
 
 Download the files from the [releases page](https://github.com/sofyan-rs/dotlink/releases).
 Dotlink checks for new releases by itself (Settings → About on the PC, Settings → Check for
-updates on the phone) and installs them on Windows, from the AppImage and on Android.
+updates on the phone) and installs them on Windows, macOS, from the AppImage and on Android.
 
 ### Phone
 
@@ -99,6 +99,18 @@ The installer isn't code-signed yet: SmartScreen and the firewall show "Unknown 
   once).
 - **Microphone:** install [VB-CABLE](https://vb-audio.com/Cable/) (free). In your app, pick
   **CABLE Output** as the microphone.
+
+### macOS
+
+Open `Dotlink-<version>.dmg` from the releases page and drag **Dotlink** to Applications. It isn't
+signed with an Apple Developer ID, so the first time macOS refuses to open it: go to System
+Settings → Privacy & Security and click **Open Anyway**. Updates install from Settings → About.
+
+- **Allow** Dotlink to find devices on your local network when macOS asks: without it the phone
+  and Cast can't find the Mac over Wi-Fi.
+- **Remote:** Setup → *Fix* opens System Settings → Accessibility; switch Dotlink on. Without a
+  Developer ID signature, macOS asks again after each update.
+- **Webcam and microphone** aren't there yet on macOS.
 
 ### After installing
 
@@ -209,19 +221,20 @@ Forget a phone in **Phones** (or `dotlink unpair`) to cut it off right away.
 - Remote typing uses a US keyboard layout on Linux; on Windows any layout works.
 - One phone at a time streams the webcam (or the mic).
 - Windows: Windows 11 only; the mic needs VB-CABLE.
+- macOS: no webcam or microphone yet; the app isn't signed with a Developer ID (see Install).
 
 ## Platforms
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Files, clipboard, shell, remote, Cast | ✅ | ✅ | planned |
+| Files, clipboard, shell, remote, Cast | ✅ | ✅ | ✅ (Cast not tested yet) |
 | Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | planned |
-| Tray, start at login, Setup | ✅ | ✅ | planned |
-| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (not signed yet) | planned |
+| Tray, start at login, Setup | ✅ | ✅ | ✅ menu bar, notifications |
+| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (not signed yet) | ✅ .dmg (no Developer ID) |
 
 How each feature is built per OS and what has been tested:
 [docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEATURES.md). Plan for the rest:
-[docs/PORTING.md](docs/PORTING.md).
+[docs/PORTING.md](docs/PORTING.md), and for macOS [docs/MACOS_PLAN.md](docs/MACOS_PLAN.md).
 
 ## Development
 

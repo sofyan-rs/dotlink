@@ -50,7 +50,7 @@ Gaps found while reading that the other docs don't list yet (1–3 fixed on `fea
 4. **"Still running" notice**: `gui/mod.rs:134` only tells Windows users that closing the window
    didn't quit. macOS users expect the opposite (closing a window keeps the app), so nothing to
    say there, but the Dock icon has to go (Phase 3).
-5. **Updates**: macOS gets no in-app install. Plan in Phase 6.
+5. **Updates**: macOS got no in-app install; now it swaps in the .dmg's app (Phase 6).
 6. **PC name**: on a Mac on DHCP the hostname can be its IP address (`192.168.1.3`), which the
    window, the phone and mDNS showed as the PC's name. `platform::computer_name()` now gives
    `scutil --get ComputerName` ("MacBook Air") on macOS; fixed.
@@ -227,19 +227,20 @@ Done when: Setup checks row for macOS is ✅.
 - [ ] **Entitlements**: hardened runtime; `com.apple.security.cs.allow-jit` only if the
       runtime-compiled Metal shaders need it (check); `system-extension.install` once Phase 7
       lands.
-- [ ] **Signing and notarization** in CI: Developer ID Application certificate as a secret
+- [ ] **Signing and notarization** in CI. No Developer ID for now: the .dmg's app is signed ad
+      hoc instead. Later: the Developer ID Application certificate as a secret
       (`MACOS_CERT_P12_BASE64`, `MACOS_CERT_PASSWORD`), `notarytool` with an App Store Connect
       API key (`MACOS_NOTARY_KEY`, `_KEY_ID`, `_ISSUER`), then `stapler staple`. The scrcpy
       binaries Dotlink downloads run outside the bundle, so they don't need re-signing.
-- [ ] **`release.yml`**: a `macos` job on `macos-14` building `aarch64-apple-darwin` and
+- [x] **`release.yml`**: a `macos` job on `macos-14` building `aarch64-apple-darwin` and
       `x86_64-apple-darwin`, `lipo` into one universal binary, `cargo packager -f dmg`, sign,
       notarize; add `Dotlink-<version>.dmg` to the Downloads table ("macOS 13 or newer").
       Unsigned manual runs (no secrets) still produce an artifact, as with the Android job.
-- [ ] **Updates** (`core/src/update.rs`): `own_asset` matches `.dmg` on macOS; `download` puts
-      it in `temp_dir`; `launch` mounts it (`hdiutil attach -nobrowse`), waits for this process
-      to exit, replaces `/Applications/Dotlink.app` with `ditto`, detaches and reopens it
-      (`open -a`). Fall back to the release page when the app isn't in a writable location
-      (App Translocation, running from the .dmg).
+- [x] **Updates** (`core/src/update.rs`): `own_asset` matches `.dmg` on macOS; `download` puts
+      it in `temp_dir`, mounts it (`hdiutil attach -nobrowse`) and `ditto`s its app next to the
+      running one (`.Dotlink.app.update`), so errors show before quitting; `launch` waits for
+      this process to exit, swaps the two and `open`s it. The release page instead when the
+      app's folder isn't writable (`cargo run`, the mounted .dmg, /Applications of an admin).
 - [ ] Test: drag to Applications on a clean user, Gatekeeper opens it without a warning, login
       item appears in System Settings → General → Login Items, update from the previous beta.
 
