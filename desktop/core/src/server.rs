@@ -1147,6 +1147,9 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
 
 async fn ws_input(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, AuthedPhone(_): AuthedPhone) -> Response {
     ws.on_upgrade(move |mut socket| async move {
+        // Every pointer move fails the same way (no permission, not supported): the phone shows
+        // each error it gets, so it gets each one once per connection.
+        let mut last_error = None;
         while let Some(Ok(msg)) = socket.recv().await {
             let Message::Text(text) = msg else { continue };
             let Ok(ev) = serde_json::from_str::<InputMsg>(&text) else { continue };
@@ -1158,9 +1161,16 @@ async fn ws_input(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, AuthedP
                 }
                 input.as_mut().unwrap().handle(ev)
             })();
-            if let Err(e) = result {
-                tracing::error!("input: {e:#}");
-                let _ = socket.send(Message::Text(json!({ "error": format!("{e:#}") }).to_string().into())).await;
+            match result {
+                Err(e) => {
+                    let error = format!("{e:#}");
+                    if last_error.as_ref() != Some(&error) {
+                        tracing::error!("input: {error}");
+                        let _ = socket.send(Message::Text(json!({ "error": error }).to_string().into())).await;
+                        last_error = Some(error);
+                    }
+                }
+                Ok(()) => last_error = None,
             }
         }
     })

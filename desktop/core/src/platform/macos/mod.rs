@@ -39,7 +39,22 @@ pub fn features() -> Features {
     Features { clipboard: true, remote: false, camera: false, mic: false, shell: true }
 }
 
+/// The bundle id notifications are sent under.
+const BUNDLE_ID: &str = "dev.dotlink.Dotlink";
+
+/// Notifications need the app bundle: macOS shows them under a bundle id. Outside one
+/// (`cargo run`) they're only logged. Left to itself, notify-rust looks up the id of an app
+/// named "use_default" through AppleScript, and macOS asks the user "Where is use_default?".
 pub fn notify(title: &str, body: &str) {
+    static BUNDLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let bundled = *BUNDLED.get_or_init(|| {
+        let in_bundle = std::env::current_exe().is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/"));
+        in_bundle && notify_rust::set_application(BUNDLE_ID).is_ok()
+    });
+    if !bundled {
+        tracing::info!("notification (not shown outside the app bundle): {title}: {body}");
+        return;
+    }
     let _ = notify_rust::Notification::new().appname("Dotlink").summary(title).body(body).show();
 }
 
