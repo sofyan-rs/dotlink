@@ -1,8 +1,6 @@
 //! macOS. Files, clipboard, notifications, pairing and the Remote work; the rest are stubs.
 //!
 //! TODO(macos), roughly in order of value:
-//! - [ ] `autostart`: a LaunchAgent plist in ~/Library/LaunchAgents running
-//!   "<app>/Contents/MacOS/dotlink --background" (or SMAppService on macOS 13+).
 //! - [ ] `setup`: Local Network permission (macOS 15+) is asked on first mDNS use; the app
 //!   firewall asks on first listen. Explain both in the Setup screen.
 //! - [ ] `CameraHub`: a CoreMediaIO Camera Extension (system extension inside the .app,
@@ -12,6 +10,7 @@
 
 pub(crate) use super::polling_clipboard as clipboard;
 
+pub mod autostart;
 mod input;
 pub use input::Input;
 
@@ -122,22 +121,6 @@ impl MicSink {
 /// TODO(macos): a Finder Share extension or a Quick Action.
 pub mod share_menu {
     pub fn set(_phones: &[(String, String)]) {}
-}
-
-pub mod autostart {
-    use anyhow::{Result, bail};
-
-    pub fn enabled() -> bool {
-        false
-    }
-
-    pub fn set(_on: bool) -> Result<()> {
-        bail!("start at login is not supported on macOS yet")
-    }
-
-    pub fn wm_hint() -> Option<String> {
-        None
-    }
 }
 
 pub mod setup {
