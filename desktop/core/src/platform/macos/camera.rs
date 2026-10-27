@@ -87,9 +87,12 @@ async fn serve(frames: Arc<watch::Sender<Bytes>>, port: u16, token: String) {
     use axum::http::{StatusCode, header};
     use axum::response::{IntoResponse, Response};
 
-    let path = format!("/camera/{token}.mjpg");
+    use axum::serve::ListenerExt;
     let listener = match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
-        Ok(l) => l,
+        // Each frame goes out as soon as it's written, not when the next fills the packet.
+        Ok(l) => l.tap_io(|tcp| {
+            let _ = tcp.set_nodelay(true);
+        }),
         Err(e) => {
             tracing::warn!("camera: can't serve the OBS stream on port {port}: {e}");
             return;
@@ -100,10 +103,22 @@ async fn serve(frames: Arc<watch::Sender<Bytes>>, port: u16, token: String) {
             "/camera/{file}",
             axum::routing::get(
                 move |State(frames): State<Arc<watch::Sender<Bytes>>>, Path(file): Path<String>| {
-                    let ok = format!("/camera/{file}") == path;
+                    let page = file == format!("{token}.html");
+                    let ok = page || file == format!("{token}.mjpg");
+                    let token = token.clone();
                     async move {
                         if !ok {
                             return StatusCode::NOT_FOUND.into_response();
+                        }
+                        // For OBS's Browser Source: its browser shows each frame as it comes,
+                        // without the buffering of a Media Source's ffmpeg.
+                        if page {
+                            let html = format!(
+                                "<!doctype html><html><body style=\"margin:0;background:#000;overflow:hidden\">\
+                                 <img src=\"{token}.mjpg\" style=\"width:100vw;height:100vh;object-fit:contain\">\
+                                 </body></html>"
+                            );
+                            return ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response();
                         }
                         tracing::info!("camera: a reader connected (OBS)");
                         Response::builder()
