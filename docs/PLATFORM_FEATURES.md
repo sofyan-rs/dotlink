@@ -27,7 +27,7 @@ means Windows 11 only: Windows 10 isn't supported.
 | Clipboard, both ways | ✅ | ✅ | 🔧 |
 | Shell | ✅ | ✅ | 🔧 |
 | Remote (touchpad + keyboard) | ✅ | ✅ | ✅ |
-| Cast (scrcpy) | ✅ | ✅ | 🔧 |
+| Cast (scrcpy) | ✅ | ✅ | ✅ |
 | Webcam (phone camera) | ✅ | ✅ | ❌ |
 | Microphone (phone mic) | ✅ | ✅ (VB-CABLE) | ✅ (BlackHole) |
 | Notifications | ✅ | ✅ | ✅ (from the .app) |
@@ -148,7 +148,7 @@ One cast per phone, several at once; Stop also cancels while connecting.
 | scrcpy / adb | PATH, Android SDK, or the downloaded release (`.tar.gz`) | PATH, `%LOCALAPPDATA%\Android\Sdk`, or the downloaded release (`.zip`, win64 / winarm64) | PATH, `~/Library/Android/sdk`, or the downloaded release (`.tar.gz`) |
 | Process cleanup | kill on stop | job object (`KILL_ON_JOB_CLOSE`): ends package-manager shims and their child | kill on stop |
 | USB detection | `usb:` in `adb devices -l` | serial isn't `ip:port` or an mDNS name (Windows' adb prints no `usb:`) | `usb:` field |
-| Status | ✅ USB and Wi-Fi, stop, cancel, two phones at once | ✅ USB and Wi-Fi, download, stop, cancel, several phones (tested with one) | 🔧 |
+| Status | ✅ USB and Wi-Fi, stop, cancel, two phones at once | ✅ USB and Wi-Fi, download, stop, cancel, several phones (tested with one) | ✅ with Homebrew's scrcpy and adb |
 
 ### Webcam (phone camera)
 

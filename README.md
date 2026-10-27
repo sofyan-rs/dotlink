@@ -230,7 +230,7 @@ Forget a phone in **Phones** (or `dotlink unpair`) to cut it off right away.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Files, clipboard, shell, remote, Cast | ✅ | ✅ | ✅ (Cast not tested yet) |
+| Files, clipboard, shell, remote, Cast | ✅ | ✅ | ✅ |
 | Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | mic through BlackHole; no webcam |
 | Tray, start at login, Setup | ✅ | ✅ | ✅ menu bar, notifications |
 | Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (not signed yet) | ✅ .dmg (no Developer ID) |
