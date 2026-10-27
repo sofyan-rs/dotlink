@@ -266,7 +266,17 @@ camera is off, fixed size while apps read.
       `/Library/Audio/Plug-Ins/HAL/` with one admin prompt, fed over shared memory. Removes
       the BlackHole dependency and its GPL-3 question for redistribution.
 
-**Webcam (largest piece):**
+**Webcam, for now: through OBS** (no Developer ID). `platform/macos/camera.rs` serves the
+phone's frames as multipart JPEG on `127.0.0.1:<port + 1000>/camera/<token>.mjpg` (the token in
+`camera-token`, 0600), newest frame only, the placeholder (`core/assets/camera-off.jpg`, drawn
+by `scripts/make-camera-placeholder.swift`) at 5 fps while the phone is off. OBS reads it as a
+Media Source (Input format `mpjpeg`) and OBS Virtual Camera hands it to apps. Phones → Webcam
+has **Copy OBS link**; Setup checks that OBS is installed. Steps for users: README, macOS.
+
+- [x] The stream, the placeholder, the Setup check, Copy OBS link, `features().camera = true`.
+- [ ] Tested with the phone in OBS and a call app.
+
+**Webcam, later: a Camera Extension of our own** (needs the Apple Developer Program):
 
 - [ ] `desktop/macos-camera/`: an Xcode project for a **CoreMediaIO Camera Extension** in
       Swift: a device "Dotlink Camera" with a source stream (what apps read) and a sink stream

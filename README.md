@@ -3,7 +3,7 @@
 Link your Android phone with your PC, over Wi-Fi or a USB cable. No account, no cloud.
 
 On the PC it's one app: a window, a tray icon and a background service. Linux and Windows 11
-are supported; on macOS everything but the webcam works.
+are supported, and so is macOS (the webcam goes through OBS).
 
 ## What it does
 
@@ -112,7 +112,27 @@ Settings → Privacy & Security and click **Open Anyway**. Updates install from 
   Developer ID signature, macOS asks again after each update.
 - **Microphone:** Setup → *Fix* installs [BlackHole](https://existential.audio/blackhole/) (free;
   asks for your password). In your app, pick **BlackHole 2ch** as the microphone.
-- **Webcam** isn't there on macOS: a virtual camera needs a Developer ID signature.
+- **Webcam:** through [OBS](https://obsproject.com) (free), whose virtual camera every app sees.
+  macOS only accepts camera drivers signed with a Developer ID, so Dotlink can't add its own
+  yet. Set it up once (below).
+
+#### The phone camera as a webcam on macOS
+
+1. Install OBS (Setup → *Webcam* → *Fix* opens its download page) and open it.
+2. In Dotlink: **Phones → Webcam → Copy OBS link**. The link stays the same, so this is once.
+3. In OBS: **Sources → + → Media Source**, name it "Dotlink", then:
+   - untick **Local File**;
+   - **Input:** paste the link;
+   - **Input Format:** `mpjpeg`;
+   - **Network Buffering:** 0 MB (less delay);
+   - OK, then right-click the source → **Transform → Fit to screen**.
+4. In OBS: **Start Virtual Camera**. The first time, macOS asks to allow OBS's camera extension
+   (System Settings → General → Login Items & Extensions).
+5. In Dotlink: **Start** the Webcam. In your call app, pick **OBS Virtual Camera**.
+
+OBS has to keep running while you use the camera. While the phone camera is off, OBS shows
+"Dotlink · phone camera off". The link only works on this Mac (`127.0.0.1`) and holds a secret,
+so other users and programs can't read the camera.
 
 ### After installing
 
@@ -223,15 +243,15 @@ Forget a phone in **Phones** (or `dotlink unpair`) to cut it off right away.
 - Remote typing uses a US keyboard layout on Linux; on Windows any layout works.
 - One phone at a time streams the webcam (or the mic).
 - Windows: Windows 11 only; the mic needs VB-CABLE.
-- macOS: no webcam (it needs a Developer ID); the mic needs BlackHole; the app isn't signed
-  with a Developer ID (see Install).
+- macOS: the webcam goes through OBS and the mic through BlackHole (see Install); the app isn't
+  signed with a Developer ID.
 
 ## Platforms
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | Files, clipboard, shell, remote, Cast | ✅ | ✅ | ✅ |
-| Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | mic through BlackHole; no webcam |
+| Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | ✅ (webcam through OBS, mic through BlackHole) |
 | Tray, start at login, Setup | ✅ | ✅ | ✅ menu bar, notifications |
 | Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (not signed yet) | ✅ .dmg (no Developer ID) |
 
