@@ -6,14 +6,14 @@
 //!   firewall asks on first listen. Explain both in the Setup screen.
 //! - [ ] `CameraHub`: a CoreMediaIO Camera Extension (system extension inside the .app,
 //!   needs a signed + notarized build); the app feeds it frames over its sink stream.
-//! - [ ] `MicSink`: an AudioServerPlugIn driver (like BlackHole) installed by the .pkg, fed
-//!   over shared memory; or ask the user to install BlackHole and play into it.
 
 pub(crate) use super::polling_clipboard as clipboard;
 
 pub mod autostart;
 mod input;
+mod media;
 pub use input::Input;
+pub use media::MicSink;
 
 use super::{Check, Features};
 use anyhow::{Result, bail};
@@ -34,7 +34,7 @@ pub fn battery() -> Option<(u8, bool)> {
 }
 
 pub fn features() -> Features {
-    Features { clipboard: true, remote: true, camera: false, mic: false, shell: true }
+    Features { clipboard: true, remote: true, camera: false, mic: true, shell: true }
 }
 
 /// What the app's window process posts to Notification Center (GPUI's notifications, which
@@ -133,16 +133,6 @@ impl CameraHub {
     pub fn send(&self, _jpeg: axum::body::Bytes) {}
 }
 
-pub struct MicSink;
-
-impl MicSink {
-    pub fn start(_rate: u32, _channels: u32) -> Result<Self> {
-        bail!("the phone mic is not supported on macOS yet")
-    }
-
-    pub fn write(&mut self, _pcm: axum::body::Bytes) {}
-}
-
 /// TODO(macos): a Finder Share extension or a Quick Action.
 pub mod share_menu {
     pub fn set(_phones: &[(String, String)]) {}
@@ -172,6 +162,24 @@ pub mod setup {
                     .into()
             },
             fixable: !trusted,
+        });
+
+        // Microphone: BlackHole provides the device apps record from.
+        let blackhole = super::media::find_blackhole();
+        out.push(Check {
+            id: "blackhole".into(),
+            feature: "Microphone".into(),
+            title: "BlackHole audio driver".into(),
+            ok: blackhole.is_some(),
+            detail: match &blackhole {
+                Some((_, name)) => format!("In your app, pick \"{name}\" as the microphone."),
+                None => format!(
+                    "The phone mic plays into it, and apps use it as their microphone. Install it with \
+                     {}, or Fix opens its download page; then restart Dotlink.",
+                    super::media::BLACKHOLE_BREW
+                ),
+            },
+            fixable: blackhole.is_none(),
         });
 
         // Cast. The scrcpy download includes adb; Cast also downloads it on first use.
@@ -206,6 +214,11 @@ pub mod setup {
                 Ok(())
             }
             "adb" | "scrcpy" => crate::cast::install().await,
+            // A driver only its own installer adds (it asks for the admin password).
+            "blackhole" => {
+                super::open_path(std::path::Path::new(super::media::BLACKHOLE_URL));
+                Ok(())
+            }
             _ => bail!("nothing to fix for \"{id}\""),
         }
     }
