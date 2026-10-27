@@ -7,7 +7,7 @@ OS-specific lives in `desktop/core/src/platform/{linux,windows,macos}/` (plus th
 
 Status as of 2026-10-24. Tested with an iQOO I2218 and a realme RMX5085 (both Android 16)
 against Fedora 44 (GNOME, KDE Plasma, Hyprland) and Windows 11 Pro 26H2 (build 26300); macOS
-hasn't been built yet. Windows
+builds and opens its window (not yet tested with a phone). Windows
 means Windows 11 only: Windows 10 isn't supported.
 
 | Mark | Meaning |
@@ -21,20 +21,20 @@ means Windows 11 only: Windows 10 isn't supported.
 
 | Feature | Linux | Windows | macOS |
 |---|---|---|---|
-| Builds and runs | ✅ | ✅ | 🔧 |
+| Builds and runs | ✅ | ✅ | 🟡 |
 | Pairing (QR / link) | ✅ | ✅ | 🔧 |
 | Files, both ways | ✅ | ✅ | 🔧 |
 | Clipboard, both ways | ✅ | ✅ | 🔧 |
 | Shell | ✅ | ✅ | 🔧 |
-| Remote (touchpad + keyboard) | ✅ | ✅ | ❌ |
+| Remote (touchpad + keyboard) | ✅ | ✅ | ✅ |
 | Cast (scrcpy) | ✅ | ✅ | 🔧 |
 | Webcam (phone camera) | ✅ | ✅ | ❌ |
 | Microphone (phone mic) | ✅ | ✅ (VB-CABLE) | ❌ |
 | Notifications | ✅ | ✅ | 🔧 text only |
-| Tray / menu bar | ✅ | ✅ | ❌ |
+| Tray / menu bar | ✅ | ✅ | 🟡 |
 | Start at login | ✅ | ✅ | ❌ |
-| Setup checks and fixes | ✅ | ✅ | ❌ |
-| Control socket (CLI ↔ app) | ✅ | ✅ | 🔧 |
+| Setup checks and fixes | ✅ | ✅ | 🟡 |
+| Control socket (CLI ↔ app) | ✅ | ✅ | 🟡 |
 | Link over a USB cable (`adb reverse`) | ✅ | ✅ | 🔧 |
 | Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | ❌ |
 
@@ -133,7 +133,7 @@ Messages in `core/src/input.rs`; key names are the same everywhere (`ENTER`, `F5
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | `/dev/uinput` virtual mouse + keyboard (`evdev`) | `SendInput`: relative mouse moves, `WHEEL`/`HWHEEL` in 120ths, virtual-key codes with scan codes and the extended flag, `KEYEVENTF_UNICODE` for text | ❌ (plan: CGEvent + Accessibility) |
+| Method | `/dev/uinput` virtual mouse + keyboard (`evdev`) | `SendInput`: relative mouse moves, `WHEEL`/`HWHEEL` in 120ths, virtual-key codes with scan codes and the extended flag, `KEYEVENTF_UNICODE` for text | CGEvent (CoreGraphics), posted at the HID level; media keys as system-defined NSEvents |
 | Text | US layout mapping only | any character, any layout | — |
 | Permission | udev rule (Setup) | none; can't reach elevated windows (UAC, Task Manager) | — |
 | Status | ✅ | ✅ move, click L/R/M, combos, typing, Backspace from the phone; scroll and Unicode (`é ß 😀 日本`) tested on the PC directly | ❌ |
