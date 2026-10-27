@@ -317,6 +317,12 @@ impl Render for MainView {
     }
 }
 
+/// What apps pick as the phone camera. macOS: OBS passes it on as "OBS Virtual Camera".
+#[cfg(not(target_os = "macos"))]
+const CAMERA_NAME: &str = "Dotlink Camera";
+#[cfg(target_os = "macos")]
+const CAMERA_NAME: &str = "OBS";
+
 #[cfg(windows)]
 const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for administrator rights (UAC).";
 #[cfg(target_os = "linux")]
@@ -776,7 +782,7 @@ impl MainView {
         let features = platform::features();
         let model = self.model.read(cx);
         let rows: Vec<(&'static str, &'static str, &'static str, Option<String>)> = [
-            features.camera.then_some(("camera", "Webcam", "Dotlink Camera", camera)),
+            features.camera.then_some(("camera", "Webcam", CAMERA_NAME, camera)),
             features.mic.then_some(("mic", "Microphone", "Dotlink Mic", mic)),
         ]
         .into_iter()
@@ -832,6 +838,21 @@ impl MainView {
                             }))
                         })
                 };
+            // macOS: the stream for OBS, whose virtual camera apps use (platform/macos/camera.rs).
+            #[cfg(target_os = "macos")]
+            let copy_link = (kind == "camera").then(|| {
+                let port = model.status.as_ref().map_or(dotlink_core::config::DEFAULT_PORT, |s| s.port);
+                pill(p, "copy-obs-link", "Copy OBS link", Kind::Ghost).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(platform::camera_url(port)));
+                        this.model.update(cx, |m, cx| {
+                            m.notice("Copied: paste it as the Input of a Media Source in OBS", false, cx)
+                        });
+                    },
+                ))
+            });
+            #[cfg(not(target_os = "macos"))]
+            let copy_link: Option<Div> = None;
             list = list.child(
                 row(p)
                     .when(i + first > 0, |r| r.border_t_1().border_color(p.line))
@@ -844,6 +865,7 @@ impl MainView {
                             .child(div().font_weight(FontWeight::MEDIUM).child(title))
                             .child(div().font_family(MONO).text_size(px(13.)).text_color(p.ink_muted).child(subtitle)),
                     )
+                    .children(copy_link)
                     .child(button),
             );
         }

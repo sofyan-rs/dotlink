@@ -1,23 +1,22 @@
-//! macOS. Files, clipboard, notifications (posted by the app, see [Notify]), pairing, the Remote
-//! and start at login work; the rest are stubs.
+//! macOS. Everything works; the webcam goes through OBS (camera.rs) and the mic through
+//! BlackHole (media.rs). Notifications are posted by the app, see [Notify].
 //!
 //! TODO(macos), roughly in order of value:
 //! - [ ] `setup`: Local Network permission (macOS 15+) is asked on first mDNS use; the app
 //!   firewall asks on first listen. Explain both in the Setup screen.
-//! - [ ] `CameraHub`: a CoreMediaIO Camera Extension (system extension inside the .app,
-//!   needs a signed + notarized build); the app feeds it frames over its sink stream.
 
 pub(crate) use super::polling_clipboard as clipboard;
 
 pub mod autostart;
+mod camera;
 mod input;
 mod media;
+pub use camera::{CameraHub, camera_url, find_camera};
 pub use input::Input;
 pub use media::MicSink;
 
 use super::{Check, Features};
-use anyhow::{Result, bail};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// "MacBook Air", as set in System Settings → General → Sharing. The hostname often isn't it:
 /// a Mac on DHCP may get its IP address (192.168.1.3) as hostname.
@@ -34,7 +33,7 @@ pub fn battery() -> Option<(u8, bool)> {
 }
 
 pub fn features() -> Features {
-    Features { clipboard: true, remote: true, camera: false, mic: true, shell: true }
+    Features { clipboard: true, remote: true, camera: true, mic: true, shell: true }
 }
 
 /// What the app's window process posts to Notification Center (GPUI's notifications, which
@@ -118,21 +117,6 @@ pub fn process_name(pid: u32) -> Option<String> {
     (n > 0).then(|| String::from_utf8_lossy(&buf[..n as usize]).into_owned())
 }
 
-pub fn find_camera(_configured: &str) -> Result<PathBuf> {
-    bail!("the phone camera as a webcam is not supported on macOS yet")
-}
-
-#[derive(Clone)]
-pub struct CameraHub;
-
-impl CameraHub {
-    pub fn start(_configured_device: String, _size: (u32, u32)) -> Self {
-        Self
-    }
-
-    pub fn send(&self, _jpeg: axum::body::Bytes) {}
-}
-
 /// TODO(macos): a Finder Share extension or a Quick Action.
 pub mod share_menu {
     pub fn set(_phones: &[(String, String)]) {}
@@ -162,6 +146,26 @@ pub mod setup {
                     .into()
             },
             fixable: !trusted,
+        });
+
+        // Webcam: OBS reads the phone's frames and is the camera apps see.
+        let obs = super::camera::obs_installed();
+        out.push(Check {
+            id: "obs".into(),
+            feature: "Webcam".into(),
+            title: "OBS Studio".into(),
+            ok: obs,
+            detail: if obs {
+                "In OBS: add a Media Source, untick Local file, paste the camera link (Phones → Webcam → \
+                 Copy OBS link) as Input and set Input format to mpjpeg. Then Start Virtual Camera; apps \
+                 pick \"OBS Virtual Camera\"."
+                    .into()
+            } else {
+                "macOS only lets signed camera drivers in, so the phone camera goes through OBS's virtual \
+                 camera. Fix opens OBS's download page."
+                    .into()
+            },
+            fixable: !obs,
         });
 
         // Microphone: BlackHole provides the device apps record from.
@@ -213,6 +217,10 @@ pub mod setup {
             }
             "adb" | "scrcpy" => crate::cast::install().await,
             "blackhole" => super::media::install_blackhole().await,
+            "obs" => {
+                super::open_path(std::path::Path::new(super::camera::obs_download_url()));
+                Ok(())
+            }
             _ => bail!("nothing to fix for \"{id}\""),
         }
     }
