@@ -104,6 +104,8 @@ pub fn run(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
             #[cfg(target_os = "macos")]
             mac::init(has_tray, cx);
             gpui_component::init(cx);
+            #[cfg(target_os = "macos")]
+            mac::handle_notification_responses(cx);
             theme::load_fonts(cx);
             theme::apply(None, cx);
             #[cfg(target_os = "linux")]

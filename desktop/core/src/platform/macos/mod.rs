@@ -1,4 +1,5 @@
-//! macOS. Files, clipboard, notifications, pairing and the Remote work; the rest are stubs.
+//! macOS. Files, clipboard, notifications (posted by the app, see [Notify]), pairing, the Remote
+//! and start at login work; the rest are stubs.
 //!
 //! TODO(macos), roughly in order of value:
 //! - [ ] `setup`: Local Network permission (macOS 15+) is asked on first mDNS use; the app
@@ -36,31 +37,49 @@ pub fn features() -> Features {
     Features { clipboard: true, remote: true, camera: false, mic: false, shell: true }
 }
 
-/// The bundle id notifications are sent under.
-const BUNDLE_ID: &str = "dev.dotlink.Dotlink";
+/// What the app's window process posts to Notification Center (GPUI's notifications, which
+/// have buttons). The service runs in that process; a headless `dotlink daemon` only logs.
+#[derive(Debug, Clone)]
+pub enum Notify {
+    /// `tag` says what it's about and what its buttons do: `file:<path>` (Open, Show in
+    /// Finder), `incoming:<id>` (Accept, Decline), anything else (click opens Dotlink).
+    Show { tag: String, title: String, body: String, actions: Vec<(&'static str, &'static str)> },
+    Dismiss { tag: String },
+}
 
-/// Notifications need the app bundle: macOS shows them under a bundle id. Outside one
-/// (`cargo run`) they're only logged. Left to itself, notify-rust looks up the id of an app
-/// named "use_default" through AppleScript, and macOS asks the user "Where is use_default?".
-pub fn notify(title: &str, body: &str) {
-    static BUNDLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let bundled = *BUNDLED.get_or_init(|| {
-        let in_bundle = std::env::current_exe().is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/"));
-        in_bundle && notify_rust::set_application(BUNDLE_ID).is_ok()
-    });
-    if !bundled {
-        tracing::info!("notification (not shown outside the app bundle): {title}: {body}");
-        return;
+static NOTIFIER: std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<Notify>>> = std::sync::Mutex::new(None);
+
+/// Called by the app once its window side runs; notifications go there from then on.
+pub fn set_notifier(tx: tokio::sync::mpsc::UnboundedSender<Notify>) {
+    *NOTIFIER.lock().unwrap() = Some(tx);
+}
+
+fn post(n: Notify) {
+    let sent = NOTIFIER.lock().unwrap().as_ref().is_some_and(|tx| tx.send(n.clone()).is_ok());
+    if !sent && let Notify::Show { title, body, .. } = n {
+        tracing::info!("notification (no window process to show it): {title}: {body}");
     }
-    let _ = notify_rust::Notification::new().appname("Dotlink").summary(title).body(body).show();
 }
 
-/// TODO(macos): Accept / Decline buttons (UNUserNotificationCenter); the window asks meanwhile.
+pub fn notify(title: &str, body: &str) {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    post(Notify::Show { tag: format!("note:{n}"), title: title.into(), body: body.into(), actions: Vec::new() });
+}
+
+/// "X wants to send …" with Accept / Decline (`App::answer_incoming` through the app).
 pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &crate::events::Incoming) {
-    notify(&format!("{} wants to send a file", incoming.from), &format!("{}: Accept or Decline in Dotlink", incoming.name));
+    post(Notify::Show {
+        tag: format!("incoming:{}", incoming.id),
+        title: format!("{} wants to send a file", incoming.from),
+        body: incoming.name.clone(),
+        actions: vec![("accept", "Accept"), ("decline", "Decline")],
+    });
 }
 
-pub fn dismiss_incoming(_id: &str) {}
+pub fn dismiss_incoming(id: &str) {
+    post(Notify::Dismiss { tag: format!("incoming:{id}") });
+}
 
 /// The parent's name, for the log.
 pub fn parent_process() -> Option<String> {
@@ -68,8 +87,14 @@ pub fn parent_process() -> Option<String> {
     process_name(unsafe { libc::getppid() } as u32)
 }
 
-pub fn notify_file(from: &str, name: &str, _path: &Path) {
-    notify(&format!("Received from {from}"), name);
+/// "Received from …" with Open / Show in Finder.
+pub fn notify_file(from: &str, name: &str, path: &Path) {
+    post(Notify::Show {
+        tag: format!("file:{}", path.display()),
+        title: format!("Received from {from}"),
+        body: name.into(),
+        actions: vec![("open", "Open"), ("reveal", "Show in Finder")],
+    });
 }
 
 pub fn open_path(path: &Path) {

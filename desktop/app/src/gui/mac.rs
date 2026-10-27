@@ -1,8 +1,13 @@
-//! macOS: the app menu, and the Dock icon. Dotlink lives in the menu bar; the Dock icon (and
-//! the app menu with it) shows only while the window is open, like other menu bar apps.
+//! macOS: the app menu, the Dock icon and notifications. Dotlink lives in the menu bar; the Dock
+//! icon (and the app menu with it) shows only while the window is open, like other menu bar
+//! apps. The service's notifications come here to be posted, so they can have buttons.
 
 use super::model::Page;
-use gpui::{ActivationPolicy, App, KeyBinding, Menu, MenuItem, OsAction, actions};
+use dotlink_core::platform::{self, Notify};
+use gpui::{
+    ActivationPolicy, App, AsyncApp, KeyBinding, Menu, MenuItem, OsAction, SystemNotification, SystemNotificationAction,
+    SystemNotificationResponse, actions,
+};
 use gpui_component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 
 actions!(dotlink, [About, OpenSettings, Hide, HideOthers, ShowAll, CloseWindow, Quit]);
@@ -54,6 +59,61 @@ pub fn init(has_tray: bool, cx: &mut App) {
     ]);
     if !has_tray {
         tracing::info!("no menu bar item: the Dock icon stays");
+    }
+    notifications(cx);
+}
+
+/// Posts the service's notifications and acts on their buttons. GPUI shows them only from the
+/// app bundle (macOS needs its bundle id); `cargo run` logs that they're off.
+fn notifications(cx: &mut App) {
+    cx.set_app_identity(super::APP_ID, "Dotlink");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Notify>();
+    platform::set_notifier(tx);
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        while let Some(n) = rx.recv().await {
+            cx.update(|cx| match n {
+                Notify::Show { tag, title, body, actions } => cx.show_system_notification(SystemNotification {
+                    tag: tag.into(),
+                    title: title.into(),
+                    body: body.into(),
+                    actions: actions
+                        .into_iter()
+                        .map(|(id, label)| SystemNotificationAction { id: id.into(), label: label.into() })
+                        .collect(),
+                }),
+                Notify::Dismiss { tag } => cx.dismiss_system_notification(&tag),
+            });
+        }
+    })
+    .detach();
+}
+
+/// The answer to a notification's buttons. Call after `gpui_component::init`: GPUI keeps one
+/// handler, and gpui-component registers its own (for notifications it posts, which Dotlink
+/// doesn't use) that would replace this one.
+pub fn handle_notification_responses(cx: &mut App) {
+    cx.on_system_notification_response(respond);
+}
+
+fn respond(response: SystemNotificationResponse, cx: &mut App) {
+    let action = response.action_id.as_deref();
+    if let Some(path) = response.tag.strip_prefix("file:") {
+        let path = std::path::Path::new(path);
+        match action {
+            Some("open") => platform::open_path(path),
+            _ => platform::show_in_folder(path),
+        }
+    } else if let Some(id) = response.tag.strip_prefix("incoming:") {
+        match action {
+            Some(answer @ ("accept" | "decline")) => {
+                let model = cx.global::<super::State>().model.clone();
+                model.update(cx, |m, cx| m.answer_incoming(id.to_string(), answer == "accept", cx));
+            }
+            // The notification itself: the window, where the banner asks too.
+            _ => super::show_window(cx),
+        }
+    } else {
+        super::show_window(cx);
     }
 }
 
