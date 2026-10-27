@@ -29,7 +29,7 @@ means Windows 11 only: Windows 10 isn't supported.
 | Remote (touchpad + keyboard) | ✅ | ✅ | ✅ |
 | Cast (scrcpy) | ✅ | ✅ | 🔧 |
 | Webcam (phone camera) | ✅ | ✅ | ❌ |
-| Microphone (phone mic) | ✅ | ✅ (VB-CABLE) | ❌ |
+| Microphone (phone mic) | ✅ | ✅ (VB-CABLE) | ✅ (BlackHole) |
 | Notifications | ✅ | ✅ | ✅ (from the .app) |
 | Tray / menu bar | ✅ | ✅ | 🟡 |
 | Start at login | ✅ | ✅ | 🟡 |
@@ -157,7 +157,7 @@ apps read, and a placeholder shows while the phone camera is off.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | `v4l2loopback` device "Dotlink Camera", fed by `ffmpeg` | Windows 11 virtual camera (`MFCreateVirtualCamera`, per user, while Dotlink runs). Its media source is `dotlink_camera.dll` (`desktop/camera`), loaded by the Camera Frame Server; Dotlink decodes the JPEG (`zune-jpeg`), fits it into NV12 and shares it through `%ProgramData%\Dotlink\camera.bin` | ❌ (plan: CoreMediaIO Camera Extension) |
+| Method | `v4l2loopback` device "Dotlink Camera", fed by `ffmpeg` | Windows 11 virtual camera (`MFCreateVirtualCamera`, per user, while Dotlink runs). Its media source is `dotlink_camera.dll` (`desktop/camera`), loaded by the Camera Frame Server; Dotlink decodes the JPEG (`zune-jpeg`), fits it into NV12 and shares it through `%ProgramData%\Dotlink\camera.bin` | ❌ (a CoreMediaIO Camera Extension needs a Developer ID and an Apple entitlement) |
 | Setup | kernel module + device (Setup, polkit) | Setup → Fix (UAC once): DLL into `%ProgramFiles%\Dotlink`, class registered under HKLM, then the Camera Frame Server stopped so it loads the new DLL (an app using the camera loses it for a moment) | — |
 | Requirements | v4l2loopback, ffmpeg | Windows 11 (build 22000+) | — |
 | Status | ✅ | ✅ the phone's picture in OBS (and any Media Foundation app), 1920×1080 NV12 at 30 or 60 fps, over Wi-Fi and USB | ❌ |
@@ -177,9 +177,9 @@ so the mic catches up after a Wi-Fi stall.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | `pw-cat` as a PipeWire source "Dotlink Mic" | plays into VB-CABLE's "CABLE Input" through WASAPI (`cpal`), converting rate and channels; apps pick "CABLE Output" | ❌ (plan: BlackHole, later an AudioServerPlugIn) |
-| Setup | none (PipeWire) | install VB-CABLE (Setup → Fix opens its download page). Its installer makes "CABLE Input" the default output: set your speakers back as default in Windows' sound settings | — |
-| Status | ✅ | ✅ the phone's audio comes out of "CABLE Output" (recorded and measured), over Wi-Fi and USB | ❌ |
+| Method | `pw-cat` as a PipeWire source "Dotlink Mic" | plays into VB-CABLE's "CABLE Input" through WASAPI (`cpal`), converting rate and channels; apps pick "CABLE Output" | plays into BlackHole 2ch through CoreAudio (`cpal`, shared with Windows in `platform/cpal_sink.rs`); apps pick "BlackHole 2ch" |
+| Setup | none (PipeWire) | install VB-CABLE (Setup → Fix opens its download page). Its installer makes "CABLE Input" the default output: set your speakers back as default in Windows' sound settings | Setup → Fix downloads BlackHole 2ch (checksum as in Homebrew's cask) and installs it behind the administrator prompt |
+| Status | ✅ | ✅ the phone's audio comes out of "CABLE Output" (recorded and measured), over Wi-Fi and USB | ✅ the phone's voice in QuickTime through "BlackHole 2ch" |
 
 Phone side: the app records with voice processing (`VOICE_COMMUNICATION`). Some phones (vivo /
 iQOO) return only zeros from that source outside a call; after 1.5 s of exact silence the app

@@ -3,7 +3,7 @@
 Link your Android phone with your PC, over Wi-Fi or a USB cable. No account, no cloud.
 
 On the PC it's one app: a window, a tray icon and a background service. Linux and Windows 11
-are supported; macOS works without the webcam and the microphone yet.
+are supported; on macOS everything but the webcam works.
 
 ## What it does
 
@@ -110,7 +110,9 @@ Settings → Privacy & Security and click **Open Anyway**. Updates install from 
   and Cast can't find the Mac over Wi-Fi.
 - **Remote:** Setup → *Fix* opens System Settings → Accessibility; switch Dotlink on. Without a
   Developer ID signature, macOS asks again after each update.
-- **Webcam and microphone** aren't there yet on macOS.
+- **Microphone:** Setup → *Fix* installs [BlackHole](https://existential.audio/blackhole/) (free;
+  asks for your password). In your app, pick **BlackHole 2ch** as the microphone.
+- **Webcam** isn't there on macOS: a virtual camera needs a Developer ID signature.
 
 ### After installing
 
@@ -221,14 +223,15 @@ Forget a phone in **Phones** (or `dotlink unpair`) to cut it off right away.
 - Remote typing uses a US keyboard layout on Linux; on Windows any layout works.
 - One phone at a time streams the webcam (or the mic).
 - Windows: Windows 11 only; the mic needs VB-CABLE.
-- macOS: no webcam or microphone yet; the app isn't signed with a Developer ID (see Install).
+- macOS: no webcam (it needs a Developer ID); the mic needs BlackHole; the app isn't signed
+  with a Developer ID (see Install).
 
 ## Platforms
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | Files, clipboard, shell, remote, Cast | ✅ | ✅ | ✅ (Cast not tested yet) |
-| Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | planned |
+| Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | mic through BlackHole; no webcam |
 | Tray, start at login, Setup | ✅ | ✅ | ✅ menu bar, notifications |
 | Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (not signed yet) | ✅ .dmg (no Developer ID) |
 

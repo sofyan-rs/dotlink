@@ -254,13 +254,14 @@ camera is off, fixed size while apps read.
 
 **Microphone first (smaller):**
 
-- [ ] `platform/macos/media.rs`: `MicSink` plays into "BlackHole 2ch" with `cpal` (CoreAudio),
+- [x] `platform/macos/media.rs`: `MicSink` plays into "BlackHole 2ch" with `cpal` (CoreAudio),
       converting rate and channels like the Windows sink. Share that conversion code with
       `windows/media.rs` instead of copying it (`platform/cpal_sink.rs`).
-- [ ] Setup check `mic_driver`: a CoreAudio output device named "BlackHole 2ch"; Fix opens
+- [x] Setup check `blackhole` (was `mic_driver`): Fix downloads and installs the pkg itself (an
+      app can't run `brew install`: the cask's pkg asks for the password in a terminal). a CoreAudio output device named "BlackHole 2ch"; Fix opens
       its page (or `brew install blackhole-2ch` when Homebrew is there). Apps pick
       "BlackHole 2ch" as their microphone; the Phones page says so.
-- [ ] `features().mic = true`.
+- [x] `features().mic = true`.
 - [ ] Later: an own AudioServerPlugIn "Dotlink Mic" (user space, no kext), installed into
       `/Library/Audio/Plug-Ins/HAL/` with one admin prompt, fed over shared memory. Removes
       the BlackHole dependency and its GPL-3 question for redistribution.
