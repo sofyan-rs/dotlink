@@ -128,7 +128,12 @@ class LinkService : LifecycleService() {
                 intent.getStringExtra(EXTRA_PC)?.let { link.switchTo(it) }
                 link.start()
             }
-            else -> link.kick()
+            else -> {
+                // Paired while this service already ran for paired phones: onCreate's start()
+                // found nothing to connect to then. A no-op when the link is already running.
+                link.start()
+                link.kick()
+            }
         }
         return START_STICKY
     }
