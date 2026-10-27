@@ -30,7 +30,7 @@ gpui-component = { version = "0.8.0", optional = true }
 gpui-kit-assets = { version = "0.8.0", optional = true }
 
 # Tray icon. Linux: StatusNotifierItem over D-Bus (KDE, Waybar, GNOME with AppIndicator).
-# Windows: `tray-icon` below. TODO(macos): `tray-icon` there too (menu bar item).
+# Windows and macOS: `tray-icon` below (the notification area, the menu bar).
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.7", optional = true }
 # The desktop's light/dark setting, read again when gpui's one try at login came too early.
@@ -42,6 +42,10 @@ gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9", optional = 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
 # Tray icon in the notification area.
+tray-icon = { version = "0.21", optional = true }
+
+# Menu bar item (NSStatusItem), the same crate as the Windows tray.
+[target.'cfg(target_os = "macos")'.dependencies]
 tray-icon = { version = "0.21", optional = true }
 
 [target.'cfg(windows)'.build-dependencies]

@@ -319,8 +319,10 @@ impl Render for MainView {
 
 #[cfg(windows)]
 const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for administrator rights (UAC).";
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for your password once (polkit).";
+#[cfg(target_os = "macos")]
+const SETUP_INTRO: &str = "What each feature needs from this Mac. Fix opens System Settings where you allow it.";
 
 // ---------- incoming files ----------
 

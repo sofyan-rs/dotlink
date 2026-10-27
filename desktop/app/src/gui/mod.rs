@@ -9,16 +9,16 @@
 //! Closing the window keeps the app (and the phone connection) running; Quit in the tray or
 //! in Settings stops it.
 //!
-//! TODO(macos):
-//! - [ ] Tray: see tray.rs.
-//! - [ ] An app menu (About, Quit ⌘Q) via `cx.set_menus`, and reopening the window when
-//!   the Dock icon is clicked (`cx.on_reopen`). Hide the Dock icon while only in the menu bar.
+//! macOS: the app menu and the Dock icon are in mac.rs; the Dock icon shows only while the
+//! window is open.
 //!
 //! TODO(windows, macos): packaging: .msi/NSIS (Windows), signed + notarized .app in a .dmg
 //! (macOS). See the `[package.metadata.packager]` section in Cargo.toml.
 
 mod assets;
 mod client;
+#[cfg(target_os = "macos")]
+mod mac;
 mod model;
 mod theme;
 mod title_bar;
@@ -89,11 +89,20 @@ pub fn run(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
     }
 
     let (tray_tx, tray_rx) = futures::channel::mpsc::unbounded::<TrayAction>();
+    #[cfg(not(target_os = "macos"))]
     let has_tray = owns_service && rt.block_on(tray::start(tray_tx));
     let client = Client::new(rt.handle().clone());
 
-    gpui_platform::application().with_assets(assets::Assets).with_quit_mode(QuitMode::Explicit).run(
+    let app = gpui_platform::application().with_assets(assets::Assets).with_quit_mode(QuitMode::Explicit);
+    #[cfg(target_os = "macos")]
+    app.on_reopen(mac::on_reopen);
+    app.run(
         move |cx: &mut App| {
+            // The menu bar item needs the NSApplication GPUI makes, so it starts here.
+            #[cfg(target_os = "macos")]
+            let has_tray = owns_service && futures::executor::block_on(tray::start(tray_tx));
+            #[cfg(target_os = "macos")]
+            mac::init(has_tray, cx);
             gpui_component::init(cx);
             theme::load_fonts(cx);
             theme::apply(None, cx);
@@ -116,6 +125,12 @@ pub fn run(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
             cx.on_window_closed(move |cx, _| {
                 let state = cx.global_mut::<State>();
                 state.window = None;
+                // Back to the menu bar only.
+                #[cfg(target_os = "macos")]
+                if state.owns_service && has_tray {
+                    mac::hide_dock_icon(cx);
+                }
+                let state = cx.global_mut::<State>();
                 // A window that only controls a separate daemon has nothing to do once closed.
                 if !state.owns_service {
                     cx.quit();
@@ -147,6 +162,8 @@ pub fn run(rt: tokio::runtime::Runtime, background: bool) -> Result<()> {
                 show_window(cx);
             } else {
                 tracing::info!("in the tray, no window");
+                #[cfg(target_os = "macos")]
+                mac::hide_dock_icon(cx);
             }
             listen_service(ui_rx, stopped_rx, cx);
             listen_tray(tray_rx, cx);
@@ -168,6 +185,8 @@ fn show_window(cx: &mut App) {
     {
         return;
     }
+    #[cfg(target_os = "macos")]
+    mac::show_dock_icon(cx);
     let bounds = Bounds::centered(None, size(px(1040.), px(740.)), cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
