@@ -43,6 +43,10 @@ pub(crate) mod polling_clipboard;
 
 pub(crate) mod battery;
 
+/// The phone mic played into a virtual audio device (VB-CABLE, BlackHole).
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) mod cpal_sink;
+
 use serde::{Deserialize, Serialize};
 
 /// One thing a feature needs from the system, as shown in the app's Setup screen.
