@@ -6,7 +6,6 @@ package com.dotlink.update
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,12 +39,7 @@ fun UpdateDialog() {
         extraContent =
             shown.notes.takeIf { it.isNotEmpty() }?.let { notes ->
                 {
-                    Text(
-                        text = notes,
-                        style = Dotline.type.body,
-                        color = Dotline.colors.inkMuted,
-                        modifier = Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
-                    )
+                    ReleaseNotes(notes, Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()))
                 }
             },
         confirmButton = {
