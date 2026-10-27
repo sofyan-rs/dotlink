@@ -164,9 +164,19 @@ cargo run -p dotlink
 ## Windows and macOS
 
 `core/src/platform/windows` is complete for Windows 11 and tested with a phone (see
-[PLATFORM_FEATURES.md](PLATFORM_FEATURES.md)). The `macos` stubs were written on Linux and have
-not been compiled there yet. [PORTING.md](PORTING.md) has the plan: the order of work, the APIs to use for each
-platform item, packaging and signing, and a checklist per OS.
+[PLATFORM_FEATURES.md](PLATFORM_FEATURES.md)). macOS builds and runs, with the Remote, the menu
+bar and notifications; [MACOS_PLAN.md](MACOS_PLAN.md) is its plan and status, [PORTING.md](PORTING.md)
+the APIs to use for each platform item, packaging and signing.
+
+On macOS, `cargo run -p dotlink` needs only the Xcode Command Line Tools. Some things only work
+from an app bundle: notifications, the Local Network prompt (from Terminal the app gets
+Terminal's), and the permissions in System Settings, which macOS grants per app. To test them,
+build the bundle (`cd app && cargo packager --release -f app`), put it in `~/Applications`
+(from `/tmp` notifications are refused without asking) and sign it with a stable identity,
+`codesign --force --deep -s "Apple Development: …" ~/Applications/Dotlink.app`: an unsigned
+build loses Accessibility on every rebuild. From `cargo run`, Accessibility goes to the
+terminal app. `RUST_LOG=info,gpui_macos=debug` shows GPUI's own warnings (refused
+notifications, for one), which the default log filter hides.
 
 ## Commits
 

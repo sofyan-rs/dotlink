@@ -57,7 +57,10 @@ Gaps found while reading that the other docs don't list yet (1–3 fixed on `fea
 7. **"Where is use_default?"**: with no bundle id set, notify-rust asks AppleScript for the id
    of an app named "use_default", and macOS shows an app picker on the first notification
    (seen on the Pair page). `notify()` now sets `dev.dotlink.Dotlink` and, outside an `.app`,
-   only logs the notification; fixed.
+   only logs the notification; fixed (later replaced, see Phase 3's notifications).
+8. **`cargo packager` hangs** at `cargo metadata`, which downloads every platform's crates:
+   the Windows-only `windows` crates are ~9 MB each, and slow from some networks. Run
+   `cargo fetch` once (it resumes); after that packaging takes as long as the release build.
 
 ## Phases
 
@@ -138,21 +141,23 @@ Goal: menu bar item, app menu, Dock behaviour, start at login, notifications wit
 - [ ] **Window chrome**: confirm macOS takes the server-side path (never `title_bar.rs`);
       optionally a transparent title bar with the traffic lights over the sidebar.
 - [x] **Setup intro** (gap 3): its own macOS text ("Fix opens System Settings…").
-- [ ] **Start at login** (`platform/macos/autostart.rs`, new): when running from a `.app`,
-      `SMAppService.mainApp` `register` / `unregister` / `status` (`objc2-service-management`);
-      `enabled()` counts "requires approval" as off. Outside a bundle (`cargo run`), a
-      LaunchAgent `~/Library/LaunchAgents/dev.dotlink.Dotlink.plist` with
-      `ProgramArguments = [<exe>, --background]`, `RunAtLoad`, `ProcessType = Interactive`.
-      `--background` must come through SMAppService too: check whether the app needs to detect
-      a login launch instead (`NSAppleEventManager` / launch event) since SMAppService.mainApp
-      takes no arguments.
-- [ ] **Notifications** (`platform/macos/notify.rs`, new): `UNUserNotificationCenter` through
-      `objc2-user-notifications`, with categories `file` (Open, Show in Finder) and `incoming`
-      (Accept, Decline), and a delegate that calls `open_path` / `show_in_folder` /
-      `App::answer_incoming`. `dismiss_incoming` removes the delivered notification by id.
-      Only works from a signed bundle; keep `notify-rust` (with
-      `set_application("dev.dotlink.Dotlink")`) as the fallback for `cargo run`.
-- [ ] Ask for notification permission on first launch (not at login with `--background`).
+- [x] **Start at login** (`platform/macos/autostart.rs`): a LaunchAgent
+      `~/Library/LaunchAgents/dev.dotlink.Dotlink.plist` with `ProgramArguments = [<exe>,
+      --background]`, `RunAtLoad`, `ProcessType = Interactive`. Not SMAppService.mainApp: it
+      takes no arguments, so Dotlink would open its window at every login. Off under Login
+      Items → Allow in the Background (`launchctl print-disabled`) counts as off. Turning it
+      off only deletes the file (`launchctl bootout` would stop the running app). Not yet
+      tested across a real logout.
+- [x] **Notifications**: the service hands them to the app (`platform::Notify`, a channel set
+      by `gui/mac.rs`), which posts them with GPUI's `show_system_notification`
+      (UNUserNotificationCenter): Accept / Decline on incoming files, Open / Show in Finder on
+      received ones; clicking the notification opens the window. notify-rust is Windows-only
+      now. Lessons: notifications are refused ("Notifications are not allowed for this
+      application", no prompt) while the .app runs from `/tmp`; from `~/Applications` macOS
+      asks. `gpui_component::init` registers its own response handler and replaces any
+      registered before it, so ours comes after. GPUI's warnings only show with
+      `RUST_LOG=gpui_macos=debug`: the default filter keeps `dotlink*` only.
+- [x] Notification permission: asked by GPUI on the first notification.
 
 Done when: Tray, Start at login and Notifications rows for macOS are ✅, tested from a
 bundled app (Phase 6's `.app`, unsigned is fine for this).
@@ -209,9 +214,10 @@ Done when: Setup checks row for macOS is ✅.
 
 ### Phase 6: packaging, signing, updates
 
-- [ ] **Icon**: `assets/dotlink.icns` from the PNGs (`iconutil`; 16–1024 px @1x/@2x), and a
-      `scripts/make-macos-icon.sh` next to the Windows one.
-- [ ] **`app/Cargo.toml`** `[package.metadata.packager.macos]`: `minimum-system-version =
+- [x] **Icon**: `assets/dotlink.icns`, drawn by `scripts/make-macos-icon.py` (the Windows
+      script's drawing on Apple's 824/1024 grid, through `iconutil`).
+- [~] **`app/Cargo.toml`** `[package.metadata.packager.macos]` (minimum version and
+      `assets/macos/Info.plist` done; signing and entitlements to do): `minimum-system-version =
       "13.0"`, `signing-identity`, `entitlements`, `info-plist-path` with:
       `CFBundleIdentifier = dev.dotlink.Dotlink`, `LSUIElement = false`,
       `NSLocalNetworkUsageDescription`, `NSBonjourServices = [_dotlink._tcp,

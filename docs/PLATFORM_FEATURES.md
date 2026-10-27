@@ -30,13 +30,13 @@ means Windows 11 only: Windows 10 isn't supported.
 | Cast (scrcpy) | ✅ | ✅ | 🔧 |
 | Webcam (phone camera) | ✅ | ✅ | ❌ |
 | Microphone (phone mic) | ✅ | ✅ (VB-CABLE) | ❌ |
-| Notifications | ✅ | ✅ | 🔧 text only |
+| Notifications | ✅ | ✅ | ✅ (from the .app) |
 | Tray / menu bar | ✅ | ✅ | 🟡 |
-| Start at login | ✅ | ✅ | ❌ |
+| Start at login | ✅ | ✅ | 🟡 |
 | Setup checks and fixes | ✅ | ✅ | 🟡 |
 | Control socket (CLI ↔ app) | ✅ | ✅ | 🟡 |
 | Link over a USB cable (`adb reverse`) | ✅ | ✅ | 🔧 |
-| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | ❌ |
+| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | 🔧 .app (unsigned) |
 
 ## Wi-Fi or USB
 
@@ -189,7 +189,7 @@ switches to the plain microphone.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | `notify-send` with Open / Show in folder actions | toasts under the AppUserModelID `dev.dotlink.Dotlink`, registered in HKCU with name and icon; Open / Show in folder buttons are `dotlink:` links (`dotlink url`), so they work from the notification center too | `notify-rust`, text only |
+| Method | `notify-send` with Open / Show in folder actions | toasts under the AppUserModelID `dev.dotlink.Dotlink`, registered in HKCU with name and icon; Open / Show in folder buttons are `dotlink:` links (`dotlink url`), so they work from the notification center too | Notification Center through GPUI (UNUserNotificationCenter), posted by the app: Accept / Decline, Open / Show in Finder. Only from the .app, and not while it runs from `/tmp` |
 | Status | ✅ | ✅ toasts show as "Dotlink" with its icon; received files carry Open / Show in folder, also clicked from the notification center | 🔧 |
 
 ### Tray / menu bar
@@ -203,7 +203,7 @@ switches to the plain microphone.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | XDG autostart entry; on Hyprland also a config include | `HKCU\…\CurrentVersion\Run` value `Dotlink` = `"<exe>" --background`; off in Task Manager counts as off | ❌ (plan: SMAppService / LaunchAgent) |
+| Method | XDG autostart entry; on Hyprland also a config include | `HKCU\…\CurrentVersion\Run` value `Dotlink` = `"<exe>" --background`; off in Task Manager counts as off | LaunchAgent `~/Library/LaunchAgents/dev.dotlink.Dotlink.plist` running `<exe> --background`; off under Login Items → Allow in the Background counts as off |
 | Status | ✅ | ✅ the setting adds and removes the entry; its command starts Dotlink in the tray, without the window | ❌ |
 
 ### Setup checks
