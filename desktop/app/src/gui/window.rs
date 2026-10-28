@@ -1193,18 +1193,24 @@ impl MainView {
             );
         }
         let download_dir = model.status.as_ref().map(|s| s.config.download_dir());
+        // Only what has finished can go: waiting and running transfers stay in the list.
+        let clearable = transfers.iter().any(|t| matches!(t.state, TransferState::Done | TransferState::Failed(_)));
+        let actions = div()
+            .flex()
+            .gap(px(8.))
+            .when(clearable, |d| {
+                d.child(pill(p, "clear-transfers", "Clear", Kind::Ghost).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.clear_transfers(cx)),
+                )))
+            })
+            .children(download_dir.map(|dir| {
+                pill(p, "open-downloads", "Open folder", Kind::Ghost).on_click(move |_, _, _| {
+                    let _ = std::fs::create_dir_all(&dir);
+                    platform::open_path(&dir)
+                })
+            }));
         page(p, "Activity", None)
-            .child(section_with(
-                p,
-                "Files",
-                download_dir.map(|dir| {
-                    pill(p, "open-downloads", "Open folder", Kind::Ghost).on_click(move |_, _, _| {
-                        let _ = std::fs::create_dir_all(&dir);
-                        platform::open_path(&dir)
-                    })
-                }),
-                files,
-            ))
+            .child(section_with(p, "Files", Some(actions), files))
             .child(section(p, "Clipboard", clips))
     }
 

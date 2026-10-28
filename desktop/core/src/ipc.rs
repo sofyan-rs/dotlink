@@ -143,6 +143,10 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
             };
             w.write_all(reply(msg).as_bytes()).await?;
         }
+        "clear_transfers" => {
+            app.clear_transfers();
+            w.write_all(reply(json!({ "ok": "cleared" })).as_bytes()).await?;
+        }
         "nearby" => {
             let pcs = crate::peer::nearby(&app).await;
             w.write_all(reply(json!({ "pcs": pcs })).as_bytes()).await?;

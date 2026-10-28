@@ -227,6 +227,12 @@ impl App {
         self.ui.lock().unwrap().as_ref().is_some_and(|tx| tx.send(req).is_ok())
     }
 
+    /// Empties the history of finished and failed transfers. Waiting and running ones stay: a
+    /// phone still downloads an offered file by its entry here.
+    pub fn clear_transfers(&self) {
+        self.transfers.lock().unwrap().retain(|t| matches!(t.state, TransferState::Waiting | TransferState::Active));
+    }
+
     /// Adds or updates a transfer in the history and tells the window.
     pub(crate) fn put_transfer(&self, t: Transfer) {
         let mut list = self.transfers.lock().unwrap();

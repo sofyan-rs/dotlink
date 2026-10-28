@@ -203,6 +203,11 @@ impl Client {
         ok_text(self.call(json!({ "cmd": "answer_incoming", "id": id, "accept": accept })))
     }
 
+    /// Removes the finished and failed transfers from Activity.
+    pub fn clear_transfers(&self) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "clear_transfers" })))
+    }
+
     pub fn unpair(&self, id: &str) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "unpair", "id": id })))
     }
