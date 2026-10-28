@@ -14,7 +14,7 @@
 //! | `autostart::{enabled, set}` | start with the desktop session |
 //! | `setup::{checks, fix}` | permissions and system pieces the features need |
 //! | `parent_process()` | the program that started Dotlink, for the log |
-//! | `share_menu::set(phones)` | "Share with Dotlink" in the file manager's menu, one item per phone |
+//! | `share_menu::set(phones)` | "Share with Dotlink" in the file manager's menu (Explorer, Finder's Quick Actions), one item per device |
 //! | `battery()` | the laptop's battery: (percent, on power); None without one |
 //! | `computer_name()` | the name the user gave this PC, when it isn't the hostname; else None |
 //!

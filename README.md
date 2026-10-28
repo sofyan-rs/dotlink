@@ -9,7 +9,7 @@ are supported, and so is macOS (the webcam goes through OBS).
 
 | Feature | Phone → PC | PC → phone |
 |---|---|---|
-| **Files** | Share → Dotlink, or **Send** in the app | Drop files on the window, the tray's *Send files…*, or `dotlink send` |
+| **Files** | Share → Dotlink, or **Send** in the app | Drop files on the window, the tray's *Send files…*, right-click → *Share with Dotlink* (Windows) or *Quick Actions → Dotlink: …* (macOS), or `dotlink send` |
 | **Clipboard** | When you open the app, or the notification's *Send clipboard* | Automatic |
 | **Remote** | The phone as touchpad and keyboard | |
 | **Shell** | A terminal on the PC; the session survives reconnects | |

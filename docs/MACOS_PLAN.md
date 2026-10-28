@@ -32,7 +32,7 @@ iQOO I2218:
 | Microphone | ✅ BlackHole | `platform/macos/media.rs`, `platform/cpal_sink.rs` |
 | Packaging | ✅ universal .dmg from the release workflow (x86_64 + arm64, signed ad hoc, both run) | `app/Cargo.toml`, `release.yml` |
 | Updates | swaps in the .dmg's app; not tested (needs a release with a .dmg) | `core/src/update.rs` |
-| Share menu | no-op | `platform/macos/mod.rs` |
+| Share menu | ✅ Finder → Quick Actions → "Dotlink: <device>", one Automator Quick Action per device in `~/Library/Services` | `platform/macos/share_menu.rs` |
 
 Left: run `desktop.yml` (on the PR), test start at login and an update from a release's .dmg, then, with an Apple
 Developer ID, signing and notarization and a Camera Extension of our own.
@@ -304,9 +304,6 @@ README, macOS.
 
 ### Later / optional
 
-- **Share menu**: a Finder Share extension or Quick Action that runs `dotlink send`
-  (`share_menu::set`). Low value next to drag and drop onto the window and the menu bar's
-  Send files….
 - **Universal Clipboard interplay**: the Mac's own Handoff clipboard can bounce text back;
   the echo check should cover it, verify.
 

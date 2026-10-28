@@ -11,6 +11,7 @@ pub mod autostart;
 mod camera;
 mod input;
 mod media;
+pub mod share_menu;
 pub use camera::{CameraHub, camera_url, find_camera};
 pub use input::Input;
 pub use media::MicSink;
@@ -122,11 +123,6 @@ pub fn process_name(pid: u32) -> Option<String> {
     let out = std::process::Command::new("/bin/ps").args(["-c", "-o", "comm=", "-p", &pid.to_string()]).output().ok()?;
     let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (out.status.success() && !name.is_empty()).then_some(name)
-}
-
-/// TODO(macos): a Finder Share extension or a Quick Action.
-pub mod share_menu {
-    pub fn set(_phones: &[(String, String)]) {}
 }
 
 pub mod setup {
