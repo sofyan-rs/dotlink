@@ -75,9 +75,11 @@ for this PC. On Windows some phones also need their maker's USB driver for adb t
 | Microphone | ✅ | ✅ | PCM over a WebSocket |
 | Cast | ✅ Wireless debugging (Android 11+, paired once with a 6-digit code) | ✅ USB debugging | USB is preferred when both are there; it also keeps the phone awake (`--stay-awake`). Cast needs the phone's Dotlink connection (either kind) to know which phone is which |
 
-✅ above are from Windows and Linux (Wi-Fi turned off on the phone for the USB tests). The
-code is the same on macOS; it only needs adb, which Dotlink already finds or downloads for
-Cast.
+✅ above are from Windows and Linux (Wi-Fi turned off on the phone for the USB tests). On macOS
+every row of the Wi-Fi column was tested too (with the Mac on the phone's hotspot, Cast through
+Wireless debugging), and the USB cable link connects (`adb reverse`, the phone online over
+USB); the features haven't each been tried over the cable there yet, but it's the same
+connection.
 
 ## Per feature
 
