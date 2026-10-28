@@ -273,6 +273,10 @@ fn listen_tray(mut rx: futures::channel::mpsc::UnboundedReceiver<TrayAction>, cx
                         show_window(cx);
                     }
                     TrayAction::SendFiles => {
+                        // A menu bar click doesn't make Dotlink the active app: without this the
+                        // picker opens behind the other apps' windows.
+                        #[cfg(target_os = "macos")]
+                        cx.activate(true);
                         let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
                             files: true,
                             directories: false,
