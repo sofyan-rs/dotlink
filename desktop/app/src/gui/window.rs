@@ -353,13 +353,13 @@ impl MainView {
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .child(div().truncate().child(f.name.clone()))
+                            .child(div().truncate().child(f.names()))
                             .child(
                                 div()
                                     .font_family(MONO)
                                     .text_size(px(13.))
                                     .text_color(p.ink_muted)
-                                    .child(format!("{} wants to send it{size}", f.from)),
+                                    .child(format!("{} wants to send {}{size}", f.from, if f.count > 1 { "them" } else { "it" })),
                             ),
                     )
                     .child(pill_icon(p, SharedString::from(format!("decline-{}", f.id)), IconName::X, "Decline", Kind::Ghost).on_click(cx.listener(
@@ -1448,7 +1448,7 @@ impl MainView {
                     switch_row(
                         "ask-receive",
                         "Ask before receiving files",
-                        "Each file waits for Accept. No answer in 2 minutes declines it.",
+                        "Files wait for Accept, once for files sent together. No answer in 2 minutes declines them.",
                         form.ask_before_receiving,
                         false,
                         |this, on, cx| {

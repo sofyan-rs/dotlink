@@ -28,7 +28,8 @@ pub enum Event {
     IncomingDone { id: String },
 }
 
-/// A file someone wants to send here, waiting for an answer.
+/// A file someone wants to send here, waiting for an answer. For several files sent together,
+/// one answer for all of them: `name` is the first, `size` their total.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Incoming {
     pub id: String,
@@ -36,6 +37,30 @@ pub struct Incoming {
     pub from: String,
     pub name: String,
     pub size: Option<u64>,
+    #[serde(default = "one")]
+    pub count: u32,
+}
+
+fn one() -> u32 {
+    1
+}
+
+impl Incoming {
+    /// "X wants to send a file" / "… 3 files", for the notification.
+    pub fn title(&self) -> String {
+        match self.count {
+            0 | 1 => format!("{} wants to send a file", self.from),
+            n => format!("{} wants to send {n} files", self.from),
+        }
+    }
+
+    /// The file's name, or "a.jpg and 2 more".
+    pub fn names(&self) -> String {
+        match self.count {
+            0 | 1 => self.name.clone(),
+            n => format!("{} and {} more", self.name, n - 1),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

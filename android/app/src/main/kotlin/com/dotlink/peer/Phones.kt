@@ -10,6 +10,7 @@ import android.net.wifi.WifiManager
 import android.util.Log
 import android.widget.Toast
 import com.dotlink.link.Discovery
+import com.dotlink.link.IncomingBatch
 import com.dotlink.link.Link
 import com.dotlink.link.PhonePeer
 import com.dotlink.link.toHex
@@ -306,8 +307,10 @@ class Phones(
         withContext(Dispatchers.IO) {
             val peer = prefs.phones.find { it.id == id } ?: return@withContext 0
             var ok = 0
-            for (uri in uris) {
-                val (name, size) = link.queryName(uri)
+            val files = uris.map { it to link.queryName(it) }
+            val batch = IncomingBatch.query(files.map { it.second.second })
+            for ((uri, file) in files) {
+                val (name, size) = file
                 val t = link.newTransfer(name, incoming = false, size = size, phone = peer.name)
                 try {
                     val body =
@@ -331,7 +334,7 @@ class Phones(
                             }
                         }
                     // Long enough for the other phone to answer "Ask before receiving files".
-                    call(peer, "/upload?name=" + URLEncoder.encode(name, "UTF-8"), body, timeoutSec = 180)
+                    call(peer, "/upload?name=" + URLEncoder.encode(name, "UTF-8") + batch, body, timeoutSec = 180)
                     link.finish(t.id, null)
                     ok++
                 } catch (e: Exception) {
@@ -474,7 +477,14 @@ class Phones(
                 ?.takeIf { it.isNotEmpty() && it != "." && it != ".." }
                 ?: return PhoneResponse.error(400, "bad file name")
         // Nothing is read until it's accepted: the sender waits.
-        if (!link.askIncoming(peer.name, name, req.contentLength)) return PhoneResponse.error(403, "${link.deviceName()} declined it")
+        val batch =
+            IncomingBatch.from(
+                peer.id,
+                req.query["batch"],
+                req.query["count"]?.toIntOrNull() ?: 1,
+                req.query["total"]?.toLongOrNull() ?: -1,
+            )
+        if (!link.askIncoming(peer.name, name, req.contentLength, batch)) return PhoneResponse.error(403, "${link.deviceName()} declined it")
         val t = link.newTransfer(name, incoming = true, size = req.contentLength, phone = peer.name)
         return runCatching { link.saveIncoming(t, peer.name, req.body) }.fold(
             onSuccess = { PhoneResponse.json(JSONObject().put("ok", true)) },

@@ -24,12 +24,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{broadcast, mpsc, oneshot, Notify};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, Notify};
 
 const PAIRING_TTL: Duration = Duration::from_secs(300);
 /// How long a file waits for Accept ("Ask before receiving files") before it's declined.
 const ASK_TIMEOUT: Duration = Duration::from_secs(120);
 const OFFER_TTL: Duration = Duration::from_secs(3600);
+/// How long the answer for files sent together is kept after the last of them came.
+const BATCH_TTL: Duration = Duration::from_secs(3600);
 /// Transfers kept for the app's list.
 const TRANSFER_HISTORY: usize = 100;
 
@@ -94,6 +96,33 @@ struct Offer {
     created: Instant,
 }
 
+/// Files sent together (`batch`, `count`, `total` from the sender): one Accept or Decline
+/// answers all of them.
+pub struct Batch {
+    /// The sender's id and its batch id, so another device can't use the answer.
+    pub key: String,
+    pub count: u32,
+    /// All the files' bytes.
+    pub total: Option<u64>,
+}
+
+impl Batch {
+    /// From the sender's `batch`, `count` and `total`; None for a single file or an older sender.
+    pub fn from_sender(device: &str, batch: Option<&str>, count: Option<u64>, total: Option<u64>) -> Option<Self> {
+        let (batch, count) = (batch?, u32::try_from(count?).ok()?);
+        (count > 1 && !batch.is_empty()).then(|| Self { key: format!("{device}/{batch}"), count, total })
+    }
+}
+
+/// The answer for a [Batch], shared by its files.
+struct BatchAnswer {
+    /// None until answered.
+    answer: Arc<watch::Sender<Option<bool>>>,
+    /// Files of the batch still to come: past those, the next one is asked about again.
+    left: u32,
+    used: Instant,
+}
+
 pub struct App {
     config: Mutex<Config>,
     /// The port actually listened on (a changed `config.port` applies after a restart).
@@ -104,6 +133,8 @@ pub struct App {
     pairing: Mutex<Option<Pairing>>,
     /// Files waiting for Accept or Decline, by id: what they are, and where the answer goes.
     incoming: Mutex<HashMap<String, (Incoming, oneshot::Sender<bool>)>>,
+    /// Answers for files sent together, by [Batch::key].
+    batches: Mutex<HashMap<String, BatchAnswer>>,
     /// Code pairings between `/pair/code` and `/pair/code/confirm`, by session id.
     code_sessions: Mutex<HashMap<String, CodeSession>>,
     /// One-time codes handed out over USB (`POST /pair/usb`), one per request, so several
@@ -158,6 +189,7 @@ impl App {
             pairing: Mutex::new(None),
             code_sessions: Mutex::new(HashMap::new()),
             incoming: Mutex::new(HashMap::new()),
+            batches: Mutex::new(HashMap::new()),
             usb_pairings: Mutex::new(Vec::new()),
             control_tx: broadcast::channel(64).0,
             revoked_tx: broadcast::channel(16).0,
@@ -312,20 +344,15 @@ impl App {
 
     /// With "Ask before receiving files" on, asks (a notification with Accept / Decline, and the
     /// window) whether to take `name` from `from`; true right away when it's off. No answer in
-    /// [ASK_TIMEOUT]: declined.
-    pub async fn ask_incoming(self: &Arc<Self>, from: &str, name: &str, size: Option<u64>) -> bool {
+    /// [ASK_TIMEOUT]: declined. Files of one [Batch] are asked about once, with the first.
+    pub async fn ask_incoming(self: &Arc<Self>, from: &str, name: &str, size: Option<u64>, batch: Option<Batch>) -> bool {
         if !self.config().ask_before_receiving {
             return true;
         }
-        let ask = Incoming { id: random_hex(8), from: from.to_string(), name: name.to_string(), size };
-        let (tx, rx) = oneshot::channel();
-        self.incoming.lock().unwrap().insert(ask.id.clone(), (ask.clone(), tx));
-        self.emit(Event::Incoming(ask.clone()));
-        platform::notify_incoming(self, &ask);
-        let accepted = matches!(tokio::time::timeout(ASK_TIMEOUT, rx).await, Ok(Ok(true)));
-        self.incoming.lock().unwrap().remove(&ask.id);
-        platform::dismiss_incoming(&ask.id);
-        self.emit(Event::IncomingDone { id: ask.id.clone() });
+        let accepted = match batch {
+            None => self.ask(from, name, size, 1).await,
+            Some(batch) => self.ask_batch(from, name, size, batch).await,
+        };
         if !accepted {
             self.put_transfer(Transfer {
                 id: random_hex(12),
@@ -339,6 +366,57 @@ impl App {
                 started_at: now_secs(),
             });
         }
+        accepted
+    }
+
+    /// The first file of a batch asks, for all of them; the others wait for that answer, or
+    /// take it when it was given before they came.
+    async fn ask_batch(self: &Arc<Self>, from: &str, name: &str, size: Option<u64>, batch: Batch) -> bool {
+        let found = {
+            let mut batches = self.batches.lock().unwrap();
+            batches.retain(|_, b| b.used.elapsed() < BATCH_TTL);
+            match batches.get_mut(&batch.key) {
+                None => {
+                    let answer = Arc::new(watch::channel(None).0);
+                    let left = batch.count - 1;
+                    batches.insert(batch.key.clone(), BatchAnswer { answer: answer.clone(), left, used: Instant::now() });
+                    Some((answer, true))
+                }
+                Some(b) if b.left > 0 => {
+                    b.left -= 1;
+                    b.used = Instant::now();
+                    let answer = b.answer.clone();
+                    if b.left == 0 {
+                        batches.remove(&batch.key);
+                    }
+                    Some((answer, false))
+                }
+                Some(_) => None,
+            }
+        };
+        // More files than it said: each of those is asked about.
+        let Some((answer, first)) = found else { return self.ask(from, name, size, 1).await };
+        if first {
+            let accepted = self.ask(from, name, batch.total.or(size), batch.count).await;
+            answer.send_replace(Some(accepted));
+            return accepted;
+        }
+        let mut rx = answer.subscribe();
+        let answered = tokio::time::timeout(ASK_TIMEOUT + Duration::from_secs(5), rx.wait_for(Option::is_some)).await;
+        matches!(answered, Ok(Ok(a)) if *a == Some(true))
+    }
+
+    /// Shows one Accept / Decline and waits for it.
+    async fn ask(self: &Arc<Self>, from: &str, name: &str, size: Option<u64>, count: u32) -> bool {
+        let ask = Incoming { id: random_hex(8), from: from.to_string(), name: name.to_string(), size, count };
+        let (tx, rx) = oneshot::channel();
+        self.incoming.lock().unwrap().insert(ask.id.clone(), (ask.clone(), tx));
+        self.emit(Event::Incoming(ask.clone()));
+        platform::notify_incoming(self, &ask);
+        let accepted = matches!(tokio::time::timeout(ASK_TIMEOUT, rx).await, Ok(Ok(true)));
+        self.incoming.lock().unwrap().remove(&ask.id);
+        platform::dismiss_incoming(&ask.id);
+        self.emit(Event::IncomingDone { id: ask.id.clone() });
         accepted
     }
 
@@ -659,24 +737,33 @@ impl App {
         if target.phones.is_empty() {
             return Ok((paths.len(), target.names));
         }
-        let mut offers = self.offers.lock().unwrap();
-        offers.retain(|_, o| o.created.elapsed() < OFFER_TTL);
-        let mut count = 0;
+        let mut sizes = Vec::with_capacity(paths.len());
         for path in paths {
             let meta = std::fs::metadata(path).map_err(|e| anyhow!("{}: {e}", path.display()))?;
             if !meta.is_file() {
                 bail!("{}: only regular files can be sent", path.display());
             }
+            sizes.push(meta.len());
+        }
+        // Sent together: the phone asks once for all of them.
+        let (batch, total) = (random_hex(8), sizes.iter().sum::<u64>());
+        let mut offers = self.offers.lock().unwrap();
+        offers.retain(|_, o| o.created.elapsed() < OFFER_TTL);
+        let mut count = 0;
+        for (path, size) in paths.iter().zip(sizes) {
             let id = random_hex(12);
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
-            self.send_control_to(target.id.as_deref(), json!({ "t": "file", "id": id, "name": name, "size": meta.len() }));
+            self.send_control_to(
+                target.id.as_deref(),
+                json!({ "t": "file", "id": id, "name": name, "size": size, "batch": batch, "count": paths.len(), "total": total }),
+            );
             for (device, phone) in &target.phones {
                 self.put_transfer(Transfer {
                     id: transfer_id(&id, target.id.is_none(), device),
                     outgoing: true,
                     device: phone.clone(),
                     name: name.clone(),
-                    size: Some(meta.len()),
+                    size: Some(size),
                     done: 0,
                     state: TransferState::Waiting,
                     path: path.to_string_lossy().into_owned(),
@@ -685,7 +772,7 @@ impl App {
             }
             offers.insert(
                 id,
-                Offer { device: target.id.clone(), path: path.clone(), name, size: meta.len(), created: Instant::now() },
+                Offer { device: target.id.clone(), path: path.clone(), name, size, created: Instant::now() },
             );
             count += 1;
         }
@@ -1391,6 +1478,10 @@ async fn ws_mic(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, AuthedPho
 #[derive(Deserialize)]
 struct UploadQuery {
     name: String,
+    /// Several files sent together: see [Batch].
+    batch: Option<String>,
+    count: Option<u64>,
+    total: Option<u64>,
 }
 
 async fn upload(
@@ -1405,7 +1496,8 @@ async fn upload(
     };
     let size = headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
     // Nothing is read until it's accepted: the sender waits.
-    if !app.ask_incoming(&dev.name, &name, size).await {
+    let batch = Batch::from_sender(&dev.id, q.batch.as_deref(), q.count, q.total);
+    if !app.ask_incoming(&dev.name, &name, size, batch).await {
         return (StatusCode::FORBIDDEN, format!("{} declined it", app.name())).into_response();
     }
     let mut progress = Progress::new(

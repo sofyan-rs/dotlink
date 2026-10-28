@@ -172,8 +172,8 @@ pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &cra
     let link = |action: &str| xml_escape(&format!("dotlink:{action}/{}", incoming.id));
     let xml = format!(
         r#"<toast scenario="reminder"><visual><binding template="ToastGeneric"><text>{title}</text><text>{body}</text></binding></visual><actions><action content="Accept" activationType="protocol" arguments="{accept}"/><action content="Decline" activationType="protocol" arguments="{decline}"/></actions></toast>"#,
-        title = xml_escape(&format!("{} wants to send a file", incoming.from)),
-        body = xml_escape(&incoming.name),
+        title = xml_escape(&incoming.title()),
+        body = xml_escape(&incoming.names()),
         accept = link("accept"),
         decline = link("decline"),
     );

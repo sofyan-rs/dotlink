@@ -8,7 +8,7 @@
 use crate::config::{Peer, now_secs, sha256_hex, url_decode, url_encode};
 use crate::events::{Event, Transfer, TransferState};
 use crate::platform::{self, clipboard};
-use crate::server::{App, Progress, save_stream};
+use crate::server::{App, Batch, Progress, save_stream};
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
@@ -491,8 +491,9 @@ async fn handle(app: &Arc<App>, peer: &Peer, addr: SocketAddr, v: Value) {
         Some("file") => {
             let (Some(id), Some(name)) = (v["id"].as_str(), v["name"].as_str()) else { return };
             let (app, peer, id, name, size) = (app.clone(), peer.clone(), id.to_string(), name.to_string(), v["size"].as_u64());
+            let batch = Batch::from_sender(&peer.id, v["batch"].as_str(), v["count"].as_u64(), v["total"].as_u64());
             tokio::spawn(async move {
-                if !app.ask_incoming(&peer.name, &name, size).await {
+                if !app.ask_incoming(&peer.name, &name, size, batch).await {
                     app.peers.send(&peer.id, &json!({ "t": "decline", "id": id }));
                     return;
                 }
@@ -589,12 +590,15 @@ pub fn send_files(app: &Arc<App>, id: &str, paths: Vec<PathBuf>) -> Result<()> {
             (path, transfer)
         })
         .collect();
+    // Sent together: the other PC asks once for all of them.
+    let total: u64 = transfers.iter().filter_map(|(_, t)| t.size).sum();
+    let batch = format!("batch={}&count={}&total={total}", crate::config::random_hex(8), transfers.len());
     let app = app.clone();
     tokio::spawn(async move {
         for (path, mut transfer) in transfers {
             transfer.state = TransferState::Active;
             let mut progress = Progress::new(&app, transfer);
-            match upload(&peer, addr, &path, &mut progress).await {
+            match upload(&peer, addr, &path, &batch, &mut progress).await {
                 Ok(()) => progress.finish(Ok(())),
                 Err(e) => {
                     tracing::warn!("file to {}: {e:#}", peer.name);
@@ -606,7 +610,7 @@ pub fn send_files(app: &Arc<App>, id: &str, paths: Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-async fn upload(peer: &Peer, addr: SocketAddr, path: &PathBuf, progress: &mut Progress) -> Result<()> {
+async fn upload(peer: &Peer, addr: SocketAddr, path: &PathBuf, batch: &str, progress: &mut Progress) -> Result<()> {
     let file = tokio::fs::File::open(path).await.with_context(|| path.display().to_string())?;
     let len = file.metadata().await?.len();
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
@@ -618,7 +622,7 @@ async fn upload(peer: &Peer, addr: SocketAddr, path: &PathBuf, progress: &mut Pr
             Frame::data(c)
         })
     });
-    let req = authed(Request::post(format!("/upload?name={}", url_encode(&name))), peer, addr)
+    let req = authed(Request::post(format!("/upload?name={}&{batch}", url_encode(&name))), peer, addr)
         .header(hyper::header::CONTENT_LENGTH, len)
         .body(StreamBody::new(chunks))?;
     let tls = client_config(&peer.fingerprint);

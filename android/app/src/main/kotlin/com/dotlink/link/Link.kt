@@ -582,7 +582,14 @@ class Link(
             "file" ->
                 scope.launch {
                     val (id, name, size) = Triple(msg.getString("id"), msg.optString("name", "file"), msg.optLong("size", -1))
-                    if (askIncoming(prefs.serverName, name, size)) {
+                    val batch =
+                        IncomingBatch.from(
+                            "pc",
+                            msg.optString("batch"),
+                            msg.optInt("count", 1),
+                            msg.optLong("total", -1),
+                        )
+                    if (askIncoming(prefs.serverName, name, size, batch)) {
                         download(id, name, size)
                     } else {
                         control?.send(JSONObject().put("t", "decline").put("id", id).toString())
@@ -659,8 +666,10 @@ class Link(
     suspend fun upload(uris: List<Uri>): Int =
         withContext(Dispatchers.IO) {
             var ok = 0
-            for (uri in uris) {
-                val (name, size) = queryName(uri)
+            val files = uris.map { it to queryName(it) }
+            val batch = IncomingBatch.query(files.map { it.second.second })
+            for ((uri, file) in files) {
+                val (name, size) = file
                 val t = Transfer(transferIds.getAndIncrement(), name, incoming = false, size = size)
                 transfers.update { listOf(t) + it.take(30) }
                 try {
@@ -686,7 +695,7 @@ class Link(
                             }
                         }
                     val req =
-                        request("/upload?name=" + URLEncoder.encode(name, "UTF-8"))
+                        request("/upload?name=" + URLEncoder.encode(name, "UTF-8") + batch)
                             .header("X-Sha256", sha)
                             .post(body)
                             .build()
@@ -722,17 +731,76 @@ class Link(
 
     private val asks = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
+    /** The answer for files sent together, shared by them. */
+    private class BatchAnswer(
+        val answer: CompletableDeferred<Boolean>,
+        /** Files of it still to come: past those, the next one is asked about again. */
+        var left: Int,
+        var used: Long,
+    )
+
+    /** By [IncomingBatch.key]; guarded by itself. */
+    private val batches = HashMap<String, BatchAnswer>()
+
     /**
      * With "Ask before receiving files" on, asks (a notification with Accept / Decline)
      * whether to take [name] from [from]; true right away when it's off. No answer in two
-     * minutes: declined, and listed as such.
+     * minutes: declined, and listed as such. Files of one [batch] are asked about once, with
+     * the first; the others wait for that answer, or take it when it was given before.
      */
     suspend fun askIncoming(
         from: String,
         name: String,
         size: Long,
+        batch: IncomingBatch? = null,
     ): Boolean {
         if (!prefs.askBeforeReceiving) return true
+        val accepted = if (batch == null) ask(from, name, size, 1) else askBatch(from, name, size, batch)
+        if (!accepted) finish(newTransfer(name, incoming = true, size = size).id, "Declined")
+        return accepted
+    }
+
+    private suspend fun askBatch(
+        from: String,
+        name: String,
+        size: Long,
+        batch: IncomingBatch,
+    ): Boolean {
+        var first = false
+        val answer =
+            synchronized(batches) {
+                val now = System.currentTimeMillis()
+                batches.values.removeAll { now - it.used > BATCH_TTL_MS }
+                val b = batches[batch.key]
+                when {
+                    b == null -> {
+                        first = true
+                        CompletableDeferred<Boolean>().also { batches[batch.key] = BatchAnswer(it, batch.count - 1, now) }
+                    }
+                    b.left > 0 -> {
+                        b.left--
+                        b.used = now
+                        if (b.left == 0) batches.remove(batch.key)
+                        b.answer
+                    }
+                    else -> null
+                }
+            }
+        return when {
+            // More files than it said: each of those is asked about.
+            answer == null -> ask(from, name, size, 1)
+            first -> ask(from, name, batch.total.takeIf { it >= 0 } ?: size, batch.count).also { answer.complete(it) }
+            else -> withTimeoutOrNull(ASK_MS + 5_000) { answer.await() } ?: false
+        }
+    }
+
+    /** Shows one Accept / Decline notification and waits for it. */
+    private suspend fun ask(
+        from: String,
+        name: String,
+        size: Long,
+        count: Int,
+    ): Boolean {
         val id = UUID.randomUUID().toString()
         val answer = CompletableDeferred<Boolean>()
         asks[id] = answer
@@ -753,8 +821,8 @@ class Link(
             NotificationCompat
                 .Builder(app, DotlinkApp.CHANNEL_REQUESTS)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("$from wants to send a file")
-                .setContentText("$name$sizeText")
+                .setContentTitle(if (count > 1) "$from wants to send $count files" else "$from wants to send a file")
+                .setContentText(if (count > 1) "$name and ${count - 1} more$sizeText" else "$name$sizeText")
                 .addAction(0, "Decline", action(false))
                 .addAction(0, "Accept", action(true))
                 .setOngoing(true)
@@ -765,7 +833,6 @@ class Link(
         val accepted = withTimeoutOrNull(ASK_MS) { answer.await() } ?: false
         asks.remove(id)
         nm.cancel(notificationId)
-        if (!accepted) finish(newTransfer(name, incoming = true, size = size).id, "Declined")
         return accepted
     }
 
@@ -988,6 +1055,9 @@ class Link(
 
         /** How long a file waits for Accept ("Ask before receiving files") before it's declined. */
         const val ASK_MS = 120_000L
+
+        /** How long the answer for files sent together is kept after the last of them came. */
+        const val BATCH_TTL_MS = 3_600_000L
 
         /** How often a Wi-Fi link checks whether the cable has become available. */
         private const val USB_PROBE_MS = 5_000L
