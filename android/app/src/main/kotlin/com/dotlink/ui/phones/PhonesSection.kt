@@ -25,7 +25,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.delay
 import com.dotlink.DotlinkApp
 import com.dotlink.link.PhonePeer
 import com.dotlink.ui.Hint
@@ -41,9 +40,11 @@ import com.dotlink.ui.dotline.ListRow
 import com.dotlink.ui.dotline.ListRowValue
 import com.dotlink.ui.dotline.PrimaryButton
 import com.dotlink.ui.dotline.ScreenTitle
-import com.dotlink.ui.home.TransferRow
 import com.dotlink.ui.dotline.SecondaryButton
+import com.dotlink.ui.home.ClearTransfersButton
+import com.dotlink.ui.home.TransferRow
 import com.dotlink.ui.theme.Dotline
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -207,6 +208,7 @@ fun PhonesScreen(
                         TransferRow(t)
                     }
                 }
+                ClearTransfersButton(phoneTransfers, onClick = { DotlinkApp.link.clearTransfers(phones = true) })
             }
         }
         if (onPairPc != null) {

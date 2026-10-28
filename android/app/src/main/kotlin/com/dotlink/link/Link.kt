@@ -777,6 +777,14 @@ class Link(
         asks.remove(id)?.complete(accept)
     }
 
+    /**
+     * Empties the Transfers list of the PC ([phones] false) or of the phones: the finished and
+     * failed ones. Running ones stay, so their progress keeps showing.
+     */
+    fun clearTransfers(phones: Boolean) {
+        transfers.update { list -> list.filter { it.status == Transfer.Status.Running || (it.phone != null) != phones } }
+    }
+
     /** A transfer for the list (and the progress notification). */
     fun newTransfer(
         name: String,
