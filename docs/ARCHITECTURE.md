@@ -234,7 +234,7 @@ Windows the named pipe
 request line in, one or more reply lines out.
 
 `pair` (also returns the code) · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `nearby` · `join_code` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` ·
-`cast_pair` · `watch` (event stream, see `events.rs`) · `show` · `quit`
+`cast_pair` · `clear_transfers` (Activity → Clear: the finished and failed ones) · `watch` (event stream, see `events.rs`) · `show` · `quit`
 
 ## Features, briefly
 

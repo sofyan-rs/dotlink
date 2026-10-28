@@ -376,7 +376,7 @@ the dependency.
 | Control socket private to the user (Windows ACL) | ✅ | ✅ (per-user temp folder) |
 | Pair, files both ways, clipboard both ways, Shell (incl. tab titles) | ✅ | ✅ |
 | Graceful quit (tray, Settings, `dotlink quit`, OS shutdown) | ✅ | ✅ `dotlink quit`, ⌘Q |
-| Tray / menu bar with every `TrayAction` | ✅ | 🟡 shows; not every action clicked |
+| Tray / menu bar with every `TrayAction` | ✅ | ✅ |
 | App icon in the window, taskbar / Dock, notifications | ✅ | ✅ |
 | Notifications under Dotlink's name, Open / Show in folder on received files | ✅ | ✅ (from the .app) |
 | Start at login (`--background`) | ✅ | 🟡 not tested across a logout |

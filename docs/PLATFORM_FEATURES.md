@@ -32,7 +32,7 @@ what's left.
 | Webcam (phone camera) | ✅ | ✅ | ✅ (through OBS) |
 | Microphone (phone mic) | ✅ | ✅ (VB-CABLE) | ✅ (BlackHole) |
 | Notifications | ✅ | ✅ | ✅ (from the .app) |
-| Tray / menu bar | ✅ | ✅ | 🟡 |
+| Tray / menu bar | ✅ | ✅ | ✅ |
 | Start at login | ✅ | ✅ | 🟡 |
 | Setup checks and fixes | ✅ | ✅ | ✅ |
 | Control socket (CLI ↔ app) | ✅ | ✅ | ✅ |
@@ -201,7 +201,7 @@ switches to the plain microphone.
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | Method | StatusNotifierItem over D-Bus (`ksni`); a symbolic icon the panel recolours (white pixmap as fallback), text-only menu | notification area (`tray-icon`); left click opens the window, menu on right click; the icon white or black with the taskbar's light/dark mode | menu bar item through `tray-icon`, the dots as a template image (drawn in the menu bar's colour); same menu as Windows. The Dock icon shows only while the window is open (`gui/mac.rs`) |
-| Status | ✅ GNOME (AppIndicator) and Hyprland (quickshell's tray); started before the bar at login, it registers once the tray appears | ✅ Open, Send clipboard, Cast screen and Quit clicked through; closing the window says once that Dotlink keeps running | 🟡 shows in the menu bar; not every action clicked through |
+| Status | ✅ GNOME (AppIndicator) and Hyprland (quickshell's tray); started before the bar at login, it registers once the tray appears | ✅ Open, Send clipboard, Cast screen and Quit clicked through; closing the window says once that Dotlink keeps running | ✅ Open, Send files…, Send clipboard, Cast screen, Pair… and Quit clicked through |
 
 ### Start at login
 
@@ -283,7 +283,7 @@ an iQOO I2218 and a realme RMX5085 after the Windows work changed shared code:
 
 **macOS** (details in [MACOS_PLAN.md](MACOS_PLAN.md))
 - Run the CI workflows (desktop build on every OS, the release's .dmg job).
-- Test: start at login across a logout, every menu bar action.
+- Test: start at login across a logout.
 - Developer ID signing and notarization, then a Camera Extension of our own instead of OBS.
 
 **Phone app**
