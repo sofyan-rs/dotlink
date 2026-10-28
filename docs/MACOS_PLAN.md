@@ -23,7 +23,7 @@ iQOO I2218:
 | Shell | ✅ two tabs, `top`, resize; tab titles from `proc_name`, or `ps` for root's processes | `platform/macos/mod.rs` |
 | Remote | ✅ CGEvent, Accessibility check | `platform/macos/input.rs` |
 | Cast | ✅ Homebrew's scrcpy and adb found from the .app | `core/src/cast.rs` |
-| USB cable link | portable; not tested on macOS | `core/src/usb.rs` |
+| USB cable link | ✅ `adb reverse` set up, the phone online over USB | `core/src/usb.rs` |
 | Menu bar, app menu, Dock | ✅ menu bar item, app menu, Dock icon only with the window | `app/src/gui/tray.rs`, `gui/mac.rs` |
 | Notifications | ✅ through GPUI, with buttons, from the .app | `platform/macos/mod.rs` (`Notify`), `gui/mac.rs` |
 | Start at login | LaunchAgent; not yet tested across a logout | `platform/macos/autostart.rs` |
@@ -34,7 +34,7 @@ iQOO I2218:
 | Updates | swaps in the .dmg's app; not tested (needs a release with a .dmg) | `core/src/update.rs` |
 | Share menu | no-op | `platform/macos/mod.rs` |
 
-Left: run CI and the release job, test start at login and the USB link, then, with an Apple
+Left: run CI and the release job, test start at login and every menu bar action, then, with an Apple
 Developer ID, signing and notarization and a Camera Extension of our own.
 
 Gaps found on the way (all fixed on `feat/macos-port`):

@@ -383,7 +383,7 @@ the dependency.
 | Setup checks and fixes for this OS | ✅ | ✅ |
 | Remote: move, click, drag, scroll, keys, combos, text | ✅ | ✅ |
 | Cast: download scrcpy, USB and Wi-Fi | ✅ | ✅ (with Homebrew's scrcpy) |
-| Link over a USB cable | ✅ | 🟡 not tested |
+| Link over a USB cable | ✅ | ✅ |
 | Installer, signed (and notarized on macOS) | ✅ installer, not signed | 🟡 .app built; .dmg in CI, signed ad hoc (no Developer ID) |
 | Webcam | ✅ (Windows 11) | ✅ (through OBS) |
 | Microphone | ✅ (VB-CABLE) | ✅ (BlackHole) |
