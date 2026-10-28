@@ -114,7 +114,14 @@ pub fn process_name(pid: u32) -> Option<String> {
     let mut buf = [0u8; 2 * 16];
     // SAFETY: proc_name writes at most `buf.len()` bytes and returns how many it wrote.
     let n = unsafe { libc::proc_name(pid as libc::c_int, buf.as_mut_ptr().cast(), buf.len() as u32) };
-    (n > 0).then(|| String::from_utf8_lossy(&buf[..n as usize]).into_owned())
+    if n > 0 {
+        return Some(String::from_utf8_lossy(&buf[..n as usize]).into_owned());
+    }
+    // proc_name only reads this user's processes; `top` and `sudo` run as root (setuid). ps
+    // reads any process's name (through sysctl).
+    let out = std::process::Command::new("/bin/ps").args(["-c", "-o", "comm=", "-p", &pid.to_string()]).output().ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !name.is_empty()).then_some(name)
 }
 
 /// TODO(macos): a Finder Share extension or a Quick Action.
