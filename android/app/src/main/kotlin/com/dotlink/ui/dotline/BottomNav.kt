@@ -23,6 +23,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -32,18 +33,21 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -172,7 +176,8 @@ fun bottomNavHeight(): Dp {
 
 /**
  * The tabs as a vertical pill, centred on the left edge: the same pill, circle and items as
- * [BottomNav], turned upright. Content sits to its right, so it needs no fade behind it.
+ * [BottomNav], turned upright. Content sits to its right, so it needs no fade behind it. On a
+ * screen too short for every tab (a small phone in landscape) the pill scrolls.
  */
 @Composable
 fun <T : BottomNavTab> NavRail(
@@ -181,7 +186,7 @@ fun <T : BottomNavTab> NavRail(
     onTabClick: (T) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(
+    BoxWithConstraints(
         modifier =
             modifier
                 .fillMaxHeight()
@@ -194,37 +199,55 @@ fun <T : BottomNavTab> NavRail(
                         .union(WindowInsets.displayCutout)
                         .only(WindowInsetsSides.Start + WindowInsetsSides.Vertical),
                 ).padding(horizontal = Dotline.space.s3),
-        contentAlignment = Alignment.Center,
     ) {
-        val selectedIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
-        val circleOffset by animateDpAsState(
-            targetValue = (ItemSize + ItemGap) * selectedIndex,
-            animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
-            label = "railCircleOffset",
-        )
+        // At least the rail's height, so the pill stays centred while it fits; taller, it scrolls.
+        Box(
+            modifier =
+                Modifier
+                    .verticalScroll(rememberScrollState())
+                    .heightIn(min = maxHeight)
+                    .padding(vertical = Dotline.space.s3),
+            contentAlignment = Alignment.Center,
+        ) {
+            RailPill(tabs, selectedTab, onTabClick)
+        }
+    }
+}
+
+@Composable
+private fun <T : BottomNavTab> RailPill(
+    tabs: List<T>,
+    selectedTab: T,
+    onTabClick: (T) -> Unit,
+) {
+    val selectedIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
+    val circleOffset by animateDpAsState(
+        targetValue = (ItemSize + ItemGap) * selectedIndex,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
+        label = "railCircleOffset",
+    )
+    Box(
+        Modifier
+            .width(Dotline.size.tabBarHeight)
+            .background(Dotline.colors.navBar, Dotline.radius.pill)
+            .padding(PillPadding),
+    ) {
         Box(
             Modifier
-                .width(Dotline.size.tabBarHeight)
-                .background(Dotline.colors.navBar, Dotline.radius.pill)
-                .padding(PillPadding),
+                .offset { IntOffset(0, circleOffset.roundToPx()) }
+                .size(ItemSize)
+                .background(Dotline.colors.navSelected, CircleShape),
+        )
+        Column(
+            modifier = Modifier.selectableGroup(),
+            verticalArrangement = Arrangement.spacedBy(ItemGap),
         ) {
-            Box(
-                Modifier
-                    .offset { IntOffset(0, circleOffset.roundToPx()) }
-                    .size(ItemSize)
-                    .background(Dotline.colors.navSelected, CircleShape),
-            )
-            Column(
-                modifier = Modifier.selectableGroup(),
-                verticalArrangement = Arrangement.spacedBy(ItemGap),
-            ) {
-                tabs.forEach { tab ->
-                    BottomNavItem(
-                        tab = tab,
-                        selected = tab == selectedTab,
-                        onClick = { onTabClick(tab) },
-                    )
-                }
+            tabs.forEach { tab ->
+                BottomNavItem(
+                    tab = tab,
+                    selected = tab == selectedTab,
+                    onClick = { onTabClick(tab) },
+                )
             }
         }
     }
