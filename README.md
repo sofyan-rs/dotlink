@@ -244,11 +244,13 @@ Forget a phone in **Phones** (or `dotlink unpair`) to cut it off right away.
 
 ## Limits
 
-- Remote typing uses a US keyboard layout on Linux; on Windows any layout works.
+- Remote typing uses a US keyboard layout on Linux; on Windows and macOS any layout works (on
+  macOS, letters in shortcuts such as ⌘C are the US keys' positions).
 - One phone at a time streams the webcam (or the mic).
 - Windows: Windows 11 only; the mic needs VB-CABLE.
-- macOS: the webcam goes through OBS and the mic through BlackHole (see Install); the app isn't
-  signed with a Developer ID.
+- macOS: the webcam goes through OBS, which has to be running, and the mic through BlackHole
+  (see Install). The app isn't signed with an Apple Developer ID, so macOS asks once before
+  opening it, and asks again for Accessibility (Remote) after each update.
 
 ## Platforms
 
