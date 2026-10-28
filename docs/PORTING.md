@@ -374,7 +374,7 @@ the dependency.
 | CI builds and tests on this OS | workflow written, not run yet | workflow written, not run yet |
 | `cargo build -p dotlink` and `--no-default-features` without warnings | ✅ | ✅ |
 | Control socket private to the user (Windows ACL) | ✅ | ✅ (per-user temp folder) |
-| Pair, files both ways, clipboard both ways, Shell (incl. tab titles) | ✅ | ✅ (Shell not fully tested) |
+| Pair, files both ways, clipboard both ways, Shell (incl. tab titles) | ✅ | ✅ |
 | Graceful quit (tray, Settings, `dotlink quit`, OS shutdown) | ✅ | ✅ `dotlink quit`, ⌘Q |
 | Tray / menu bar with every `TrayAction` | ✅ | 🟡 shows; not every action clicked |
 | App icon in the window, taskbar / Dock, notifications | ✅ | ✅ |

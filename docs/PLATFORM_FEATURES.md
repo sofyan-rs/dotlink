@@ -26,7 +26,7 @@ what's left.
 | Pairing (QR / link) | ✅ | ✅ | ✅ |
 | Files, both ways | ✅ | ✅ | ✅ |
 | Clipboard, both ways | ✅ | ✅ | ✅ |
-| Shell | ✅ | ✅ | 🟡 |
+| Shell | ✅ | ✅ | ✅ |
 | Remote (touchpad + keyboard) | ✅ | ✅ | ✅ |
 | Cast (scrcpy) | ✅ | ✅ | ✅ |
 | Webcam (phone camera) | ✅ | ✅ | ✅ (through OBS) |
@@ -118,8 +118,8 @@ disconnecting; scrollback is replayed.
 | | Linux | Windows | macOS |
 |---|---|---|---|
 | Method | login shell (`$SHELL -l`) in a PTY | ConPTY; `pwsh.exe` when on `PATH`, else `powershell.exe`; starts in the home folder | login shell in a PTY |
-| Tab titles | foreground process group → `/proc/<pid>/comm` | the shell's exe name (`QueryFullProcessImageNameW`) | foreground process group → `proc_name` |
-| Status | ✅ | ✅ commands, colours, resize, tab title `PWSH` | 🟡 runs; not fully tested |
+| Tab titles | foreground process group → `/proc/<pid>/comm` | the shell's exe name (`QueryFullProcessImageNameW`) | foreground process group → `proc_name`, or `ps` for root's (`top`, `sudo`) |
+| Status | ✅ | ✅ commands, colours, resize, tab title `PWSH` | ✅ two tabs, `top` full screen, resize with the keyboard, tab titles (`ZSH`, `TOP`) |
 
 On the phone, xterm.js (WebGL renderer) draws the text in Geist Mono, then two fallback fonts:
 "Dotlink Symbols Mono" (a renamed JuliaMono subset: ⏺ ⎿ ⏵ and other technical symbols,
@@ -283,7 +283,7 @@ an iQOO I2218 and a realme RMX5085 after the Windows work changed shared code:
 
 **macOS** (details in [MACOS_PLAN.md](MACOS_PLAN.md))
 - Run the CI workflows (desktop build on every OS, the release's .dmg job).
-- Test: start at login across a logout, Shell fully, the USB cable link, every menu bar action.
+- Test: start at login across a logout, the USB cable link, every menu bar action.
 - Developer ID signing and notarization, then a Camera Extension of our own instead of OBS.
 
 **Phone app**

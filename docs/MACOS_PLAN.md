@@ -20,7 +20,7 @@ iQOO I2218:
 | Build | builds, tests and clippy clean; CI workflow written, not run yet | `.github/workflows/desktop.yml` |
 | Pairing, files, clipboard, mDNS, TLS | ✅ tested with the phone | `core/src/server.rs`, `service.rs` |
 | Control socket | ✅ per-user temp folder from `confstr` | `config.rs` (`default_runtime_dir`) |
-| Shell | runs; tab titles from `proc_name`; not fully tested | `platform/macos/mod.rs` |
+| Shell | ✅ two tabs, `top`, resize; tab titles from `proc_name`, or `ps` for root's processes | `platform/macos/mod.rs` |
 | Remote | ✅ CGEvent, Accessibility check | `platform/macos/input.rs` |
 | Cast | ✅ Homebrew's scrcpy and adb found from the .app | `core/src/cast.rs` |
 | USB cable link | portable; not tested on macOS | `core/src/usb.rs` |
