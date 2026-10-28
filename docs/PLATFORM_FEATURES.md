@@ -37,7 +37,7 @@ what's left.
 | Setup checks and fixes | ✅ | ✅ | ✅ |
 | Control socket (CLI ↔ app) | ✅ | ✅ | ✅ |
 | Link over a USB cable (`adb reverse`) | ✅ | ✅ | ✅ |
-| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | 🟡 .app built and run; the .dmg job in CI not run yet |
+| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | ✅ universal .dmg (x86_64 + arm64) from the release workflow, signed ad hoc |
 
 ## Wi-Fi or USB
 
@@ -284,7 +284,7 @@ an iQOO I2218 and a realme RMX5085 after the Windows work changed shared code:
 - [ ] `scripts/install.sh` on a clean user.
 
 **macOS** (details in [MACOS_PLAN.md](MACOS_PLAN.md))
-- Run the CI workflows (desktop build on every OS, the release's .dmg job).
+- Run `desktop.yml` (it runs on the PR); test an update from a release's .dmg.
 - Test: start at login across a logout.
 - Developer ID signing and notarization, then a Camera Extension of our own instead of OBS.
 

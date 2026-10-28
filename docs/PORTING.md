@@ -30,7 +30,7 @@ The Android app needs no changes: it already reads the PC's OS from `hello` (`os
 | Cast (scrcpy) | `core/src/cast.rs` | done (.zip download, SDK adb) | done (tar.gz download, Homebrew's and the SDK's adb) |
 | Webcam | `CameraHub` | done (Windows 11 virtual camera, `desktop/camera` DLL) | through OBS (a stream OBS shows; a Camera Extension needs a Developer ID) |
 | Microphone | `MicSink` | done (plays into VB-CABLE through WASAPI) | done (plays into BlackHole through CoreAudio) |
-| Installer | `app/Cargo.toml` packager section | done (NSIS setup .exe, per user; not signed yet) | universal .app in a .dmg, signed ad hoc (CI job not run yet) |
+| Installer | `app/Cargo.toml` packager section | done (NSIS setup .exe, per user; not signed yet) | universal .app in a .dmg, signed ad hoc, built by the release workflow |
 
 `platform::features()` tells the window what to show. Each OS starts with `remote`,
 `camera` and `mic` set to `false`; turn a flag on in the same commit that makes the feature
@@ -371,7 +371,7 @@ the dependency.
 
 | | Windows | macOS |
 |---|---|---|
-| CI builds and tests on this OS | workflow written, not run yet | workflow written, not run yet |
+| CI builds and tests on this OS | release workflow ✅; `desktop.yml` not run yet | release workflow ✅ (universal .dmg); `desktop.yml` not run yet |
 | `cargo build -p dotlink` and `--no-default-features` without warnings | ✅ | ✅ |
 | Control socket private to the user (Windows ACL) | ✅ | ✅ (per-user temp folder) |
 | Pair, files both ways, clipboard both ways, Shell (incl. tab titles) | ✅ | ✅ |
@@ -384,7 +384,7 @@ the dependency.
 | Remote: move, click, drag, scroll, keys, combos, text | ✅ | ✅ |
 | Cast: download scrcpy, USB and Wi-Fi | ✅ | ✅ (with Homebrew's scrcpy) |
 | Link over a USB cable | ✅ | ✅ |
-| Installer, signed (and notarized on macOS) | ✅ installer, not signed | 🟡 .app built; .dmg in CI, signed ad hoc (no Developer ID) |
+| Installer, signed (and notarized on macOS) | ✅ installer, not signed | ✅ universal .dmg from CI, signed ad hoc (no Developer ID, so not notarized) |
 | Webcam | ✅ (Windows 11) | ✅ (through OBS) |
 | Microphone | ✅ (VB-CABLE) | ✅ (BlackHole) |
 | README platform table and ARCHITECTURE updated, `features()` flags on | ✅ | ✅ |

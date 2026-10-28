@@ -17,7 +17,7 @@ iQOO I2218:
 
 | Piece | State | Where |
 |---|---|---|
-| Build | builds, tests and clippy clean; CI workflow written, not run yet | `.github/workflows/desktop.yml` |
+| Build | builds, tests and clippy clean; the release workflow builds every OS (✅ 2026-10-28); `desktop.yml` not run yet | `.github/workflows/` |
 | Pairing, files, clipboard, mDNS, TLS | ✅ tested with the phone | `core/src/server.rs`, `service.rs` |
 | Control socket | ✅ per-user temp folder from `confstr` | `config.rs` (`default_runtime_dir`) |
 | Shell | ✅ two tabs, `top`, resize; tab titles from `proc_name`, or `ps` for root's processes | `platform/macos/mod.rs` |
@@ -30,11 +30,11 @@ iQOO I2218:
 | Setup | ✅ Accessibility, OBS, BlackHole (installed by Fix), adb, scrcpy | `platform/macos/mod.rs` (`setup`) |
 | Webcam | ✅ through OBS (Browser source) | `platform/macos/camera.rs` |
 | Microphone | ✅ BlackHole | `platform/macos/media.rs`, `platform/cpal_sink.rs` |
-| Packaging | .app built and run; universal .dmg in the release workflow (not run yet), signed ad hoc | `app/Cargo.toml`, `release.yml` |
+| Packaging | ✅ universal .dmg from the release workflow (x86_64 + arm64, signed ad hoc, both run) | `app/Cargo.toml`, `release.yml` |
 | Updates | swaps in the .dmg's app; not tested (needs a release with a .dmg) | `core/src/update.rs` |
 | Share menu | no-op | `platform/macos/mod.rs` |
 
-Left: run CI and the release job, test start at login, then, with an Apple
+Left: run `desktop.yml` (on the PR), test start at login and an update from a release's .dmg, then, with an Apple
 Developer ID, signing and notarization and a Camera Extension of our own.
 
 Gaps found on the way (all fixed on `feat/macos-port`):
@@ -234,7 +234,7 @@ Done when: Setup checks row for macOS is ✅.
       (`MACOS_CERT_P12_BASE64`, `MACOS_CERT_PASSWORD`), `notarytool` with an App Store Connect
       API key (`MACOS_NOTARY_KEY`, `_KEY_ID`, `_ISSUER`), then `stapler staple`. The scrcpy
       binaries Dotlink downloads run outside the bundle, so they don't need re-signing.
-- [x] **`release.yml`**: a `macos` job on `macos-14` building `aarch64-apple-darwin` and
+- [x] **`release.yml`** (ran ✅ on 2026-10-28: a universal .dmg, both architectures run): a `macos` job on `macos-14` building `aarch64-apple-darwin` and
       `x86_64-apple-darwin`, `lipo` into one universal binary, `cargo packager -f dmg`, sign,
       notarize; add `Dotlink-<version>.dmg` to the Downloads table ("macOS 13 or newer").
       Unsigned manual runs (no secrets) still produce an artifact, as with the Android job.
