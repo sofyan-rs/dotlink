@@ -120,15 +120,17 @@ Settings → Privacy & Security and click **Open Anyway**. Updates install from 
 
 1. Install OBS (Setup → *Webcam* → *Fix* opens its download page) and open it.
 2. In Dotlink: **Phones → Webcam → Copy OBS link**. The link stays the same, so this is once.
-3. In OBS: **Sources → + → Media Source**, name it "Dotlink", then:
-   - untick **Local File**;
-   - **Input:** paste the link;
-   - **Input Format:** `mpjpeg`;
-   - **Network Buffering:** 0 MB (less delay);
+3. In OBS: **Sources → + → Browser**, name it "Dotlink", then:
+   - **URL:** paste the link;
+   - **Width** 1280, **Height** 720;
    - OK, then right-click the source → **Transform → Fit to screen**.
 4. In OBS: **Start Virtual Camera**. The first time, macOS asks to allow OBS's camera extension
    (System Settings → General → Login Items & Extensions).
 5. In Dotlink: **Start** the Webcam. In your call app, pick **OBS Virtual Camera**.
+
+A Browser source shows the phone with less delay than a Media Source. To use a Media Source
+anyway: change the link's `.html` to `.mjpg`, untick **Local File**, paste it as **Input**, set
+**Input Format** to `mpjpeg` and **Network Buffering** to 0 MB.
 
 OBS has to keep running while you use the camera. While the phone camera is off, OBS shows
 "Dotlink · phone camera off". The link only works on this Mac (`127.0.0.1`) and holds a secret,

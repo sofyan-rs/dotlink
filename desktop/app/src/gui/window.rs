@@ -846,7 +846,7 @@ impl MainView {
                     move |this, _: &ClickEvent, _, cx| {
                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(platform::camera_url(port)));
                         this.model.update(cx, |m, cx| {
-                            m.notice("Copied: paste it as the Input of a Media Source in OBS", false, cx)
+                            m.notice("Copied: paste it as the URL of a Browser source in OBS", false, cx)
                         });
                     },
                 ))

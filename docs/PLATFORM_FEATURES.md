@@ -28,7 +28,7 @@ means Windows 11 only: Windows 10 isn't supported.
 | Shell | ✅ | ✅ | 🔧 |
 | Remote (touchpad + keyboard) | ✅ | ✅ | ✅ |
 | Cast (scrcpy) | ✅ | ✅ | ✅ |
-| Webcam (phone camera) | ✅ | ✅ | 🟡 (through OBS) |
+| Webcam (phone camera) | ✅ | ✅ | ✅ (through OBS) |
 | Microphone (phone mic) | ✅ | ✅ (VB-CABLE) | ✅ (BlackHole) |
 | Notifications | ✅ | ✅ | ✅ (from the .app) |
 | Tray / menu bar | ✅ | ✅ | 🟡 |
@@ -157,10 +157,10 @@ apps read, and a placeholder shows while the phone camera is off.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | `v4l2loopback` device "Dotlink Camera", fed by `ffmpeg` | Windows 11 virtual camera (`MFCreateVirtualCamera`, per user, while Dotlink runs). Its media source is `dotlink_camera.dll` (`desktop/camera`), loaded by the Camera Frame Server; Dotlink decodes the JPEG (`zune-jpeg`), fits it into NV12 and shares it through `%ProgramData%\Dotlink\camera.bin` | an MJPEG stream on `127.0.0.1:<port + 1000>` at a secret path (`camera-token` in the config folder), read by OBS as a Media Source (`mpjpeg`) and passed on by OBS Virtual Camera. A camera of its own (a CoreMediaIO Camera Extension) needs a Developer ID and an Apple entitlement |
-| Setup | kernel module + device (Setup, polkit) | Setup → Fix (UAC once): DLL into `%ProgramFiles%\Dotlink`, class registered under HKLM, then the Camera Frame Server stopped so it loads the new DLL (an app using the camera loses it for a moment) | install OBS (Setup → Fix opens its page), add the copied link as a Media Source, Start Virtual Camera; README has the steps |
+| Method | `v4l2loopback` device "Dotlink Camera", fed by `ffmpeg` | Windows 11 virtual camera (`MFCreateVirtualCamera`, per user, while Dotlink runs). Its media source is `dotlink_camera.dll` (`desktop/camera`), loaded by the Camera Frame Server; Dotlink decodes the JPEG (`zune-jpeg`), fits it into NV12 and shares it through `%ProgramData%\Dotlink\camera.bin` | an MJPEG stream on `127.0.0.1:<port + 1000>` at a secret path (`camera-token` in the config folder), shown by an OBS Browser source (`<token>.html`; a Media Source reading the `.mjpg` works too, with more delay) and passed on by OBS Virtual Camera. A camera of its own (a CoreMediaIO Camera Extension) needs a Developer ID and an Apple entitlement |
+| Setup | kernel module + device (Setup, polkit) | Setup → Fix (UAC once): DLL into `%ProgramFiles%\Dotlink`, class registered under HKLM, then the Camera Frame Server stopped so it loads the new DLL (an app using the camera loses it for a moment) | install OBS (Setup → Fix opens its page), add the copied link as a Browser source, Start Virtual Camera; README has the steps |
 | Requirements | v4l2loopback, ffmpeg | Windows 11 (build 22000+) | OBS Studio, running |
-| Status | ✅ | ✅ the phone's picture in OBS (and any Media Foundation app), 1920×1080 NV12 at 30 or 60 fps, over Wi-Fi and USB | 🟡 the stream checked with ffmpeg (`-f mpjpeg`, as OBS reads it) and the placeholder at 5 fps; not yet with the phone in OBS |
+| Status | ✅ | ✅ the phone's picture in OBS (and any Media Foundation app), 1920×1080 NV12 at 30 or 60 fps, over Wi-Fi and USB | ✅ the phone's camera in OBS (Browser source, less delay than a Media Source) and through OBS Virtual Camera |
 
 Webcam frame rate: 30 or 60 fps, and the phone only offers what the lens in use can do (front
 and back are read separately, from the camera's auto-exposure ranges). Both test phones (iQOO

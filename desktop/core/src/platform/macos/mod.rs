@@ -156,9 +156,8 @@ pub mod setup {
             title: "OBS Studio".into(),
             ok: obs,
             detail: if obs {
-                "In OBS: add a Media Source, untick Local file, paste the camera link (Phones → Webcam → \
-                 Copy OBS link) as Input and set Input format to mpjpeg. Then Start Virtual Camera; apps \
-                 pick \"OBS Virtual Camera\"."
+                "In OBS: add a Browser source, paste the camera link (Phones → Webcam → Copy OBS link) as \
+                 its URL, 1280 × 720. Then Start Virtual Camera; apps pick \"OBS Virtual Camera\"."
                     .into()
             } else {
                 "macOS only lets signed camera drivers in, so the phone camera goes through OBS's virtual \

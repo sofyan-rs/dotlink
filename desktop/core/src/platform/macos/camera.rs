@@ -23,9 +23,11 @@ static PLACEHOLDER: &[u8] = include_bytes!("../../../assets/camera-off.jpg");
 const PORT_OFFSET: u16 = 1000;
 const OBS_URL: &str = "https://obsproject.com/download";
 
-/// The address to give OBS. `port`: Dotlink's own (the phone's) port.
+/// The address to give OBS: the page for a Browser Source, which showed the phone with less
+/// delay than a Media Source reading the stream (`.mjpg` instead of `.html`) through ffmpeg.
+/// `port`: Dotlink's own (the phone's) port.
 pub fn camera_url(port: u16) -> String {
-    format!("http://127.0.0.1:{}/camera/{}.mjpg", port.wrapping_add(PORT_OFFSET), token())
+    format!("http://127.0.0.1:{}/camera/{}.html", port.wrapping_add(PORT_OFFSET), token())
 }
 
 pub fn obs_download_url() -> &'static str {

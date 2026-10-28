@@ -269,12 +269,14 @@ camera is off, fixed size while apps read.
 **Webcam, for now: through OBS** (no Developer ID). `platform/macos/camera.rs` serves the
 phone's frames as multipart JPEG on `127.0.0.1:<port + 1000>/camera/<token>.mjpg` (the token in
 `camera-token`, 0600), newest frame only, the placeholder (`core/assets/camera-off.jpg`, drawn
-by `scripts/make-camera-placeholder.swift`) at 5 fps while the phone is off. OBS reads it as a
-Media Source (Input format `mpjpeg`) and OBS Virtual Camera hands it to apps. Phones → Webcam
-has **Copy OBS link**; Setup checks that OBS is installed. Steps for users: README, macOS.
+by `scripts/make-camera-placeholder.swift`) at 5 fps while the phone is off. OBS shows it in a
+Browser source (`<token>.html`, an `<img>` of the stream), which had less delay than a Media
+Source reading the `.mjpg` through ffmpeg; OBS Virtual Camera hands it to apps. Phones → Webcam
+has **Copy OBS link** (the `.html`); Setup checks that OBS is installed. Steps for users:
+README, macOS.
 
 - [x] The stream, the placeholder, the Setup check, Copy OBS link, `features().camera = true`.
-- [ ] Tested with the phone in OBS and a call app.
+- [x] Tested with the phone in OBS (Browser source and Media Source; the browser had less delay).
 
 **Webcam, later: a Camera Extension of our own** (needs the Apple Developer Program):
 
