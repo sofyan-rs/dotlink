@@ -56,11 +56,16 @@ cargo install cargo-packager cargo-generate-rpm
 cd desktop/app
 NO_STRIP=1 cargo packager --release -f deb,appimage   # Linux: target/packages/
 cargo packager --release -f nsis                      # Windows: target/packages/*-setup.exe
+cargo packager --release -f app                       # macOS: target/packages/Dotlink.app
 cd .. && cargo build --release -p dotlink && cargo generate-rpm -p app   # target/generate-rpm/
 ```
 
-The Windows icon (`app/assets/dotlink.ico`) is drawn by `scripts/make-windows-icon.py`.
-`.github/workflows/release.yml` builds every package; run it by hand to get them as artifacts.
+The Windows icon (`app/assets/dotlink.ico`) is drawn by `scripts/make-windows-icon.py`, the
+macOS one (`app/assets/dotlink.icns`) by `scripts/make-macos-icon.py`.
+`.github/workflows/release.yml` builds every package (on macOS a universal .app, signed ad hoc,
+in a .dmg); run it by hand to get them as artifacts. The first `cargo packager` on a machine
+runs `cargo metadata`, which downloads every platform's crates, some large: run `cargo fetch`
+first on a slow connection (it resumes).
 
 ### Releasing
 
@@ -158,8 +163,9 @@ cargo run -p dotlink
   so new messages must be optional.
 - **New thing the window shows:** expose it through `App::status()` and, if it changes,
   an `events::Event`; the window refreshes on events.
-- **New system requirement:** a check in `platform/<os>/setup.rs`, fixable when it can be
-  installed or set up with one root command (Linux) or one UAC prompt (Windows).
+- **New system requirement:** a check in `platform/<os>/setup.rs` (macOS: the `setup` module in
+  `platform/macos/mod.rs`), fixable when it can be installed or set up with one root command
+  (Linux), one UAC prompt (Windows) or one administrator prompt (macOS).
 
 ## Windows and macOS
 

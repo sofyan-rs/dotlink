@@ -12,30 +12,32 @@ universal binary). The Android app needs no changes: it already reads `os: "maco
 
 ## Where macOS stands
 
-From reading the code (2026-10-27):
+As of 2026-10-28, on branch `feat/macos-port`, tested on a MacBook Air M1 (macOS 15.8) with an
+iQOO I2218:
 
 | Piece | State | Where |
 |---|---|---|
-| Build | builds, tests and clippy clean; the window opens (Phase 1) | — |
-| Service, pairing, files, mDNS, TLS, USB link | portable, untested | `core/src/server.rs`, `service.rs`, `usb.rs` |
-| Control socket | Unix socket in `runtime_dir()` = `$XDG_RUNTIME_DIR` or `std::env::temp_dir()` | `core/src/ipc.rs`, `config.rs:226` |
-| Clipboard | `polling_clipboard` (arboard, 500 ms) | `platform/macos/mod.rs` |
-| Shell | login shell in a PTY; tab titles return `None` | `platform/macos/mod.rs`, `term.rs:94` |
-| Notifications | `notify-rust`, text only, no bundle id set | `platform/macos/mod.rs:36` |
-| Open / Show in folder | `open`, `open -R` | `platform/macos/mod.rs` |
-| Battery | `pmset -g batt` | `platform/macos/mod.rs`, `platform/battery.rs` |
-| Cast | scrcpy macOS assets and SHA-256s pinned; SDK path `~/Library/Android/sdk` | `core/src/cast.rs:526`, `:605` |
-| Remote | `Input::new()` bails | stub |
-| Tray / menu bar | `tray::start` returns `false` | `app/src/gui/tray.rs:245` |
-| App menu, Dock | nothing | `app/src/gui/mod.rs` (TODO at the top) |
-| Start at login | bails | stub |
-| Setup | no checks | stub |
-| Webcam, mic | bail | stub |
-| Share menu | no-op | stub |
-| Updates | `own_asset` is `false` off Windows/Linux: never offers an install | `core/src/update.rs:185` |
-| Packaging, CI | nothing for macOS | `app/Cargo.toml`, `.github/workflows/release.yml` |
+| Build | builds, tests and clippy clean; CI workflow written, not run yet | `.github/workflows/desktop.yml` |
+| Pairing, files, clipboard, mDNS, TLS | ✅ tested with the phone | `core/src/server.rs`, `service.rs` |
+| Control socket | ✅ per-user temp folder from `confstr` | `config.rs` (`default_runtime_dir`) |
+| Shell | runs; tab titles from `proc_name`; not fully tested | `platform/macos/mod.rs` |
+| Remote | ✅ CGEvent, Accessibility check | `platform/macos/input.rs` |
+| Cast | ✅ Homebrew's scrcpy and adb found from the .app | `core/src/cast.rs` |
+| USB cable link | portable; not tested on macOS | `core/src/usb.rs` |
+| Menu bar, app menu, Dock | ✅ menu bar item, app menu, Dock icon only with the window | `app/src/gui/tray.rs`, `gui/mac.rs` |
+| Notifications | ✅ through GPUI, with buttons, from the .app | `platform/macos/mod.rs` (`Notify`), `gui/mac.rs` |
+| Start at login | LaunchAgent; not yet tested across a logout | `platform/macos/autostart.rs` |
+| Setup | ✅ Accessibility, OBS, BlackHole (installed by Fix), adb, scrcpy | `platform/macos/mod.rs` (`setup`) |
+| Webcam | ✅ through OBS (Browser source) | `platform/macos/camera.rs` |
+| Microphone | ✅ BlackHole | `platform/macos/media.rs`, `platform/cpal_sink.rs` |
+| Packaging | .app built and run; universal .dmg in the release workflow (not run yet), signed ad hoc | `app/Cargo.toml`, `release.yml` |
+| Updates | swaps in the .dmg's app; not tested (needs a release with a .dmg) | `core/src/update.rs` |
+| Share menu | no-op | `platform/macos/mod.rs` |
 
-Gaps found while reading that the other docs don't list yet (1–3 fixed on `feat/macos-port`):
+Left: run CI and the release job, test start at login and the USB link, then, with an Apple
+Developer ID, signing and notarization and a Camera Extension of our own.
+
+Gaps found on the way (all fixed on `feat/macos-port`):
 
 1. **Control socket path under launchd.** `std::env::temp_dir()` reads `$TMPDIR`. Terminal and
    apps launched by Finder get the per-user `/var/folders/…/T/`, but a LaunchAgent (start at
@@ -320,10 +322,10 @@ README, macOS.
 | 6 Packaging | a signed .dmg, updates | medium (needs an Apple Developer account) |
 | 7 Mic, webcam | BlackHole mic; Camera Extension | mic small, camera large |
 
-After Phase 6 macOS can be listed as supported in the README (without webcam and mic, like
-the Windows mic was before VB-CABLE). Needs before Phase 6: an Apple Developer Program
-membership (Developer ID certificate, notarization); before Phase 7's camera, the CMIO
-system-extension entitlement on that account.
+Done: phases 1 to 5 and 7 (mic; webcam through OBS), and Phase 6 without a Developer ID.
+The README lists macOS as supported. What still needs an Apple Developer Program membership:
+Developer ID signing and notarization (no Gatekeeper prompt, Accessibility kept across
+updates), and the CMIO system-extension entitlement for a Camera Extension of our own.
 
 ## Testing setup on a Mac
 
@@ -335,11 +337,13 @@ system-extension entitlement on that account.
   start the permission flows over.
 - Phone side: same as on Linux (`adb shell input …`, `adb exec-out screencap -p`).
 
-## Docs to update as phases land
+## Docs that follow the macOS work
+
+Kept up to date with each change:
 
 - PLATFORM_FEATURES.md: the macOS column and its "Still to do" list.
 - PORTING.md: the macOS column of the checklist.
-- README.md: requirements table, install section (.dmg), "macOS is planned" line.
+- README.md: requirements table, the macOS install section (.dmg, OBS, BlackHole).
 - ARCHITECTURE.md: macOS paths in "Files on disk", the menu bar in "Tray", threads (the
   camera's queue, the CoreAudio stream).
 - CONTRIBUTION.md: building on macOS (Xcode or Command Line Tools, signing a debug build),

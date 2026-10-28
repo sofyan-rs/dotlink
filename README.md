@@ -27,7 +27,7 @@ Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on
 | **Phone** | Android 10 or newer; Cast over Wi-Fi needs Android 11+ | iQOO I2218, realme RMX5085 (Android 16) |
 | **Linux** | x86_64, a desktop with PipeWire; any Wayland or X11 desktop | Fedora 44: GNOME, KDE Plasma, Hyprland |
 | **Windows** | Windows 11, x64 (Windows 10 isn't supported) | Windows 11 Pro 26H2 (build 26300) |
-| **macOS** | macOS 13 Ventura or newer, Apple Silicon or Intel | macOS 15.8 (MacBook Air, Apple Silicon) |
+| **macOS** | macOS 13 Ventura or newer, Apple Silicon or Intel | macOS 15.8 (MacBook Air M1) |
 
 Other distros and desktops (Ubuntu, Debian, Arch, openSUSE; Sway, niri, X11 desktops) are expected to
 work, since `install.sh` and Setup handle their packages, but haven't been tested on every release.
@@ -139,7 +139,8 @@ so other users and programs can't read the camera.
 ### After installing
 
 Open **Dotlink** and check its **Setup** page. It lists what each feature still needs and fixes most
-of it in one click (firewall port, webcam, remote access, scrcpy).
+of it in one click (firewall port, webcam, remote access, scrcpy; on macOS Accessibility,
+BlackHole and OBS).
 
 ## Pairing
 
@@ -174,7 +175,8 @@ works either way. A laptop's battery shows there too.
 
 Everything works over both:
 
-- **Wi-Fi:** phone and PC on the same network.
+- **Wi-Fi:** phone and PC on the same network, or the PC on the phone's own hotspot (the phone
+  looks for it on the hotspot's network itself).
 - **USB cable:** turn on USB debugging on the phone (Developer options) and allow this PC once.
   When the cable is in, Dotlink uses it automatically and goes back to Wi-Fi when it's unplugged.
   No Wi-Fi or firewall rule needed, and it's faster.
@@ -264,7 +266,7 @@ How each feature is built per OS and what has been tested:
 ## Development
 
 ```
-desktop/   Rust workspace: core/ (the service), app/ (window, tray, CLI), camera/ (Windows webcam DLL)
+desktop/   Rust workspace: core/ (the service), app/ (window, tray or menu bar, CLI), camera/ (Windows webcam DLL)
 android/   Kotlin + Jetpack Compose app
 scripts/   install.sh
 docs/      architecture, porting, platform features, contributing
