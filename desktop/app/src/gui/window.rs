@@ -362,13 +362,13 @@ impl MainView {
                                     .child(format!("{} wants to send it{size}", f.from)),
                             ),
                     )
-                    .child(pill(p, SharedString::from(format!("decline-{}", f.id)), "Decline", Kind::Ghost).on_click(cx.listener(
+                    .child(pill_icon(p, SharedString::from(format!("decline-{}", f.id)), IconName::X, "Decline", Kind::Ghost).on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             let id = decline_id.clone();
                             this.model.update(cx, |m, cx| m.answer_incoming(id, false, cx));
                         },
                     )))
-                    .child(pill(p, SharedString::from(format!("accept-{}", f.id)), "Accept", Kind::Primary).on_click(cx.listener(
+                    .child(pill_icon(p, SharedString::from(format!("accept-{}", f.id)), IconName::Check, "Accept", Kind::Primary).on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             let id = accept_id.clone();
                             this.model.update(cx, |m, cx| m.answer_incoming(id, true, cx));
@@ -1054,7 +1054,7 @@ impl MainView {
             .child(section_with(
                 p,
                 "PCs on this network",
-                Some(enabled(pill(p, "nearby-refresh", if loading { "Looking…" } else { "Refresh" }, Kind::Ghost), !loading).when(
+                Some(enabled(pill_icon(p, "nearby-refresh", IconName::RefreshCw, if loading { "Looking…" } else { "Refresh" }, Kind::Ghost), !loading).when(
                     !loading,
                     |b| b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.refresh_nearby(cx)))),
                 )),
@@ -1304,16 +1304,17 @@ impl MainView {
                             d.child(if fixing.is_some() {
                                 enabled(pill(p, "fix-all", "Fixing…", Kind::Primary), false)
                             } else {
-                                pill(p, "fix-all", if fixable == 1 { "Fix it" } else { "Fix all" }, Kind::Primary)
+                                pill_icon(p, "fix-all", IconName::Wrench, if fixable == 1 { "Fix it" } else { "Fix all" }, Kind::Primary)
                                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                         this.model.update(cx, |m, cx| m.fix_all(cx))
                                     }))
                             })
                         })
                         .child(
-                            pill(
+                            pill_icon(
                                 p,
                                 "recheck",
+                                IconName::RefreshCw,
                                 if model.checks_loading { "Checking…" } else { "Check again" },
                                 Kind::Secondary,
                             )
@@ -1519,7 +1520,7 @@ impl MainView {
                     .items_center()
                     .gap(px(12.))
                     .child(
-                        pill(p, "save", "Save", Kind::Primary)
+                        pill_icon(p, "save", IconName::Save, "Save", Kind::Primary)
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.save_form(cx))),
                     )
                     .when(restart, |d| {
@@ -1569,7 +1570,7 @@ impl MainView {
                                 "The service runs separately (dotlink daemon); this window only controls it."
                             }))
                             .child(
-                                pill(p, "quit", if owns { "Quit Dotlink" } else { "Close" }, Kind::Danger)
+                                pill_icon(p, "quit", IconName::Power, if owns { "Quit Dotlink" } else { "Close" }, Kind::Danger)
                                     .on_click(|_, _, cx| super::quit(cx)),
                             ),
                     ),
@@ -1606,7 +1607,15 @@ impl MainView {
             })
             .when_some(button, |r, (label, on)| {
                 r.child(enabled(
-                    pill(p, "update", label, if available { Kind::Primary } else { Kind::Ghost }).on_click(cx.listener(
+                    // Installing downloads; checking looks again.
+                    pill_icon(
+                        p,
+                        "update",
+                        if available { IconName::Download } else { IconName::RefreshCw },
+                        label,
+                        if available { Kind::Primary } else { Kind::Ghost },
+                    )
+                    .on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             this.model.update(cx, |m, cx| {
                                 if available { m.install_update(cx) } else { m.check_update(true, cx) }
@@ -1948,11 +1957,11 @@ fn transfer_row(p: &Palette, t: &Transfer) -> Div {
         .when(done_incoming, |r| {
             let open = path.clone();
             r.child(
-                pill(p, SharedString::from(format!("open-{id}")), "Open", Kind::Secondary)
+                pill_icon(p, SharedString::from(format!("open-{id}")), IconName::ExternalLink, "Open", Kind::Secondary)
                     .on_click(move |_, _, _| platform::open_path(&open)),
             )
             .child(
-                pill(p, SharedString::from(format!("show-{id}")), "Show", Kind::Ghost)
+                pill_icon(p, SharedString::from(format!("show-{id}")), IconName::Folder, "Show", Kind::Ghost)
                     .on_click(move |_, _, _| platform::show_in_folder(&path)),
             )
         })
