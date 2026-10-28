@@ -70,8 +70,8 @@ pub fn notify(title: &str, body: &str) {
 pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &crate::events::Incoming) {
     post(Notify::Show {
         tag: format!("incoming:{}", incoming.id),
-        title: format!("{} wants to send a file", incoming.from),
-        body: incoming.name.clone(),
+        title: incoming.title(),
+        body: incoming.names(),
         actions: vec![("accept", "Accept"), ("decline", "Decline")],
     });
 }

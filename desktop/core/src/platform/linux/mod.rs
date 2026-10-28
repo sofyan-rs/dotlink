@@ -42,8 +42,8 @@ pub fn notify_incoming(app: &std::sync::Arc<crate::server::App>, incoming: &crat
     tokio::spawn(async move {
         let out = tokio::process::Command::new("notify-send")
             .args(["-a", "Dotlink", "-u", "critical", "-t", "120000", "--action=accept=Accept", "--action=decline=Decline"])
-            .arg(format!("{} wants to send a file", incoming.from))
-            .arg(&incoming.name)
+            .arg(incoming.title())
+            .arg(incoming.names())
             .output()
             .await;
         match out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).as_deref() {
