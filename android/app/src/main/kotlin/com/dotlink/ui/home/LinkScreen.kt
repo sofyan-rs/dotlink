@@ -7,13 +7,14 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -39,6 +40,7 @@ import com.dotlink.ui.dotline.QuickAction
 import com.dotlink.ui.dotline.QuickActionRow
 import com.dotlink.ui.dotline.ScreenTitle
 import com.dotlink.ui.dotline.ScreenTitleAction
+import com.dotlink.ui.dotline.SecondaryButton
 import com.dotlink.ui.formatSize
 import com.dotlink.ui.theme.Dotline
 import kotlinx.coroutines.launch
@@ -177,10 +179,27 @@ fun LinkScreen(
                         TransferRow(t)
                     }
                 }
+                ClearTransfersButton(pcTransfers, onClick = { link.clearTransfers(phones = false) })
             }
         }
     }
     if (pcSheet) PcSheet(state = state, onAddPc = onAddPc, onDismissRequest = { pcSheet = false })
+}
+
+/** Under a Transfers list: empties it of what has finished. Hidden while only running ones are left. */
+@Composable
+internal fun ClearTransfersButton(
+    transfers: List<Transfer>,
+    onClick: () -> Unit,
+) {
+    if (transfers.all { it.status == Transfer.Status.Running }) return
+    SecondaryButton(
+        text = "Clear history",
+        icon = DotlineIcons.Trash,
+        compact = true,
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(top = Dotline.space.s3),
+    )
 }
 
 @Composable

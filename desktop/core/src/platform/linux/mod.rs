@@ -17,6 +17,11 @@ pub use media::{CameraHub, MicSink, find_camera};
 use super::Features;
 use std::path::Path;
 
+/// The hostname is the name the user gave this PC.
+pub fn computer_name() -> Option<String> {
+    None
+}
+
 /// The laptop's battery: (percent, on power); None on a desktop.
 pub fn battery() -> Option<(u8, bool)> {
     super::battery::from_sysfs(Path::new("/sys/class/power_supply"))

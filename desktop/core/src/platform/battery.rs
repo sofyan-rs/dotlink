@@ -38,7 +38,7 @@ pub(crate) fn from_sysfs(root: &Path) -> Option<(u8, bool)> {
 ///
 /// ```text
 /// Now drawing from 'AC Power'
-///  -InternalBattery-0 (id=4653155)	85%; charging; 1:02 remaining present: true
+///  -InternalBattery-0 (id=4653155)    85%; charging; 1:02 remaining present: true
 /// ```
 ///
 /// A Mac without a battery (mini, Studio, iMac) has no `InternalBattery` line.

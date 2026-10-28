@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -61,6 +62,9 @@ import com.dotlink.ui.theme.Dotline
 import com.dotlink.ui.theme.DotlinkTheme
 import com.dotlink.update.UpdateDialog
 import com.dotlink.update.Updater
+
+/** Screens opened from the PC tab rather than from a tab of their own. */
+private val PC_SCREENS = setOf(MainTab.Remote, MainTab.Shell)
 
 class MainActivity : ComponentActivity() {
     private val link get() = DotlinkApp.link
@@ -200,6 +204,11 @@ private fun DotlinkRoot(
                 var chosen by rememberSaveable { mutableStateOf(MainTab.Link) }
                 // A tab that isn't shown (the PC ones, with no PC) falls back to the first.
                 val tab = chosen.takeIf { it in tabs } ?: tabs.first()
+                // Remote and Shell open from the PC tab's quick actions: no tabs of their own,
+                // the PC tab stays lit, and Back returns to it.
+                val navTabs = tabs - PC_SCREENS
+                val navTab = if (tab in PC_SCREENS) MainTab.Link else tab
+                BackHandler(enabled = tab in PC_SCREENS) { chosen = MainTab.Link }
                 val screen: @Composable () -> Unit = {
                     when (tab) {
                         MainTab.Link -> LinkScreen(onOpenTab = { chosen = it }, onAddPc = { addingPc = true })
@@ -214,7 +223,7 @@ private fun DotlinkRoot(
                 if (rail) {
                     // The rail stays with the keyboard open: it takes width, not height.
                     Row(Modifier.fillMaxSize()) {
-                        NavRail(tabs = tabs, selectedTab = tab, onTabClick = { chosen = it })
+                        NavRail(tabs = navTabs, selectedTab = navTab, onTabClick = { chosen = it })
                         Box(Modifier.weight(1f).fillMaxHeight()) { screen() }
                     }
                 } else {
@@ -223,8 +232,8 @@ private fun DotlinkRoot(
                 // The keyboard needs the room in Remote and Shell; the tabs come back when it closes.
                 if (!rail && !WindowInsets.isImeVisible) {
                     BottomNav(
-                        tabs = tabs,
-                        selectedTab = tab,
+                        tabs = navTabs,
+                        selectedTab = navTab,
                         onTabClick = { chosen = it },
                         modifier = Modifier.align(Alignment.BottomCenter),
                     )

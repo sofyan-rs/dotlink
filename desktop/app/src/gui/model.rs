@@ -692,6 +692,22 @@ impl Model {
         .detach();
     }
 
+    /// Activity → Clear: the finished and failed transfers go; waiting and running ones stay.
+    pub fn clear_transfers(&mut self, cx: &mut Context<Self>) {
+        let call = self.client.clear_transfers();
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| {
+                if let Err(e) = result {
+                    this.notice(capitalize(&format!("{e:#}")), true, cx);
+                }
+                this.refresh(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Accept or Decline for a file waiting on it ("Ask before receiving files").
     pub fn answer_incoming(&mut self, id: String, accept: bool, cx: &mut Context<Self>) {
         let call = self.client.answer_incoming(&id, accept);

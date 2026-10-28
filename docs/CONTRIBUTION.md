@@ -56,11 +56,16 @@ cargo install cargo-packager cargo-generate-rpm
 cd desktop/app
 NO_STRIP=1 cargo packager --release -f deb,appimage   # Linux: target/packages/
 cargo packager --release -f nsis                      # Windows: target/packages/*-setup.exe
+cargo packager --release -f app                       # macOS: target/packages/Dotlink.app
 cd .. && cargo build --release -p dotlink && cargo generate-rpm -p app   # target/generate-rpm/
 ```
 
-The Windows icon (`app/assets/dotlink.ico`) is drawn by `scripts/make-windows-icon.py`.
-`.github/workflows/release.yml` builds every package; run it by hand to get them as artifacts.
+The Windows icon (`app/assets/dotlink.ico`) is drawn by `scripts/make-windows-icon.py`, the
+macOS one (`app/assets/dotlink.icns`) by `scripts/make-macos-icon.py`.
+`.github/workflows/release.yml` builds every package (on macOS a universal .app, signed ad hoc,
+in a .dmg); run it by hand to get them as artifacts. The first `cargo packager` on a machine
+runs `cargo metadata`, which downloads every platform's crates, some large: run `cargo fetch`
+first on a slow connection (it resumes).
 
 ### Releasing
 
@@ -158,15 +163,26 @@ cargo run -p dotlink
   so new messages must be optional.
 - **New thing the window shows:** expose it through `App::status()` and, if it changes,
   an `events::Event`; the window refreshes on events.
-- **New system requirement:** a check in `platform/<os>/setup.rs`, fixable when it can be
-  installed or set up with one root command (Linux) or one UAC prompt (Windows).
+- **New system requirement:** a check in `platform/<os>/setup.rs` (macOS: the `setup` module in
+  `platform/macos/mod.rs`), fixable when it can be installed or set up with one root command
+  (Linux), one UAC prompt (Windows) or one administrator prompt (macOS).
 
 ## Windows and macOS
 
 `core/src/platform/windows` is complete for Windows 11 and tested with a phone (see
-[PLATFORM_FEATURES.md](PLATFORM_FEATURES.md)). The `macos` stubs were written on Linux and have
-not been compiled there yet. [PORTING.md](PORTING.md) has the plan: the order of work, the APIs to use for each
-platform item, packaging and signing, and a checklist per OS.
+[PLATFORM_FEATURES.md](PLATFORM_FEATURES.md)). macOS builds and runs, with the Remote, the menu
+bar and notifications; [MACOS_PLAN.md](MACOS_PLAN.md) is its plan and status, [PORTING.md](PORTING.md)
+the APIs to use for each platform item, packaging and signing.
+
+On macOS, `cargo run -p dotlink` needs only the Xcode Command Line Tools. Some things only work
+from an app bundle: notifications, the Local Network prompt (from Terminal the app gets
+Terminal's), and the permissions in System Settings, which macOS grants per app. To test them,
+build the bundle (`cd app && cargo packager --release -f app`), put it in `~/Applications`
+(from `/tmp` notifications are refused without asking) and sign it with a stable identity,
+`codesign --force --deep -s "Apple Development: …" ~/Applications/Dotlink.app`: an unsigned
+build loses Accessibility on every rebuild. From `cargo run`, Accessibility goes to the
+terminal app. `RUST_LOG=info,gpui_macos=debug` shows GPUI's own warnings (refused
+notifications, for one), which the default log filter hides.
 
 ## Commits
 

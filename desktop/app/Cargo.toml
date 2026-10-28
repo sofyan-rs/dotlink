@@ -30,7 +30,7 @@ gpui-component = { version = "0.8.0", optional = true }
 gpui-kit-assets = { version = "0.8.0", optional = true }
 
 # Tray icon. Linux: StatusNotifierItem over D-Bus (KDE, Waybar, GNOME with AppIndicator).
-# Windows: `tray-icon` below. TODO(macos): `tray-icon` there too (menu bar item).
+# Windows and macOS: `tray-icon` below (the notification area, the menu bar).
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.7", optional = true }
 # The desktop's light/dark setting, read again when gpui's one try at login came too early.
@@ -42,6 +42,10 @@ gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9", optional = 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
 # Tray icon in the notification area.
+tray-icon = { version = "0.21", optional = true }
+
+# Menu bar item (NSStatusItem), the same crate as the Windows tray.
+[target.'cfg(target_os = "macos")'.dependencies]
 tray-icon = { version = "0.21", optional = true }
 
 [target.'cfg(windows)'.build-dependencies]
@@ -60,7 +64,7 @@ category = "Utility"
 before-packaging-command = "cargo build --release -p dotlink -p dotlink-camera"
 out-dir = "../target/packages"
 binaries = [{ path = "dotlink", main = true }]
-icons = ["assets/icons/*.png", "assets/dotlink.ico"]
+icons = ["assets/icons/*.png", "assets/dotlink.ico", "assets/dotlink.icns"]
 # Windows: the camera DLL next to dotlink.exe (Setup installs it for the frame server). The
 # pattern matches nothing on Linux.
 resources = ["../target/release/dotlink_camera.dll"]
@@ -71,7 +75,13 @@ depends = ["libxkbcommon-x11-0", "libnotify-bin", "pipewire-bin", "ffmpeg"]
 # the window to it.
 desktop-template = "assets/dev.dotlink.Dotlink.desktop"
 
-# TODO(macos): signing-identity, notarization, minimum-system-version; an .icns from assets/icons.
+# macOS: `cargo packager --release -f app,dmg`. The icon is assets/dotlink.icns
+# (scripts/make-macos-icon.py). Signing: APPLE_SIGNING_IDENTITY (Developer ID for releases);
+# without it the .app is unsigned. TODO(macos): notarization in CI.
+[package.metadata.packager.macos]
+minimum-system-version = "13.0"
+info-plist-path = "assets/macos/Info.plist"
+
 # Windows: `cargo packager --release -f nsis` (NSIS is downloaded by cargo-packager). A per-user
 # install, no admin; Setup adds the firewall rule and the camera with one UAC prompt each.
 # TODO(windows): Authenticode signing (`[package.metadata.packager.windows]` signing-command).

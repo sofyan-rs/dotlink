@@ -79,6 +79,12 @@ windows-sys = { version = "0.61.2", features = [
 cpal = "0.18.2"
 zune-jpeg = "0.5.15"
 
-# TODO(windows, macos): native notifications. notify-rust covers both.
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-notify-rust = "4.18.2"
+[target.'cfg(target_os = "macos")'.dependencies]
+# confstr (the per-user temp folder), proc_name (Shell tab titles, the log's parent process).
+libc = "0.2"
+# The phone mic, played into BlackHole (shared with Windows: platform/cpal_sink.rs).
+cpal = "0.18.2"
+
+# Windows toasts. (macOS: the app posts them through GPUI, platform/macos/mod.rs.)
+[target.'cfg(windows)'.dependencies.notify-rust]
+version = "4.18.2"

@@ -9,9 +9,10 @@
 //!
 //! The icon is the logo's dots alone, in one colour, like the system's own tray icons: the
 //! panel recolours it where it can (Linux, a symbolic SVG), or it is drawn white on a dark
-//! taskbar and black on a light one (Windows).
+//! taskbar and black on a light one (Windows), or a template image (macOS).
 //!
-//! TODO(macos): `tray-icon` as a menu bar item, with a template image ([glyph] in black).
+//! macOS: a menu bar item through `tray-icon`, created once GPUI has started NSApplication. Its
+//! picture is a template image, which the menu bar draws in its own colour.
 
 use futures::channel::mpsc::UnboundedSender;
 
@@ -25,13 +26,11 @@ pub enum TrayAction {
     Quit,
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 /// The logo's dots on its 5×5 grid (column, row), as in assets/dotlink.svg; the red one is
 /// (2, 2), plain here.
 const DOTS: [(u8, u8); 15] =
     [(0, 0), (1, 0), (2, 0), (0, 1), (2, 1), (0, 2), (1, 2), (2, 2), (3, 2), (4, 2), (2, 3), (4, 3), (2, 4), (3, 4), (4, 4)];
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 /// The dots in one colour on a transparent square of `size` pixels, as RGBA. In the logo a dot's
 /// diameter is 3/4 of the grid step. The grid takes 3/4 of the square, like the padding of
 /// other tray icons; edge to edge it looked too big next to them.
@@ -135,19 +134,21 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
     }
 }
 
-/// Call on the main thread (`block_on` before GPUI starts runs it there).
-#[cfg(windows)]
+/// Call on the main thread: Windows, `block_on` before GPUI starts; macOS, inside GPUI's `run`
+/// (the status item needs the NSApplication GPUI makes).
+#[cfg(any(windows, target_os = "macos"))]
 pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
+    use tray_icon::TrayIconBuilder;
     use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-    use tray_icon::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
+    let quit = if cfg!(target_os = "macos") { "Quit Dotlink" } else { "Quit" };
     let items = [
         ("open", "Open Dotlink", TrayAction::Open),
         ("send_files", "Send files…", TrayAction::SendFiles),
         ("send_clipboard", "Send clipboard", TrayAction::SendClipboard),
         ("cast", "Cast screen", TrayAction::Cast),
         ("pair", "Pair…", TrayAction::Pair),
-        ("quit", "Quit", TrayAction::Quit),
+        ("quit", quit, TrayAction::Quit),
     ];
     let item = |i: usize| MenuItem::with_id(items[i].0, items[i].1, true, None);
     let separator = PredefinedMenuItem::separator();
@@ -167,8 +168,13 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
         return false;
     }
 
+    #[cfg(windows)]
     let light = dotlink_core::platform::taskbar_is_light();
-    let Some(icon) = taskbar_icon(light) else {
+    #[cfg(windows)]
+    let icon = taskbar_icon(light);
+    #[cfg(target_os = "macos")]
+    let icon = menu_bar_icon();
+    let Some(icon) = icon else {
         tracing::warn!("no tray icon: couldn't make its picture");
         return false;
     };
@@ -179,24 +185,35 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
             let _ = menu_actions.unbounded_send(*action);
         }
     }));
-    // Left click opens the window; the menu is on the right click.
-    TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
-        if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-            let _ = actions.unbounded_send(TrayAction::Open);
-        }
-    }));
 
-    match TrayIconBuilder::new()
-        .with_tooltip("Dotlink")
-        .with_icon(icon)
-        .with_menu(Box::new(menu))
-        .with_menu_on_left_click(false)
-        .build()
-    {
+    let builder = TrayIconBuilder::new().with_tooltip("Dotlink").with_icon(icon).with_menu(Box::new(menu));
+    // Windows: left click opens the window; the menu is on the right click. macOS: any click
+    // opens the menu, as with every other menu bar item.
+    #[cfg(windows)]
+    let builder = {
+        use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
+        TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                let _ = actions.unbounded_send(TrayAction::Open);
+            }
+        }));
+        builder.with_menu_on_left_click(false)
+    };
+    #[cfg(target_os = "macos")]
+    let builder = {
+        drop(actions);
+        builder.with_icon_as_template(true)
+    };
+
+    match builder.build() {
         Ok(tray) => {
             // Removed from the notification area when dropped: kept for the app's lifetime, on
             // this (the main) thread, where follow_taskbar_theme recolours it.
+            #[cfg(windows)]
             TRAY.with(|t| *t.borrow_mut() = Some((tray, light)));
+            // Removed from the menu bar when dropped; it lives as long as the app.
+            #[cfg(target_os = "macos")]
+            std::mem::forget(tray);
             true
         }
         Err(e) => {
@@ -204,6 +221,13 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
             false
         }
     }
+}
+
+/// The dots in black on transparent, for a template image: 44 px is the menu bar's 22 pt at
+/// @2x, scaled down on @1x displays.
+#[cfg(target_os = "macos")]
+fn menu_bar_icon() -> Option<tray_icon::Icon> {
+    tray_icon::Icon::from_rgba(glyph(44, [0, 0, 0]), 44, 44).ok()
 }
 
 // The tray icon and whether it's drawn for a light taskbar.
@@ -242,7 +266,7 @@ pub fn follow_taskbar_theme(cx: &mut gpui::App) {
     .detach();
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 pub async fn start(_actions: UnboundedSender<TrayAction>) -> bool {
     false
 }

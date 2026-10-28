@@ -519,14 +519,18 @@ class Link(
         }
     }
 
-    /** First reachable address: the USB cable, the last good one, the ones from pairing, then mDNS. */
+    /**
+     * First reachable address: the USB cable, the last good one, the ones from pairing, mDNS,
+     * then the PC's port on the phone's own networks (a PC on this phone's hotspot, which mDNS
+     * doesn't reach). Each is checked with the pinned certificate; [ping] keeps the one found.
+     */
     private suspend fun resolveHost(): String? {
         val candidates = (listOf(USB_HOST) + listOfNotNull(prefs.lastHost) + prefs.hosts).distinct()
         for (h in candidates) if (ping(h)) return h
-        val found = Discovery.find(app, prefs.serverId) ?: return null
-        if (!ping(found)) return null
-        prefs.lastHost = found
-        return found
+        val found = Discovery.find(app, prefs.serverId)
+        if (found != null && ping(found)) return found
+        for (h in Discovery.scan(prefs.port)) if (h !in candidates && ping(h)) return h
+        return null
     }
 
     private fun ping(host: String): Boolean =
@@ -771,6 +775,14 @@ class Link(
         accept: Boolean,
     ) {
         asks.remove(id)?.complete(accept)
+    }
+
+    /**
+     * Empties the Transfers list of the PC ([phones] false) or of the phones: the finished and
+     * failed ones. Running ones stay, so their progress keeps showing.
+     */
+    fun clearTransfers(phones: Boolean) {
+        transfers.update { list -> list.filter { it.status == Transfer.Status.Running || (it.phone != null) != phones } }
     }
 
     /** A transfer for the list (and the progress notification). */

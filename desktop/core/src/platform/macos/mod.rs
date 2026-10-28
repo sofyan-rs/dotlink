@@ -1,27 +1,30 @@
-//! macOS. Files, clipboard, notifications and pairing should work as is; the rest are stubs.
-//! Written on Linux and not compiled for this OS yet: expect small fixes on the first build.
+//! macOS. Everything works; the webcam goes through OBS (camera.rs) and the mic through
+//! BlackHole (media.rs). Notifications are posted by the app, see [Notify].
 //!
 //! TODO(macos), roughly in order of value:
-//! - [ ] `Input`: CGEventCreateMouseEvent / CGEventCreateScrollWheelEvent2 /
-//!       CGEventCreateKeyboardEvent (`core-graphics` crate, or `enigo`). Needs the
-//!       Accessibility permission: `setup` should check AXIsProcessTrusted() and open
-//!       System Settings → Privacy & Security → Accessibility.
-//! - [ ] `process_name`: shell tab titles (`proc_name` from libproc for the foreground pid).
-//! - [ ] `autostart`: a LaunchAgent plist in ~/Library/LaunchAgents running
-//!       "<app>/Contents/MacOS/dotlink --background" (or SMAppService on macOS 13+).
 //! - [ ] `setup`: Local Network permission (macOS 15+) is asked on first mDNS use; the app
-//!       firewall asks on first listen. Explain both in the Setup screen.
-//! - [ ] `CameraHub`: a CoreMediaIO Camera Extension (system extension inside the .app,
-//!       needs a signed + notarized build); the app feeds it frames over its sink stream.
-//! - [ ] `MicSink`: an AudioServerPlugIn driver (like BlackHole) installed by the .pkg, fed
-//!       over shared memory; or ask the user to install BlackHole and play into it.
+//!   firewall asks on first listen. Explain both in the Setup screen.
 
 pub(crate) use super::polling_clipboard as clipboard;
 
+pub mod autostart;
+mod camera;
+mod input;
+mod media;
+pub use camera::{CameraHub, camera_url, find_camera};
+pub use input::Input;
+pub use media::MicSink;
+
 use super::{Check, Features};
-use crate::input::InputMsg;
-use anyhow::{Result, bail};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+/// "MacBook Air", as set in System Settings → General → Sharing. The hostname often isn't it:
+/// a Mac on DHCP may get its IP address (192.168.1.3) as hostname.
+pub fn computer_name() -> Option<String> {
+    let out = std::process::Command::new("scutil").args(["--get", "ComputerName"]).output().ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !name.is_empty()).then_some(name)
+}
 
 /// The MacBook's battery: (percent, on power); None on a Mac without one.
 pub fn battery() -> Option<(u8, bool)> {
@@ -30,27 +33,67 @@ pub fn battery() -> Option<(u8, bool)> {
 }
 
 pub fn features() -> Features {
-    Features { clipboard: true, remote: false, camera: false, mic: false, shell: true }
+    Features { clipboard: true, remote: true, camera: true, mic: true, shell: true }
+}
+
+/// What the app's window process posts to Notification Center (GPUI's notifications, which
+/// have buttons). The service runs in that process; a headless `dotlink daemon` only logs.
+#[derive(Debug, Clone)]
+pub enum Notify {
+    /// `tag` says what it's about and what its buttons do: `file:<path>` (Open, Show in
+    /// Finder), `incoming:<id>` (Accept, Decline), anything else (click opens Dotlink).
+    Show { tag: String, title: String, body: String, actions: Vec<(&'static str, &'static str)> },
+    Dismiss { tag: String },
+}
+
+static NOTIFIER: std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<Notify>>> = std::sync::Mutex::new(None);
+
+/// Called by the app once its window side runs; notifications go there from then on.
+pub fn set_notifier(tx: tokio::sync::mpsc::UnboundedSender<Notify>) {
+    *NOTIFIER.lock().unwrap() = Some(tx);
+}
+
+fn post(n: Notify) {
+    let sent = NOTIFIER.lock().unwrap().as_ref().is_some_and(|tx| tx.send(n.clone()).is_ok());
+    if !sent && let Notify::Show { title, body, .. } = n {
+        tracing::info!("notification (no window process to show it): {title}: {body}");
+    }
 }
 
 pub fn notify(title: &str, body: &str) {
-    let _ = notify_rust::Notification::new().appname("Dotlink").summary(title).body(body).show();
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    post(Notify::Show { tag: format!("note:{n}"), title: title.into(), body: body.into(), actions: Vec::new() });
 }
 
-/// TODO(macos): Accept / Decline buttons (UNUserNotificationCenter); the window asks meanwhile.
+/// "X wants to send …" with Accept / Decline (`App::answer_incoming` through the app).
 pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &crate::events::Incoming) {
-    notify(&format!("{} wants to send a file", incoming.from), &format!("{}: Accept or Decline in Dotlink", incoming.name));
+    post(Notify::Show {
+        tag: format!("incoming:{}", incoming.id),
+        title: format!("{} wants to send a file", incoming.from),
+        body: incoming.name.clone(),
+        actions: vec![("accept", "Accept"), ("decline", "Decline")],
+    });
 }
 
-pub fn dismiss_incoming(_id: &str) {}
+pub fn dismiss_incoming(id: &str) {
+    post(Notify::Dismiss { tag: format!("incoming:{id}") });
+}
 
-/// TODO(macos): the parent's name (proc_pidinfo); only for the log.
+/// The parent's name, for the log.
 pub fn parent_process() -> Option<String> {
-    None
+    // SAFETY: getppid can't fail.
+    process_name(unsafe { libc::getppid() } as u32)
 }
 
-pub fn notify_file(from: &str, name: &str, _path: &Path) {
-    notify(&format!("Received from {from}"), name);
+/// "Received from …" with Open / Show in Finder.
+pub fn notify_file(from: &str, name: &str, path: &Path) {
+    post(Notify::Show {
+        tag: format!("file:{}", path.display()),
+        title: format!("Received from {from}"),
+        body: name.into(),
+        actions: vec![("open", "Open"), ("reveal", "Show in Finder")],
+    });
 }
 
 pub fn open_path(path: &Path) {
@@ -65,45 +108,20 @@ pub fn default_shell() -> (String, Vec<String>) {
     (std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()), vec!["-l".into()])
 }
 
-pub fn process_name(_pid: u32) -> Option<String> {
-    None
-}
-
-pub struct Input;
-
-impl Input {
-    pub fn new() -> Result<Self> {
-        bail!("remote control is not supported on macOS yet")
+/// The program's name ("zsh", "nvim"), as Activity Monitor shows it.
+pub fn process_name(pid: u32) -> Option<String> {
+    // proc_name truncates to MAXCOMLEN (16) bytes; 2 × that is what it accepts at most.
+    let mut buf = [0u8; 2 * 16];
+    // SAFETY: proc_name writes at most `buf.len()` bytes and returns how many it wrote.
+    let n = unsafe { libc::proc_name(pid as libc::c_int, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    if n > 0 {
+        return Some(String::from_utf8_lossy(&buf[..n as usize]).into_owned());
     }
-
-    pub fn handle(&mut self, _msg: InputMsg) -> Result<()> {
-        Ok(())
-    }
-}
-
-pub fn find_camera(_configured: &str) -> Result<PathBuf> {
-    bail!("the phone camera as a webcam is not supported on macOS yet")
-}
-
-#[derive(Clone)]
-pub struct CameraHub;
-
-impl CameraHub {
-    pub fn start(_configured_device: String, _size: (u32, u32)) -> Self {
-        Self
-    }
-
-    pub fn send(&self, _jpeg: axum::body::Bytes) {}
-}
-
-pub struct MicSink;
-
-impl MicSink {
-    pub fn start(_rate: u32, _channels: u32) -> Result<Self> {
-        bail!("the phone mic is not supported on macOS yet")
-    }
-
-    pub fn write(&mut self, _pcm: axum::body::Bytes) {}
+    // proc_name only reads this user's processes; `top` and `sudo` run as root (setuid). ps
+    // reads any process's name (through sysctl).
+    let out = std::process::Command::new("/bin/ps").args(["-c", "-o", "comm=", "-p", &pid.to_string()]).output().ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !name.is_empty()).then_some(name)
 }
 
 /// TODO(macos): a Finder Share extension or a Quick Action.
@@ -111,36 +129,114 @@ pub mod share_menu {
     pub fn set(_phones: &[(String, String)]) {}
 }
 
-pub mod autostart {
-    use anyhow::{Result, bail};
-
-    pub fn enabled() -> bool {
-        false
-    }
-
-    pub fn set(_on: bool) -> Result<()> {
-        bail!("start at login is not supported on macOS yet")
-    }
-
-    pub fn wm_hint() -> Option<String> {
-        None
-    }
-}
-
 pub mod setup {
     use super::Check;
     use anyhow::{Result, bail};
 
+    const ACCESSIBILITY_SETTINGS: &str =
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+
     pub fn checks(_port: u16) -> Vec<Check> {
-        Vec::new()
+        let mut out = Vec::new();
+
+        let trusted = super::input::trusted();
+        out.push(Check {
+            id: "accessibility".into(),
+            feature: "Remote".into(),
+            title: "Accessibility permission".into(),
+            ok: trusted,
+            detail: if trusted {
+                String::new()
+            } else {
+                "macOS lets Dotlink move the pointer and type only with it. Fix opens System Settings: turn \
+                 Dotlink on (from a terminal, the terminal app)."
+                    .into()
+            },
+            fixable: !trusted,
+        });
+
+        // Webcam: OBS reads the phone's frames and is the camera apps see.
+        let obs = super::camera::obs_installed();
+        out.push(Check {
+            id: "obs".into(),
+            feature: "Webcam".into(),
+            title: "OBS Studio".into(),
+            ok: obs,
+            detail: if obs {
+                "In OBS: add a Browser source, paste the camera link (Phones → Webcam → Copy OBS link) as \
+                 its URL, 1280 × 720. Then Start Virtual Camera; apps pick \"OBS Virtual Camera\"."
+                    .into()
+            } else {
+                "macOS only lets signed camera drivers in, so the phone camera goes through OBS's virtual \
+                 camera. Fix opens OBS's download page."
+                    .into()
+            },
+            fixable: !obs,
+        });
+
+        // Microphone: BlackHole provides the device apps record from.
+        let blackhole = super::media::find_blackhole();
+        out.push(Check {
+            id: "blackhole".into(),
+            feature: "Microphone".into(),
+            title: "BlackHole audio driver".into(),
+            ok: blackhole.is_some(),
+            detail: match &blackhole {
+                Some((_, name)) => format!("In your app, pick \"{name}\" as the microphone."),
+                None => "The phone mic plays into it, and apps use it as their microphone. Fix downloads and \
+                         installs it (asks for your password); then restart Dotlink."
+                    .into(),
+            },
+            fixable: blackhole.is_none(),
+        });
+
+        // Cast. The scrcpy download includes adb; Cast also downloads it on first use.
+        let downloadable = crate::cast::can_install();
+        for (id, title) in [("adb", "adb (Android platform tools)"), ("scrcpy", "scrcpy")] {
+            let ok = crate::cast::find_tool(id).is_some();
+            out.push(Check {
+                id: id.into(),
+                feature: "Cast".into(),
+                title: title.into(),
+                ok,
+                detail: if ok {
+                    String::new()
+                } else if downloadable {
+                    "Fix downloads scrcpy with adb (from GitHub). Or install: brew install scrcpy".into()
+                } else {
+                    "Install: brew install scrcpy".into()
+                },
+                fixable: !ok && downloadable,
+            });
+        }
+        out
     }
 
     pub async fn fix(id: &str, _port: u16) -> Result<()> {
-        bail!("nothing to fix for \"{id}\"")
+        match id {
+            "accessibility" => {
+                // The prompt adds Dotlink to the list; the switch is the user's to turn on.
+                if !super::input::ask_trust() {
+                    super::open_path(std::path::Path::new(ACCESSIBILITY_SETTINGS));
+                }
+                Ok(())
+            }
+            "adb" | "scrcpy" => crate::cast::install().await,
+            "blackhole" => super::media::install_blackhole().await,
+            "obs" => {
+                super::open_path(std::path::Path::new(super::camera::obs_download_url()));
+                Ok(())
+            }
+            _ => bail!("nothing to fix for \"{id}\""),
+        }
     }
 
     pub async fn fix_many(ids: &[String], port: u16) -> Result<()> {
-        for id in ids {
+        // One download covers both.
+        if ids.iter().any(|id| id == "adb" || id == "scrcpy") {
+            crate::cast::install().await?;
+        }
+        for id in ids.iter().filter(|id| *id != "adb" && *id != "scrcpy") {
             fix(id, port).await?;
         }
         Ok(())

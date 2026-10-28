@@ -1,10 +1,12 @@
 # Porting the desktop app to Windows and macOS
 
 Linux is complete and is the reference. **Windows 11 is done**: every step below, tested with
-a phone; what's left there is code signing and running CI. The macOS module was written on
-Linux and **has never been compiled there**. This page is the plan:
-what already works in principle, what each OS still needs, in which order, and how to test
-it. [ARCHITECTURE.md](ARCHITECTURE.md) explains the pieces; this page assumes it.
+a phone; what's left there is code signing and running CI. **macOS is done too** (tested on a
+MacBook Air M1 with macOS 15.8), with the webcam through OBS and the mic through BlackHole;
+without an Apple Developer ID the app is signed ad hoc and has no Camera Extension of its own.
+[MACOS_PLAN.md](MACOS_PLAN.md) is the macOS work in detail and what's left. This page is the
+plan both followed: what each OS needs, in which order, and how to test it.
+[ARCHITECTURE.md](ARCHITECTURE.md) explains the pieces; this page assumes it.
 
 The Android app needs no changes: it already reads the PC's OS from `hello` (`os`:
 `"linux"`, `"windows"`, `"macos"`) and labels the Remote's modifier keys by it
@@ -14,21 +16,21 @@ The Android app needs no changes: it already reads the PC's OS from `hello` (`os
 
 | Piece | Where | Windows | macOS |
 |---|---|---|---|
-| Service, pairing, files, mDNS, TLS | `core/src/server.rs`, `service.rs` | done, tested with a phone | portable, untested |
-| Control socket (CLI ↔ service ↔ window) | `core/src/ipc.rs` | named pipe `dotlink-<SID>`, user-only ACL | Unix socket in `$TMPDIR` |
-| Shell | `core/src/term.rs` (portable-pty) | ConPTY + `pwsh.exe` or `powershell.exe` | login shell |
+| Service, pairing, files, mDNS, TLS | `core/src/server.rs`, `service.rs` | done, tested with a phone | done, tested with a phone |
+| Control socket (CLI ↔ service ↔ window) | `core/src/ipc.rs` | named pipe `dotlink-<SID>`, user-only ACL | Unix socket in the per-user temp folder (`confstr`) |
+| Shell | `core/src/term.rs` (portable-pty) | ConPTY + `pwsh.exe` or `powershell.exe` | login shell; tab titles from `proc_name` |
 | Clipboard | `platform/polling_clipboard.rs` (arboard, 500 ms poll) | works | works |
-| Notifications | `notify-rust` | toasts under `dev.dotlink.Dotlink` (registered in HKCU), Open / Show in folder | text only, no buttons |
+| Notifications | `notify-rust` (Windows), GPUI (macOS) | toasts under `dev.dotlink.Dotlink` (registered in HKCU), Open / Show in folder | posted by the app through GPUI: Accept / Decline, Open / Show in Finder |
 | Open file / Show in folder | `platform/{windows,macos}/mod.rs` | `explorer` | `open`, `open -R` |
-| Window | `app/src/gui/` (GPUI) | done (icon embedded by `app/build.rs`) | Cargo features gated, untested |
-| Tray | `app/src/gui/tray.rs` | done (`tray-icon`) | **TODO** (menu bar) |
-| Remote (mouse + keyboard) | `Input` | done (SendInput) | **TODO** (CGEvent + Accessibility) |
-| Start at login | `autostart` | done (Run key, honours Task Manager) | **TODO** (SMAppService / LaunchAgent) |
-| Setup checks | `setup` | done (firewall rule, Public network, input, camera, VB-CABLE, adb/scrcpy, notifications) | **TODO** (Accessibility, Local Network) |
-| Cast (scrcpy) | `core/src/cast.rs` | done (.zip download, SDK adb) | download works (tar.gz) |
-| Webcam | `CameraHub` | done (Windows 11 virtual camera, `desktop/camera` DLL) | **TODO**: Camera Extension |
-| Microphone | `MicSink` | done (plays into VB-CABLE through WASAPI) | **TODO**: virtual audio device |
-| Installer | `app/Cargo.toml` packager section | done (NSIS setup .exe, per user; not signed yet) | **TODO**: signed .app in .dmg |
+| Window | `app/src/gui/` (GPUI) | done (icon embedded by `app/build.rs`) | done: app menu, Dock icon while the window is open (`gui/mac.rs`) |
+| Tray | `app/src/gui/tray.rs` | done (`tray-icon`) | done: menu bar item (`tray-icon`, template image) |
+| Remote (mouse + keyboard) | `Input` | done (SendInput) | done (CGEvent, Accessibility) |
+| Start at login | `autostart` | done (Run key, honours Task Manager) | done (LaunchAgent; not yet tested across a logout) |
+| Setup checks | `setup` | done (firewall rule, Public network, input, camera, VB-CABLE, adb/scrcpy, notifications) | done (Accessibility, OBS, BlackHole, adb/scrcpy) |
+| Cast (scrcpy) | `core/src/cast.rs` | done (.zip download, SDK adb) | done (tar.gz download, Homebrew's and the SDK's adb) |
+| Webcam | `CameraHub` | done (Windows 11 virtual camera, `desktop/camera` DLL) | through OBS (a stream OBS shows; a Camera Extension needs a Developer ID) |
+| Microphone | `MicSink` | done (plays into VB-CABLE through WASAPI) | done (plays into BlackHole through CoreAudio) |
+| Installer | `app/Cargo.toml` packager section | done (NSIS setup .exe, per user; not signed yet) | universal .app in a .dmg, signed ad hoc, built by the release workflow |
 
 `platform::features()` tells the window what to show. Each OS starts with `remote`,
 `camera` and `mic` set to `false`; turn a flag on in the same commit that makes the feature
@@ -52,8 +54,9 @@ Each step leaves a usable app, so it can ship after any of them.
 
 ## Step 1: building and CI
 
-There is no CI yet. Add `.github/workflows/desktop.yml` with a matrix of `ubuntu-latest`,
-`windows-latest` and `macos-latest` (Apple Silicon) running, in `desktop/`:
+`.github/workflows/desktop.yml` (not run yet: it runs on pull requests and on `main`) has a
+matrix of `ubuntu-latest`, `windows-latest` and `macos-latest` (Apple Silicon) running, in
+`desktop/`:
 
 ```sh
 cargo build -p dotlink
@@ -186,9 +189,10 @@ the `tray-icon` crate there too (with `muda` for the menu) and send the same `Tr
 - Windows shows toasts under the app's **AppUserModelID**. An unregistered exe shows up as
   "PowerShell" or not at all. The installer's Start-menu shortcut should carry
   `System.AppUserModel.ID = dev.dotlink.Dotlink`; call `.app_id("dev.dotlink.Dotlink")`.
-- macOS shows notifications only from a bundled, signed app with a bundle id; from
-  `cargo run` they appear as Terminal/Script Editor. Call
-  `notify_rust::set_application("dev.dotlink.Dotlink")` once at startup.
+- macOS shows notifications only from an app bundle, and refuses them (without asking) while
+  that bundle runs from `/tmp`. notify-rust's macOS backend never got them through: Dotlink
+  posts them from the app with GPUI (UNUserNotificationCenter), and registers its response
+  handler after `gpui_component::init`, which would replace it (MACOS_PLAN.md, Phase 3).
 - `notify_file` should get **Open** / **Show in folder** buttons like Linux. Windows: a toast
   built from XML through the `windows` crate (`Windows.UI.Notifications`) whose buttons are
   `dotlink:` links (protocol activation, `dotlink url`); an in-process click handler stops
@@ -367,20 +371,20 @@ the dependency.
 
 | | Windows | macOS |
 |---|---|---|
-| CI builds and tests on this OS | workflow written, not run yet | |
-| `cargo build -p dotlink` and `--no-default-features` without warnings | ✅ | |
-| Control socket private to the user (Windows ACL) | ✅ | |
-| Pair, files both ways, clipboard both ways, Shell (incl. tab titles) | ✅ | |
-| Graceful quit (tray, Settings, `dotlink quit`, OS shutdown) | ✅ | |
-| Tray / menu bar with every `TrayAction` | ✅ | |
-| App icon in the window, taskbar / Dock, notifications | ✅ | |
-| Notifications under Dotlink's name, Open / Show in folder on received files | ✅ | |
-| Start at login (`--background`) | ✅ | |
-| Setup checks and fixes for this OS | ✅ | |
-| Remote: move, click, drag, scroll, keys, combos, text | ✅ | |
-| Cast: download scrcpy, USB and Wi-Fi | ✅ | |
-| Link over a USB cable | ✅ | |
-| Installer, signed (and notarized on macOS) | ✅ installer, not signed | |
-| Webcam | ✅ (Windows 11) | |
-| Microphone | ✅ (VB-CABLE) | |
-| README platform table and ARCHITECTURE updated, `features()` flags on | ✅ | |
+| CI builds and tests on this OS | release workflow ✅; `desktop.yml` not run yet | release workflow ✅ (universal .dmg); `desktop.yml` not run yet |
+| `cargo build -p dotlink` and `--no-default-features` without warnings | ✅ | ✅ |
+| Control socket private to the user (Windows ACL) | ✅ | ✅ (per-user temp folder) |
+| Pair, files both ways, clipboard both ways, Shell (incl. tab titles) | ✅ | ✅ |
+| Graceful quit (tray, Settings, `dotlink quit`, OS shutdown) | ✅ | ✅ `dotlink quit`, ⌘Q |
+| Tray / menu bar with every `TrayAction` | ✅ | ✅ |
+| App icon in the window, taskbar / Dock, notifications | ✅ | ✅ |
+| Notifications under Dotlink's name, Open / Show in folder on received files | ✅ | ✅ (from the .app) |
+| Start at login (`--background`) | ✅ | 🟡 not tested across a logout |
+| Setup checks and fixes for this OS | ✅ | ✅ |
+| Remote: move, click, drag, scroll, keys, combos, text | ✅ | ✅ |
+| Cast: download scrcpy, USB and Wi-Fi | ✅ | ✅ (with Homebrew's scrcpy) |
+| Link over a USB cable | ✅ | ✅ |
+| Installer, signed (and notarized on macOS) | ✅ installer, not signed | ✅ universal .dmg from CI, signed ad hoc (no Developer ID, so not notarized) |
+| Webcam | ✅ (Windows 11) | ✅ (through OBS) |
+| Microphone | ✅ (VB-CABLE) | ✅ (BlackHole) |
+| README platform table and ARCHITECTURE updated, `features()` flags on | ✅ | ✅ |

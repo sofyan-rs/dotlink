@@ -39,12 +39,17 @@ desktop/                 Rust workspace
                          notify-send, XDG/Hyprland autostart, Setup checks + fixes
       windows/           complete (Windows 11): SendInput, Run-key autostart, toasts,
                          virtual camera, VB-CABLE mic, Setup checks + UAC fixes
-      macos/             stubs with TODO lists
+      macos/             CGEvent Remote, LaunchAgent autostart, notifications through the
+                         app, the webcam stream for OBS (camera.rs), BlackHole mic, Setup
+      cpal_sink.rs       the phone mic played into a virtual audio device (Windows, macOS)
       polling_clipboard.rs  arboard-based clipboard shared by X11, Windows, macOS
+    assets/              camera-off.jpg: the macOS webcam stream's placeholder
   app/                   the `dotlink` binary
     src/main.rs          CLI; `dotlink` with no command opens the app
-    src/gui/             window (GPUI + gpui-component), tray, theme
-    assets/              icons, desktop file, dotlink.ico (the tray icon is drawn in tray.rs)
+    src/gui/             window (GPUI + gpui-component), tray, theme; mac.rs: the macOS app
+                         menu, Dock icon and notifications
+    assets/              icons, desktop file, dotlink.ico, dotlink.icns, macos/Info.plist
+                         (the tray icon is drawn in tray.rs)
     build.rs             Windows: embeds the icon in the .exe
   camera/                dotlink-camera: Windows 11 "Dotlink Camera", a media source DLL
                          the camera frame server loads (shared.rs: the frame file)
@@ -53,11 +58,15 @@ android/                 Kotlin + Jetpack Compose app
                          Prefs (paired PCs, settings)
   peer/                  phone ↔ phone: PhoneTls (Keystore key + certificate), PhoneServer
                          (a minimal HTTPS server), Phones (pairing, sending, NSD)
-  ui/                    screens (pair/ also picks a PC; home/PcSheet switches PCs; phones/);
-                         ui/dotline is the Dotline design system
+  ui/                    screens (pair/ also picks a PC; home/PcSheet switches PCs; phones/;
+                         Remote and Shell open from the PC tab); ui/dotline is the Dotline
+                         design system
 scripts/install.sh       build + install for the current user (Linux)
 scripts/make-windows-icon.py  draws desktop/app/assets/dotlink.ico
+scripts/make-macos-icon.py    draws desktop/app/assets/dotlink.icns
+scripts/make-camera-placeholder.swift  draws desktop/core/assets/camera-off.jpg
 .github/workflows/release.yml installers for every OS (by hand or on a v* tag)
+.github/workflows/desktop.yml builds, tests and lints the desktop app on every OS
 ```
 
 ## Desktop: one process, three faces
@@ -86,6 +95,10 @@ daemon. Socket I/O runs on the tokio runtime; GPUI awaits plain futures/channels
 - On Windows the tray (`tray-icon`) lives on the main thread, pumped by GPUI's message loop;
   the webcam has its own thread (decoding, the virtual camera's COM objects), the mic a thread
   that owns the WASAPI stream.
+- On macOS the menu bar item (`tray-icon`) is made on the main thread inside GPUI's `run`,
+  once NSApplication exists; notifications are posted there too (GPUI's
+  UNUserNotificationCenter). The webcam stream for OBS is a small axum server on the tokio
+  runtime; the mic has a thread owning the CoreAudio stream (`cpal_sink.rs`, as on Windows).
 - **GPUI** owns the main thread. `gui/model.rs` holds app-wide state in an `Entity<Model>`
   that outlives the window; the window (`gui/window.rs`) is a view of it.
 - A dedicated thread owns the X11/arboard clipboard (X11 serves pasted data from the owner);
@@ -139,7 +152,10 @@ Control messages (`{"t": …}`):
 The phone tries `127.0.0.1:47390` first. With USB debugging allowed, the PC runs
 `adb reverse tcp:47390 tcp:47390` for every phone plugged in (`usb.rs`, checked every 3 s), so
 that address reaches the PC through the cable; otherwise the phone uses the PC's network
-addresses, found again over mDNS. On Wi-Fi it checks the cable every 5 s and moves over; when
+addresses, found again over mDNS, or, when mDNS can't reach them (a PC on the phone's own
+hotspot: Android only browses the Wi-Fi it is on), by trying the PC's port on the phone's own
+/24 networks (`Discovery.scan`), each answer checked with the pinned certificate. On Wi-Fi it
+checks the cable every 5 s and moves over; when
 the cable goes, it reconnects over Wi-Fi. The PC counts connections from loopback as USB
 (`PhoneInfo::usb`) and keeps the phone's Wi-Fi address for Cast. The pinned certificate makes
 the cable no more trusted than the network.
@@ -211,18 +227,21 @@ connection. Each wrong code counts; after 3 the code is dropped and the Pair pag
 
 ## Control socket (CLI and window)
 
-`$XDG_RUNTIME_DIR/dotlink.sock` on Linux/macOS (user-only), on Windows the named pipe
+`$XDG_RUNTIME_DIR/dotlink.sock` on Linux, `dotlink.sock` in the per-user temp folder on macOS
+(`confstr(_CS_DARWIN_USER_TEMP_DIR)`, the same with or without `TMPDIR`), both user-only; on
+Windows the named pipe
 `\\.\pipe\dotlink-<user SID>` with an ACL that only lets that user in. One JSON
 request line in, one or more reply lines out.
 
 `pair` (also returns the code) · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `nearby` · `join_code` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` ·
-`cast_pair` · `watch` (event stream, see `events.rs`) · `show` · `quit`
+`cast_pair` · `clear_transfers` (Activity → Clear: the finished and failed ones) · `watch` (event stream, see `events.rs`) · `show` · `quit`
 
 ## Features, briefly
 
 - **Files.** With "Ask before receiving files" on (`ask_before_receiving`, and the phone's own
   setting), a file waits for Accept: `App::ask_incoming` shows a notification with Accept /
-  Decline (Windows: `dotlink:accept/<id>` links; Linux: notify-send actions) and a banner in
+  Decline (Windows: `dotlink:accept/<id>` links; Linux: notify-send actions; macOS: actions on
+  a notification the app posts, `platform::Notify`) and a banner in
   the window, and declines after 2 minutes. An upload isn't read until then (senders allow 3
   minutes); an offer is declined with a `decline` message. Uploads go to a `.part` file, are SHA-256 checked, then renamed. Transfers are
   tracked (`events::Transfer`) with progress for the window; the phone shows its own progress
@@ -231,16 +250,20 @@ request line in, one or more reply lines out.
   Sway, KDE…), else the X11 clipboard through XWayland (GNOME), read when XFixes reports a new owner (with a
   5 s safety poll; 500 ms polling where XFixes isn't available). Echo loops are cut by
   remembering the last text either way. Password-manager entries are never sent.
-  Windows polls the clipboard through arboard every 500 ms.
+  Windows and macOS poll the clipboard through arboard every 500 ms.
 - **Remote.** uinput virtual mouse + keyboard (Linux); SendInput, with Unicode text in any
-  layout (Windows).
+  layout (Windows); CGEvent at the HID level, Unicode text and media keys, behind the
+  Accessibility permission (macOS).
 - **Shell.** One PTY per tab per phone (ConPTY and pwsh on Windows), scrollback replayed on
   reconnect. The phone draws it with xterm.js (WebGL): Geist Mono, then "Dotlink Symbols Mono"
   (a JuliaMono subset of the symbol blocks) and Symbols Nerd Font Mono scaled to one cell.
 - **Webcam / mic.** Linux: ffmpeg writes MJPEG into v4l2loopback ("Dotlink Camera"); `pw-cat` is
   a PipeWire source ("Dotlink Mic"). Windows 11: a virtual camera (`MFCreateVirtualCamera`)
   whose media source is `dotlink_camera.dll`, fed NV12 through `%ProgramData%\Dotlink\camera.bin`;
-  the mic plays into VB-CABLE through WASAPI. One phone streams each at a time
+  the mic plays into VB-CABLE through WASAPI. macOS: an MJPEG stream on 127.0.0.1 at a secret
+  address, shown by an OBS Browser source and passed on by OBS Virtual Camera (macOS only
+  installs camera drivers signed with a Developer ID); the mic plays into BlackHole through
+  CoreAudio. One phone streams each at a time
   (`Streaming::claim`). Android 14+ only lets the app start them while it's on screen, so a
   request from the PC in the background becomes a notification with Start. Phones whose
   voice-processing input is silent outside a call (vivo / iQOO) fall back to the plain mic.
@@ -252,8 +275,9 @@ request line in, one or more reply lines out.
   on Linux, `pmset -g batt` on macOS), on connect and when it changes (read once a minute).
   "Charging" means on power, as on the phone.
 - **Tray.** The logo's dots in one colour (`tray.rs`, `glyph`): a symbolic SVG the panel
-  recolours on Linux, white or black with the taskbar's mode on Windows. Started before the
-  bar at login (Hyprland), it registers once a tray appears.
+  recolours on Linux, white or black with the taskbar's mode on Windows, a template image the
+  menu bar draws in its own colour on macOS. Started before the bar at login (Hyprland), it
+  registers once a tray appears. macOS shows the Dock icon only while the window is open.
 - **Latency.** Nothing queues behind a slow link. The phone sends a camera frame only when the
   socket is idle, mic audio in 10 ms chunks, with TCP_NODELAY and a Wi-Fi lock while linked.
   The PC hands ffmpeg only the newest frame (a `watch` channel, `mpjpeg` input), shrinks the
@@ -273,20 +297,23 @@ request line in, one or more reply lines out.
   service, firewalld port). Windows: one UAC prompt each for the firewall rule and installing
   the camera DLL (each build under its own `dotlink_camera-<hash>.dll`; the frame server is
   stopped afterwards, or it keeps serving the old DLL); scrcpy/adb download without admin
-  rights. The camera counts as installed while its registry key's `DotlinkSource` matches
+  rights. macOS: Accessibility through macOS's own prompt, BlackHole downloaded and installed
+  behind the administrator prompt, OBS's download page. The camera counts as installed while its registry key's `DotlinkSource` matches
   `shared::SOURCE`, a hash of the camera crate's source (`camera/build.rs`): a release that
   doesn't touch the camera asks for no new install, though its DLL's bytes differ.
 - **Autostart.** Linux: XDG autostart entry; on Hyprland also `~/.config/hypr/dotlink.lua` plus
   one marked `pcall(require, "dotlink")` line, removed again when turned off. Windows: the
-  `Dotlink` value under `HKCU\…\CurrentVersion\Run`.
+  `Dotlink` value under `HKCU\…\CurrentVersion\Run`. macOS: a LaunchAgent
+  (`~/Library/LaunchAgents/dev.dotlink.Dotlink.plist`) running `<exe> --background`.
 
 ## Platforms
 
 `core/src/platform/mod.rs` lists the items every platform module provides. Linux is the
-reference. `windows/` is complete for Windows 11. `macos/mod.rs` is a stub that compiles the
-rest of the app and says what to build (CGEvent, login items, virtual camera and mic drivers,
-tray).
-Search for `TODO(windows)` and `TODO(macos)`; [PORTING.md](PORTING.md) is the plan, step by step, and [PLATFORM_FEATURES.md](PLATFORM_FEATURES.md) what each OS does today.
+reference. `windows/` is complete for Windows 11, and `macos/` for macOS 13 and newer, with
+the webcam through OBS and the mic through BlackHole until there's a Developer ID.
+Search for `TODO(windows)` and `TODO(macos)`; [PORTING.md](PORTING.md) is the plan, step by
+step, [MACOS_PLAN.md](MACOS_PLAN.md) the macOS one, and [PLATFORM_FEATURES.md](PLATFORM_FEATURES.md)
+what each OS does today.
 
 Window decorations: GPUI asks for server-side decorations; where the compositor leaves them to
 the app (GNOME), the window draws its own title bar (`gui/title_bar.rs`: libadwaita's look, the
@@ -296,14 +323,17 @@ border.
 ## Files on disk
 
 Linux paths; on Windows the config folder is `%APPDATA%\dotlink\` and the control socket the
-named pipe above.
+named pipe above; on macOS the config folder is `~/Library/Application Support/dotlink/` and
+the socket is in the per-user temp folder.
 
 | Path | Content |
 |---|---|
 | `~/.config/dotlink/config.toml` | settings (also edited by Settings) |
 | `~/.config/dotlink/dotlink.log` | what each launch did: who started it, with which arguments, and why the window opened (moves to `dotlink.old.log` at 1 MB) |
+| `~/Library/Application Support/dotlink/camera-token` | macOS: the secret part of the webcam stream's address for OBS, 0600 |
 | `~/.config/dotlink/state.json` | server id, paired devices (kind, token hashes), linked PCs (fingerprint, addresses, token), 0600 |
 | `~/.config/dotlink/cert.pem`, `key.pem` | the certificate the phone pins |
 | `~/.local/share/dotlink/scrcpy/<version>/` | scrcpy + adb, when Dotlink downloaded them |
+| `~/Library/LaunchAgents/dev.dotlink.Dotlink.plist` | macOS: start at login |
 | `$XDG_RUNTIME_DIR/dotlink.sock` | control socket |
 | `~/Downloads/Dotlink/` | files from the phone (configurable) |

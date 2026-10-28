@@ -144,9 +144,9 @@ pub struct App {
 
 impl App {
     pub fn new(config: Config, state: State, fingerprint: String) -> Arc<Self> {
-        let hostname = hostname::get()
-            .map(|h| h.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| std::env::consts::OS.into());
+        let hostname = crate::platform::computer_name().unwrap_or_else(|| {
+            hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or_else(|_| std::env::consts::OS.into())
+        });
         let camera = CameraHub::start(config.camera_device.clone(), config.camera_size());
         update_share_menu(&state);
         Arc::new(Self {
@@ -225,6 +225,12 @@ impl App {
     /// False when there is no window (headless).
     pub fn request_ui(&self, req: UiRequest) -> bool {
         self.ui.lock().unwrap().as_ref().is_some_and(|tx| tx.send(req).is_ok())
+    }
+
+    /// Empties the history of finished and failed transfers. Waiting and running ones stay: a
+    /// phone still downloads an offered file by its entry here.
+    pub fn clear_transfers(&self) {
+        self.transfers.lock().unwrap().retain(|t| matches!(t.state, TransferState::Waiting | TransferState::Active));
     }
 
     /// Adds or updates a transfer in the history and tells the window.
@@ -1147,6 +1153,9 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
 
 async fn ws_input(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, AuthedPhone(_): AuthedPhone) -> Response {
     ws.on_upgrade(move |mut socket| async move {
+        // Every pointer move fails the same way (no permission, not supported): the phone shows
+        // each error it gets, so it gets each one once per connection.
+        let mut last_error = None;
         while let Some(Ok(msg)) = socket.recv().await {
             let Message::Text(text) = msg else { continue };
             let Ok(ev) = serde_json::from_str::<InputMsg>(&text) else { continue };
@@ -1158,9 +1167,16 @@ async fn ws_input(ws: WebSocketUpgrade, AxState(app): AxState<Arc<App>>, AuthedP
                 }
                 input.as_mut().unwrap().handle(ev)
             })();
-            if let Err(e) = result {
-                tracing::error!("input: {e:#}");
-                let _ = socket.send(Message::Text(json!({ "error": format!("{e:#}") }).to_string().into())).await;
+            match result {
+                Err(e) => {
+                    let error = format!("{e:#}");
+                    if last_error.as_ref() != Some(&error) {
+                        tracing::error!("input: {error}");
+                        let _ = socket.send(Message::Text(json!({ "error": error }).to_string().into())).await;
+                        last_error = Some(error);
+                    }
+                }
+                Ok(()) => last_error = None,
             }
         }
     })

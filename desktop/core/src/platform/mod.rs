@@ -16,6 +16,7 @@
 //! | `parent_process()` | the program that started Dotlink, for the log |
 //! | `share_menu::set(phones)` | "Share with Dotlink" in the file manager's menu, one item per phone |
 //! | `battery()` | the laptop's battery: (percent, on power); None without one |
+//! | `computer_name()` | the name the user gave this PC, when it isn't the hostname; else None |
 //!
 //! Linux is complete, and so is Windows (Windows 11). macOS is stubs that report "not supported
 //! yet" (written on Linux, never compiled there yet); their TODO comments say what to build.
@@ -41,6 +42,10 @@ pub use macos::*;
 pub(crate) mod polling_clipboard;
 
 pub(crate) mod battery;
+
+/// The phone mic played into a virtual audio device (VB-CABLE, BlackHole).
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) mod cpal_sink;
 
 use serde::{Deserialize, Serialize};
 

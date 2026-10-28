@@ -3,7 +3,7 @@
 Link your Android phone with your PC, over Wi-Fi or a USB cable. No account, no cloud.
 
 On the PC it's one app: a window, a tray icon and a background service. Linux and Windows 11
-are supported; macOS is planned.
+are supported, and so is macOS (the webcam goes through OBS).
 
 ## What it does
 
@@ -27,7 +27,7 @@ Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on
 | **Phone** | Android 10 or newer; Cast over Wi-Fi needs Android 11+ | iQOO I2218, realme RMX5085 (Android 16) |
 | **Linux** | x86_64, a desktop with PipeWire; any Wayland or X11 desktop | Fedora 44: GNOME, KDE Plasma, Hyprland |
 | **Windows** | Windows 11, x64 (Windows 10 isn't supported) | Windows 11 Pro 26H2 (build 26300) |
-| **macOS** | not supported yet (planned: macOS 13 Ventura or newer) | — |
+| **macOS** | macOS 13 Ventura or newer, Apple Silicon or Intel | macOS 15.8 (MacBook Air M1) |
 
 Other distros and desktops (Ubuntu, Debian, Arch, openSUSE; Sway, niri, X11 desktops) are expected to
 work, since `install.sh` and Setup handle their packages, but haven't been tested on every release.
@@ -37,7 +37,7 @@ What has been tested per feature: [docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEAT
 
 Download the files from the [releases page](https://github.com/sofyan-rs/dotlink/releases).
 Dotlink checks for new releases by itself (Settings → About on the PC, Settings → Check for
-updates on the phone) and installs them on Windows, from the AppImage and on Android.
+updates on the phone) and installs them on Windows, macOS, from the AppImage and on Android.
 
 ### Phone
 
@@ -100,10 +100,47 @@ The installer isn't code-signed yet: SmartScreen and the firewall show "Unknown 
 - **Microphone:** install [VB-CABLE](https://vb-audio.com/Cable/) (free). In your app, pick
   **CABLE Output** as the microphone.
 
+### macOS
+
+Open `Dotlink-<version>.dmg` from the releases page and drag **Dotlink** to Applications. It isn't
+signed with an Apple Developer ID, so the first time macOS refuses to open it: go to System
+Settings → Privacy & Security and click **Open Anyway**. Updates install from Settings → About.
+
+- **Allow** Dotlink to find devices on your local network when macOS asks: without it the phone
+  and Cast can't find the Mac over Wi-Fi.
+- **Remote:** Setup → *Fix* opens System Settings → Accessibility; switch Dotlink on. Without a
+  Developer ID signature, macOS asks again after each update.
+- **Microphone:** Setup → *Fix* installs [BlackHole](https://existential.audio/blackhole/) (free;
+  asks for your password). In your app, pick **BlackHole 2ch** as the microphone.
+- **Webcam:** through [OBS](https://obsproject.com) (free), whose virtual camera every app sees.
+  macOS only accepts camera drivers signed with a Developer ID, so Dotlink can't add its own
+  yet. Set it up once (below).
+
+#### The phone camera as a webcam on macOS
+
+1. Install OBS (Setup → *Webcam* → *Fix* opens its download page) and open it.
+2. In Dotlink: **Phones → Webcam → Copy OBS link**. The link stays the same, so this is once.
+3. In OBS: **Sources → + → Browser**, name it "Dotlink", then:
+   - **URL:** paste the link;
+   - **Width** 1280, **Height** 720;
+   - OK, then right-click the source → **Transform → Fit to screen**.
+4. In OBS: **Start Virtual Camera**. The first time, macOS asks to allow OBS's camera extension
+   (System Settings → General → Login Items & Extensions).
+5. In Dotlink: **Start** the Webcam. In your call app, pick **OBS Virtual Camera**.
+
+A Browser source shows the phone with less delay than a Media Source. To use a Media Source
+anyway: change the link's `.html` to `.mjpg`, untick **Local File**, paste it as **Input**, set
+**Input Format** to `mpjpeg` and **Network Buffering** to 0 MB.
+
+OBS has to keep running while you use the camera. While the phone camera is off, OBS shows
+"Dotlink · phone camera off". The link only works on this Mac (`127.0.0.1`) and holds a secret,
+so other users and programs can't read the camera.
+
 ### After installing
 
 Open **Dotlink** and check its **Setup** page. It lists what each feature still needs and fixes most
-of it in one click (firewall port, webcam, remote access, scrcpy).
+of it in one click (firewall port, webcam, remote access, scrcpy; on macOS Accessibility,
+BlackHole and OBS).
 
 ## Pairing
 
@@ -138,7 +175,8 @@ works either way. A laptop's battery shows there too.
 
 Everything works over both:
 
-- **Wi-Fi:** phone and PC on the same network.
+- **Wi-Fi:** phone and PC on the same network, or the PC on the phone's own hotspot (the phone
+  looks for it on the hotspot's network itself).
 - **USB cable:** turn on USB debugging on the phone (Developer options) and allow this PC once.
   When the cable is in, Dotlink uses it automatically and goes back to Wi-Fi when it's unplugged.
   No Wi-Fi or firewall rule needed, and it's faster.
@@ -206,27 +244,31 @@ Forget a phone in **Phones** (or `dotlink unpair`) to cut it off right away.
 
 ## Limits
 
-- Remote typing uses a US keyboard layout on Linux; on Windows any layout works.
+- Remote typing uses a US keyboard layout on Linux; on Windows and macOS any layout works (on
+  macOS, letters in shortcuts such as ⌘C are the US keys' positions).
 - One phone at a time streams the webcam (or the mic).
 - Windows: Windows 11 only; the mic needs VB-CABLE.
+- macOS: the webcam goes through OBS, which has to be running, and the mic through BlackHole
+  (see Install). The app isn't signed with an Apple Developer ID, so macOS asks once before
+  opening it, and asks again for Accessibility (Remote) after each update.
 
 ## Platforms
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Files, clipboard, shell, remote, Cast | ✅ | ✅ | planned |
-| Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | planned |
-| Tray, start at login, Setup | ✅ | ✅ | planned |
-| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (not signed yet) | planned |
+| Files, clipboard, shell, remote, Cast | ✅ | ✅ | ✅ |
+| Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | ✅ (webcam through OBS, mic through BlackHole) |
+| Tray, start at login, Setup | ✅ | ✅ | ✅ menu bar, notifications |
+| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (not signed yet) | ✅ .dmg (no Developer ID) |
 
 How each feature is built per OS and what has been tested:
 [docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEATURES.md). Plan for the rest:
-[docs/PORTING.md](docs/PORTING.md).
+[docs/PORTING.md](docs/PORTING.md), and for macOS [docs/MACOS_PLAN.md](docs/MACOS_PLAN.md).
 
 ## Development
 
 ```
-desktop/   Rust workspace: core/ (the service), app/ (window, tray, CLI), camera/ (Windows webcam DLL)
+desktop/   Rust workspace: core/ (the service), app/ (window, tray or menu bar, CLI), camera/ (Windows webcam DLL)
 android/   Kotlin + Jetpack Compose app
 scripts/   install.sh
 docs/      architecture, porting, platform features, contributing

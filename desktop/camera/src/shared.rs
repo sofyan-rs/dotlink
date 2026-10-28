@@ -25,10 +25,15 @@ pub const SOURCE_VALUE: &str = "DotlinkSource";
 pub const MAGIC: u32 = u32::from_le_bytes(*b"DLCM");
 pub const VERSION: u32 = 1;
 pub const HEADER: usize = 64;
+#[cfg_attr(not(windows), allow(dead_code))]
 const OFF_MAGIC: usize = 0;
+#[cfg_attr(not(windows), allow(dead_code))]
 const OFF_VERSION: usize = 4;
+#[cfg_attr(not(windows), allow(dead_code))]
 const OFF_WIDTH: usize = 8;
+#[cfg_attr(not(windows), allow(dead_code))]
 const OFF_HEIGHT: usize = 12;
+#[cfg_attr(not(windows), allow(dead_code))]
 const OFF_SEQ: usize = 16;
 
 /// Bytes of one NV12 frame: a full-size Y plane and a half-size interleaved UV plane.

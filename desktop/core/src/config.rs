@@ -224,7 +224,28 @@ pub fn config_path() -> PathBuf {
 }
 
 pub fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir)
+    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(default_runtime_dir)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_runtime_dir() -> PathBuf {
+    std::env::temp_dir()
+}
+
+/// The per-user temp folder (`/var/folders/…/T/`, mode 0700). `$TMPDIR` usually holds it, but
+/// a process started by launchd (login items) may not have it set and get the shared `/tmp`,
+/// where the CLI in Terminal wouldn't look; confstr gives the same folder either way.
+#[cfg(target_os = "macos")]
+fn default_runtime_dir() -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    // SAFETY: confstr writes at most `buf.len()` bytes, NUL included, and returns the length it
+    // needs (0 on error).
+    let n = unsafe { libc::confstr(libc::_CS_DARWIN_USER_TEMP_DIR, buf.as_mut_ptr().cast(), buf.len()) };
+    if n == 0 || n > buf.len() {
+        return std::env::temp_dir();
+    }
+    PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..n - 1]))
 }
 
 pub fn expand_home(p: &str) -> PathBuf {

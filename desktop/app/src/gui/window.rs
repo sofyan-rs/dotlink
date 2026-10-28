@@ -317,10 +317,18 @@ impl Render for MainView {
     }
 }
 
+/// What apps pick as the phone camera. macOS: OBS passes it on as "OBS Virtual Camera".
+#[cfg(not(target_os = "macos"))]
+const CAMERA_NAME: &str = "Dotlink Camera";
+#[cfg(target_os = "macos")]
+const CAMERA_NAME: &str = "OBS";
+
 #[cfg(windows)]
 const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for administrator rights (UAC).";
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for your password once (polkit).";
+#[cfg(target_os = "macos")]
+const SETUP_INTRO: &str = "What each feature needs from this Mac. Fix opens System Settings where you allow it.";
 
 // ---------- incoming files ----------
 
@@ -354,13 +362,13 @@ impl MainView {
                                     .child(format!("{} wants to send it{size}", f.from)),
                             ),
                     )
-                    .child(pill(p, SharedString::from(format!("decline-{}", f.id)), "Decline", Kind::Ghost).on_click(cx.listener(
+                    .child(pill_icon(p, SharedString::from(format!("decline-{}", f.id)), IconName::X, "Decline", Kind::Ghost).on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             let id = decline_id.clone();
                             this.model.update(cx, |m, cx| m.answer_incoming(id, false, cx));
                         },
                     )))
-                    .child(pill(p, SharedString::from(format!("accept-{}", f.id)), "Accept", Kind::Primary).on_click(cx.listener(
+                    .child(pill_icon(p, SharedString::from(format!("accept-{}", f.id)), IconName::Check, "Accept", Kind::Primary).on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             let id = accept_id.clone();
                             this.model.update(cx, |m, cx| m.answer_incoming(id, true, cx));
@@ -477,7 +485,7 @@ impl MainView {
         if !any_phone {
             phones = phones.child(
                 row(p).child(div().flex_1().min_w_0().text_color(p.ink_muted).child("No phone paired yet.")).child(
-                    pill(p, "pair-empty", "Pair a phone", Kind::Primary).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    pill_icon(p, "pair-empty", IconName::ScanLine, "Pair a phone", Kind::Primary).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.pair_tab = 0;
                         this.go(Page::Pair, cx)
                     })),
@@ -504,7 +512,7 @@ impl MainView {
                             .child(div().text_size(px(13.)).text_color(p.ink_muted).child(subtitle)),
                     )
                     .children(d.battery.map(|b| battery(p, b)))
-                    .child(pill(p, SharedString::from(format!("unpair-{id}")), "Forget", Kind::Ghost).on_click(
+                    .child(pill_icon(p, SharedString::from(format!("unpair-{id}")), IconName::Trash, "Forget", Kind::Ghost).on_click(
                         cx.listener(move |this, _: &ClickEvent, _, cx| {
                             let id = id.clone();
                             this.model.update(cx, |m, cx| m.unpair(id, cx));
@@ -545,7 +553,7 @@ impl MainView {
             group(p).child(
                 row(p)
                     .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("No PC linked yet."))
-                    .child(pill(p, "join-empty", "Join a PC", Kind::Primary).on_click(cx.listener(
+                    .child(pill_icon(p, "join-empty", IconName::Link, "Join a PC", Kind::Primary).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
                             this.pair_tab = 1;
                             this.model.update(cx, |m, cx| m.refresh_nearby(cx));
@@ -638,19 +646,32 @@ impl MainView {
                 this.model.update(cx, |m, cx| m.send_files_to(paths, phones, cx));
             }))
             .children(target)
+            .child(Icon::new(IconName::Upload).size(px(28.)).text_color(p.ink_muted))
             .child(div().text_color(p.ink_muted).child(hint))
             .child(
                 div()
                     .flex()
                     .gap(px(8.))
                     .child(
-                        enabled(pill(p, if phones { "send-files-phones" } else { "send-files-pcs" }, "Send files…", Kind::Primary), any_online)
+                        enabled(
+                            pill_icon(p, if phones { "send-files-phones" } else { "send-files-pcs" }, IconName::Files, "Send files…", Kind::Primary),
+                            any_online,
+                        )
                             .when(any_online, |b| {
                                 b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.pick_and_send(phones, cx)))
                             }),
                     )
                     .child(
-                        enabled(pill(p, if phones { "send-clip-phones" } else { "send-clip-pcs" }, "Send clipboard", Kind::Secondary), any_online)
+                        enabled(
+                            pill_icon(
+                                p,
+                                if phones { "send-clip-phones" } else { "send-clip-pcs" },
+                                IconName::ClipboardCopy,
+                                "Send clipboard",
+                                Kind::Secondary,
+                            ),
+                            any_online,
+                        )
                             .when(any_online, |b| {
                                 b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                     this.model.update(cx, |m, cx| m.send_clipboard_to(phones, cx))
@@ -708,7 +729,7 @@ impl MainView {
             let button = match cast {
                 // Connecting can take a while (mDNS, adb connect); Cancel ends it like Stop.
                 CastState::Casting { .. } | CastState::Connecting { .. } | CastState::Installing { .. } => {
-                    pill(p, pill_id, if busy { "Cancel" } else { "Stop" }, Kind::Ghost).on_click(cx.listener(
+                    pill_icon(p, pill_id, IconName::Square, if busy { "Cancel" } else { "Stop" }, Kind::Ghost).on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             let id = id.clone();
                             this.model.update(cx, |m, cx| m.set_cast(false, Some(id), cx))
@@ -716,9 +737,13 @@ impl MainView {
                     ))
                 }
                 ref other => {
-                    let (label, kind) =
-                        if matches!(other, CastState::Idle) { ("Cast", Kind::Primary) } else { ("Try again", Kind::Secondary) };
-                    enabled(pill(p, pill_id, label, kind), online).when(online, |b| {
+                    let (icon, label, kind) =
+                        if matches!(other, CastState::Idle) {
+                            (IconName::Cast, "Cast", Kind::Primary)
+                        } else {
+                            (IconName::RotateCcw, "Try again", Kind::Secondary)
+                        };
+                    enabled(pill_icon(p, pill_id, icon, label, kind), online).when(online, |b| {
                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             let id = id.clone();
                             this.model.update(cx, |m, cx| m.set_cast(true, Some(id), cx))
@@ -749,7 +774,7 @@ impl MainView {
                         .border_t_1()
                         .border_color(p.line)
                         .child(div().w(px(200.)).child(Styled::h(Input::new(&self.cast_code), px(CONTROL))))
-                        .child(pill(p, "cast-pair", "Pair", Kind::Primary).on_click(cx.listener(
+                        .child(pill_icon(p, "cast-pair", IconName::Link, "Pair", Kind::Primary).on_click(cx.listener(
                             move |this, _: &ClickEvent, _, cx| {
                                 let code = this.cast_code.read(cx).value().to_string();
                                 let id = id.clone();
@@ -774,7 +799,7 @@ impl MainView {
         let features = platform::features();
         let model = self.model.read(cx);
         let rows: Vec<(&'static str, &'static str, &'static str, Option<String>)> = [
-            features.camera.then_some(("camera", "Webcam", "Dotlink Camera", camera)),
+            features.camera.then_some(("camera", "Webcam", CAMERA_NAME, camera)),
             features.mic.then_some(("mic", "Microphone", "Dotlink Mic", mic)),
         ]
         .into_iter()
@@ -817,19 +842,34 @@ impl MainView {
             let on = from.is_some();
             let button =
                 if on {
-                    pill(p, SharedString::from(format!("stop-{kind}")), "Stop", Kind::Ghost).on_click(cx.listener(
+                    pill_icon(p, SharedString::from(format!("stop-{kind}")), IconName::Square, "Stop", Kind::Ghost).on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.set_stream(kind, false, cx)),
                     ))
                 } else if starting {
                     enabled(pill(p, SharedString::from(format!("start-{kind}")), "Starting…", Kind::Primary), false)
                 } else {
-                    enabled(pill(p, SharedString::from(format!("start-{kind}")), "Start", Kind::Primary), any_online)
+                    enabled(pill_icon(p, SharedString::from(format!("start-{kind}")), IconName::Play, "Start", Kind::Primary), any_online)
                         .when(any_online, |b| {
                             b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.model.update(cx, |m, cx| m.set_stream(kind, true, cx))
                             }))
                         })
                 };
+            // macOS: the stream for OBS, whose virtual camera apps use (platform/macos/camera.rs).
+            #[cfg(target_os = "macos")]
+            let copy_link = (kind == "camera").then(|| {
+                let port = model.status.as_ref().map_or(dotlink_core::config::DEFAULT_PORT, |s| s.port);
+                pill_icon(p, "copy-obs-link", IconName::Copy, "Copy OBS link", Kind::Ghost).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(platform::camera_url(port)));
+                        this.model.update(cx, |m, cx| {
+                            m.notice("Copied: paste it as the URL of a Browser source in OBS", false, cx)
+                        });
+                    },
+                ))
+            });
+            #[cfg(not(target_os = "macos"))]
+            let copy_link: Option<Div> = None;
             list = list.child(
                 row(p)
                     .when(i + first > 0, |r| r.border_t_1().border_color(p.line))
@@ -842,6 +882,7 @@ impl MainView {
                             .child(div().font_weight(FontWeight::MEDIUM).child(title))
                             .child(div().font_family(MONO).text_size(px(13.)).text_color(p.ink_muted).child(subtitle)),
                     )
+                    .children(copy_link)
                     .child(button),
             );
         }
@@ -896,10 +937,10 @@ impl MainView {
                                     .gap(px(8.))
                                     // Plugged in with USB debugging: the PC opens the link on the
                                     // phone, no scanning.
-                                    .child(pill(p, "pair-usb", "Pair over USB", Kind::Secondary).on_click(cx.listener(
+                                    .child(pill_icon(p, "pair-usb", IconName::Usb, "Pair over USB", Kind::Secondary).on_click(cx.listener(
                                         |this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.pair_usb(cx)),
                                     )))
-                                    .child(pill(p, "copy-link", "Copy link", Kind::Secondary).on_click(cx.listener(
+                                    .child(pill_icon(p, "copy-link", IconName::Copy, "Copy link", Kind::Secondary).on_click(cx.listener(
                                         move |this, _: &ClickEvent, _, cx| {
                                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(uri.clone()));
                                             this.model.update(cx, |m, cx| {
@@ -907,7 +948,7 @@ impl MainView {
                                             });
                                         },
                                     )))
-                                    .child(pill(p, "new-code", "New code", Kind::Ghost).on_click(cx.listener(
+                                    .child(pill_icon(p, "new-code", IconName::RefreshCw, "New code", Kind::Ghost).on_click(cx.listener(
                                         |this, _: &ClickEvent, _, cx| {
                                             this.model.update(cx, |m, cx| m.start_pairing(cx))
                                         },
@@ -930,7 +971,7 @@ impl MainView {
                             pill(p, "paired-done", "Done", Kind::Primary)
                                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go(Page::Phones, cx))),
                         )
-                        .child(pill(p, "pair-another", "Pair another", Kind::Ghost).on_click(cx.listener(
+                        .child(pill_icon(p, "pair-another", IconName::ScanLine, "Pair another", Kind::Ghost).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.start_pairing(cx)),
                         ))),
                 )
@@ -940,7 +981,7 @@ impl MainView {
                 .flex_col()
                 .gap(px(16.))
                 .child(div().text_color(p.accent_text).child(e.clone()))
-                .child(pill(p, "pair-retry", "Try again", Kind::Primary).on_click(
+                .child(pill_icon(p, "pair-retry", IconName::RotateCcw, "Try again", Kind::Primary).on_click(
                     cx.listener(|this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.start_pairing(cx))),
                 ))
                 .into_any_element(),
@@ -1013,7 +1054,7 @@ impl MainView {
             .child(section_with(
                 p,
                 "PCs on this network",
-                Some(enabled(pill(p, "nearby-refresh", if loading { "Looking…" } else { "Refresh" }, Kind::Ghost), !loading).when(
+                Some(enabled(pill_icon(p, "nearby-refresh", IconName::RefreshCw, if loading { "Looking…" } else { "Refresh" }, Kind::Ghost), !loading).when(
                     !loading,
                     |b| b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.refresh_nearby(cx)))),
                 )),
@@ -1024,7 +1065,7 @@ impl MainView {
                     .flex()
                     .gap(px(8.))
                     .child(div().w(px(200.)).child(Styled::h(Input::new(&self.join_code), px(CONTROL))))
-                    .child(enabled(pill(p, "join-code", "Join", Kind::Primary), can_join).when(can_join, |b| {
+                    .child(enabled(pill_icon(p, "join-code", IconName::Link, "Join", Kind::Primary), can_join).when(can_join, |b| {
                         b.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                             let (Some(id), code) = (this.join_pick.clone(), this.join_code.read(cx).value().to_string()) else {
                                 return;
@@ -1120,7 +1161,7 @@ impl MainView {
                                 },
                             ))),
                     )
-                    .child(pill(p, SharedString::from(format!("unpair-{id}")), "Forget", Kind::Ghost).on_click(
+                    .child(pill_icon(p, SharedString::from(format!("unpair-{id}")), IconName::Trash, "Forget", Kind::Ghost).on_click(
                         cx.listener(move |this, _: &ClickEvent, _, cx| {
                             let id = id.clone();
                             this.model.update(cx, |m, cx| m.unpair(id, cx));
@@ -1169,18 +1210,24 @@ impl MainView {
             );
         }
         let download_dir = model.status.as_ref().map(|s| s.config.download_dir());
+        // Only what has finished can go: waiting and running transfers stay in the list.
+        let clearable = transfers.iter().any(|t| matches!(t.state, TransferState::Done | TransferState::Failed(_)));
+        let actions = div()
+            .flex()
+            .gap(px(8.))
+            .when(clearable, |d| {
+                d.child(pill_icon(p, "clear-transfers", IconName::Trash, "Clear", Kind::Ghost).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.clear_transfers(cx)),
+                )))
+            })
+            .children(download_dir.map(|dir| {
+                pill_icon(p, "open-downloads", IconName::FolderOpen, "Open folder", Kind::Ghost).on_click(move |_, _, _| {
+                    let _ = std::fs::create_dir_all(&dir);
+                    platform::open_path(&dir)
+                })
+            }));
         page(p, "Activity", None)
-            .child(section_with(
-                p,
-                "Files",
-                download_dir.map(|dir| {
-                    pill(p, "open-downloads", "Open folder", Kind::Ghost).on_click(move |_, _, _| {
-                        let _ = std::fs::create_dir_all(&dir);
-                        platform::open_path(&dir)
-                    })
-                }),
-                files,
-            ))
+            .child(section_with(p, "Files", Some(actions), files))
             .child(section(p, "Clipboard", clips))
     }
 
@@ -1236,7 +1283,7 @@ impl MainView {
                     r.child(if busy {
                         enabled(pill(p, SharedString::from(format!("fix-{id}")), "Fixing…", Kind::Primary), false)
                     } else {
-                        pill(p, SharedString::from(format!("fix-{id}")), "Fix", Kind::Primary).on_click(cx.listener(
+                        pill_icon(p, SharedString::from(format!("fix-{id}")), IconName::Wrench, "Fix", Kind::Primary).on_click(cx.listener(
                             move |this, _: &ClickEvent, _, cx| {
                                 let id = id.clone();
                                 this.model.update(cx, |m, cx| m.fix(id, cx));
@@ -1257,16 +1304,17 @@ impl MainView {
                             d.child(if fixing.is_some() {
                                 enabled(pill(p, "fix-all", "Fixing…", Kind::Primary), false)
                             } else {
-                                pill(p, "fix-all", if fixable == 1 { "Fix it" } else { "Fix all" }, Kind::Primary)
+                                pill_icon(p, "fix-all", IconName::Wrench, if fixable == 1 { "Fix it" } else { "Fix all" }, Kind::Primary)
                                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                         this.model.update(cx, |m, cx| m.fix_all(cx))
                                     }))
                             })
                         })
                         .child(
-                            pill(
+                            pill_icon(
                                 p,
                                 "recheck",
+                                IconName::RefreshCw,
                                 if model.checks_loading { "Checking…" } else { "Check again" },
                                 Kind::Secondary,
                             )
@@ -1472,7 +1520,7 @@ impl MainView {
                     .items_center()
                     .gap(px(12.))
                     .child(
-                        pill(p, "save", "Save", Kind::Primary)
+                        pill_icon(p, "save", IconName::Save, "Save", Kind::Primary)
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.save_form(cx))),
                     )
                     .when(restart, |d| {
@@ -1498,7 +1546,7 @@ impl MainView {
                             .border_color(p.line)
                             .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("Found a bug or have an idea?"))
                             .child(
-                                pill(p, "report-bug", "Report a bug or suggestion", Kind::Ghost)
+                                pill_icon(p, "report-bug", IconName::Bug, "Report a bug or suggestion", Kind::Ghost)
                                     .on_click(|_, _, cx| cx.open_url("https://github.com/sofyan-rs/dotlink/issues")),
                             ),
                     )
@@ -1522,7 +1570,7 @@ impl MainView {
                                 "The service runs separately (dotlink daemon); this window only controls it."
                             }))
                             .child(
-                                pill(p, "quit", if owns { "Quit Dotlink" } else { "Close" }, Kind::Danger)
+                                pill_icon(p, "quit", IconName::Power, if owns { "Quit Dotlink" } else { "Close" }, Kind::Danger)
                                     .on_click(|_, _, cx| super::quit(cx)),
                             ),
                     ),
@@ -1555,11 +1603,19 @@ impl MainView {
             .border_color(p.line)
             .child(div().flex_1().min_w_0().text_color(p.ink_muted).child(text))
             .when_some(release_page, |r, url| {
-                r.child(pill(p, "release-notes", "What's new", Kind::Ghost).on_click(move |_, _, cx| cx.open_url(&url)))
+                r.child(pill_icon(p, "release-notes", IconName::Sparkles, "What's new", Kind::Ghost).on_click(move |_, _, cx| cx.open_url(&url)))
             })
             .when_some(button, |r, (label, on)| {
                 r.child(enabled(
-                    pill(p, "update", label, if available { Kind::Primary } else { Kind::Ghost }).on_click(cx.listener(
+                    // Installing downloads; checking looks again.
+                    pill_icon(
+                        p,
+                        "update",
+                        if available { IconName::Download } else { IconName::RefreshCw },
+                        label,
+                        if available { Kind::Primary } else { Kind::Ghost },
+                    )
+                    .on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             this.model.update(cx, |m, cx| {
                                 if available { m.install_update(cx) } else { m.check_update(true, cx) }
@@ -1592,6 +1648,27 @@ enum Kind {
 
 /// Dotline button.
 fn pill(p: &Palette, id: impl Into<gpui::ElementId>, label: impl Into<SharedString>, kind: Kind) -> Stateful<Div> {
+    pill_with(p, id, None, label, kind)
+}
+
+/// A [pill] with a Lucide icon before its label, for actions (Send, Cast, Copy…).
+fn pill_icon(
+    p: &Palette,
+    id: impl Into<gpui::ElementId>,
+    icon: IconName,
+    label: impl Into<SharedString>,
+    kind: Kind,
+) -> Stateful<Div> {
+    pill_with(p, id, Some(icon), label, kind)
+}
+
+fn pill_with(
+    p: &Palette,
+    id: impl Into<gpui::ElementId>,
+    icon: Option<IconName>,
+    label: impl Into<SharedString>,
+    kind: Kind,
+) -> Stateful<Div> {
     let (bg, fg, hover): (Hsla, Hsla, Hsla) = match kind {
         Kind::Primary => (p.ink, p.on_ink, p.ink.opacity(0.85)),
         Kind::Secondary => (p.surface_raised, p.ink, p.nav_selected),
@@ -1612,6 +1689,7 @@ fn pill(p: &Palette, id: impl Into<gpui::ElementId>, label: impl Into<SharedStri
         .cursor_pointer()
         .when(matches!(kind, Kind::Ghost), |d| d.border_1().border_color(p.line_strong))
         .hover(move |s| s.bg(hover))
+        .when_some(icon, |d, icon| d.gap(px(8.)).child(Icon::new(icon).size(px(16.)).text_color(fg)))
         .child(label.into())
 }
 
@@ -1879,11 +1957,11 @@ fn transfer_row(p: &Palette, t: &Transfer) -> Div {
         .when(done_incoming, |r| {
             let open = path.clone();
             r.child(
-                pill(p, SharedString::from(format!("open-{id}")), "Open", Kind::Secondary)
+                pill_icon(p, SharedString::from(format!("open-{id}")), IconName::ExternalLink, "Open", Kind::Secondary)
                     .on_click(move |_, _, _| platform::open_path(&open)),
             )
             .child(
-                pill(p, SharedString::from(format!("show-{id}")), "Show", Kind::Ghost)
+                pill_icon(p, SharedString::from(format!("show-{id}")), IconName::Folder, "Show", Kind::Ghost)
                     .on_click(move |_, _, _| platform::show_in_folder(&path)),
             )
         })

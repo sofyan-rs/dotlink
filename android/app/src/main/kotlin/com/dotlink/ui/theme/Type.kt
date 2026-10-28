@@ -56,7 +56,7 @@ data class DotlineType(
     /** Widget values. */
     val dotL: TextStyle = TextStyle(fontFamily = Doto, fontSize = 48.sp, lineHeight = 52.sp, fontWeight = FontWeight.Black),
     /** Screen titles in CAPS (`PERSONAL`, `SEARCH`). */
-    val dotM: TextStyle = TextStyle(fontFamily = Doto, fontSize = 32.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold),
+    val dotM: TextStyle = TextStyle(fontFamily = Doto, fontSize = 28.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold),
     /** Sheet and dialog titles. */
     val title: TextStyle =
         TextStyle(
