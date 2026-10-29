@@ -159,6 +159,9 @@ pub struct App {
     transfers: Mutex<VecDeque<Transfer>>,
     /// Device id → what the phone told us about itself, and where it connects from.
     pub phones: Mutex<HashMap<String, PhoneInfo>>,
+    /// Wireless debugging ports the phones found for themselves (`adb_port`, see cast):
+    /// (device id, "connect" or "pairing", port).
+    pub adb_ports: broadcast::Sender<(String, String, u16)>,
     /// Casting the phone screen with scrcpy.
     pub cast: crate::cast::Cast,
     /// Links to the PCs this one joined.
@@ -193,6 +196,7 @@ impl App {
             usb_pairings: Mutex::new(Vec::new()),
             control_tx: broadcast::channel(64).0,
             revoked_tx: broadcast::channel(16).0,
+            adb_ports: broadcast::channel(16).0,
             online: Mutex::new(HashMap::new()),
             offers: Mutex::new(HashMap::new()),
             last_clip: Mutex::new(String::new()),
@@ -1199,6 +1203,12 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                         app.phones.lock().unwrap().entry(dev.id.clone()).or_default().battery =
                             Some((level.min(100) as u8, charging));
                         app.emit(Event::Devices);
+                    }
+                    if v["t"] == "adb_port"
+                        && let (Some(service), Some(port)) = (v["service"].as_str(), v["port"].as_u64())
+                        && let Ok(port) = u16::try_from(port)
+                    {
+                        let _ = app.adb_ports.send((dev.id.clone(), service.to_string(), port));
                     }
                     if v["t"] == "decline"
                         && let Some(offer) = v["id"].as_str()

@@ -82,7 +82,6 @@ object Discovery {
     ): String? = findService(context, SERVICE, serverId, timeoutMs)?.first
 
     /** Host and port of the [service] instance whose TXT `id` is [serverId]. */
-    @Suppress("DEPRECATION") // resolveService: the replacement needs API 34.
     suspend fun findService(
         context: Context,
         service: String,
@@ -90,6 +89,39 @@ object Discovery {
         timeoutMs: Long = 4000,
     ): Pair<String, Int>? {
         if (serverId.isEmpty()) return null
+        return findService(context, service, timeoutMs) { it.attributes["id"]?.decodeToString() == serverId }
+    }
+
+    /**
+     * The port of this phone's own Wireless debugging [service] (`_adb-tls-connect._tcp.` or
+     * `_adb-tls-pairing._tcp.`), for casting. The PC browses for it too, but some networks
+     * (a phone's hotspot) lose most multicast between their clients; here it never leaves the
+     * phone.
+     */
+    suspend fun findOwnAdb(
+        context: Context,
+        service: String,
+        timeoutMs: Long = 4000,
+    ): Int? {
+        val own =
+            NetworkInterface
+                .getNetworkInterfaces()
+                ?.toList()
+                .orEmpty()
+                .flatMap { it.inetAddresses.toList() }
+                .mapNotNull { it.hostAddress?.substringBefore('%') }
+                .toSet()
+        return findService(context, service, timeoutMs) { it.host?.hostAddress?.substringBefore('%') in own }?.second
+    }
+
+    /** Host and port of the first resolved [service] instance that [accept]s. */
+    @Suppress("DEPRECATION") // resolveService: the replacement needs API 34.
+    private suspend fun findService(
+        context: Context,
+        service: String,
+        timeoutMs: Long,
+        accept: (NsdServiceInfo) -> Boolean,
+    ): Pair<String, Int>? {
         val nsd = context.getSystemService(NsdManager::class.java)
         val wifi = context.applicationContext.getSystemService(WifiManager::class.java)
         val lock = wifi.createMulticastLock("dotlink-discovery").apply { setReferenceCounted(false) }
@@ -106,9 +138,8 @@ object Discovery {
                             ) = Unit
 
                             override fun onServiceResolved(info: NsdServiceInfo) {
-                                val id = info.attributes["id"]?.decodeToString()
                                 val host = info.host?.hostAddress
-                                if (id == serverId && host != null) result.complete(host to info.port)
+                                if (host != null && accept(info)) result.complete(host to info.port)
                             }
                         },
                     )

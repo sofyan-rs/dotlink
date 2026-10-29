@@ -577,6 +577,14 @@ class Link(
                 sendBattery(force = true)
             }
             "adb_wifi" -> adbWifiRequests.tryEmit(Unit)
+            // The PC can't see this phone's Wireless debugging port over mDNS: look it up here.
+            "adb_find" ->
+                scope.launch {
+                    val service = msg.optString("service")
+                    val type = if (service == "pairing") "_adb-tls-pairing._tcp." else "_adb-tls-connect._tcp."
+                    val port = Discovery.findOwnAdb(app, type) ?: return@launch
+                    control?.send(JSONObject().put("t", "adb_port").put("service", service).put("port", port).toString())
+                }
             "clip" -> setPhoneClipboard(msg.optString("text"))
             "camera", "mic" -> streamRequests.tryEmit(msg.optString("t") to msg.optBoolean("on"))
             "file" ->

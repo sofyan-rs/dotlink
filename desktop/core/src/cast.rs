@@ -8,6 +8,8 @@
 //! 3. Wireless debugging off: ask the phone to show a notification that opens its setting.
 //! 4. Not paired with this PC's adb yet: pair once with the 6-digit code from the phone
 //!    (the pairing port is found over mDNS too, `_adb-tls-pairing._tcp`).
+//!    Both ports are also asked of the phone itself, which looks them up locally: a phone's
+//!    hotspot loses most multicast between its clients.
 //!
 //! Several phones can cast at once, each in its own scrcpy window; everything here is per
 //! paired device id.
@@ -239,7 +241,7 @@ pub async fn pair(app: &Arc<App>, id: Option<&str>, code: &str) -> Result<()> {
     }
     let (id, name, info) = pick(app, id)?;
     let ip = info.ip.context("don't know the phone's address yet")?;
-    let addr = browse("_adb-tls-pairing._tcp.local.", ip, Duration::from_secs(4)).await.ok_or_else(|| {
+    let addr = find_adb(app, &id, "pairing", ip, Duration::from_secs(6)).await.ok_or_else(|| {
         anyhow!("can't see {name} waiting to pair: open Wireless debugging → Pair device with pairing code on it")
     })?;
     let out = adb(&["pair", &addr.to_string(), &code]).await?;
@@ -297,7 +299,9 @@ async fn connect(
     if let Some(d) = devices.iter().find(|d| d.state == "device" && d.serial.starts_with(&format!("{ip}:"))) {
         return Ok((d.serial.clone(), false));
     }
-    let Some(addr) = browse("_adb-tls-connect._tcp.local.", ip, Duration::from_secs(3)).await else {
+    // Longer while the phone says it's on: on a lossy network the first queries go unanswered.
+    let wait = Duration::from_secs(if info.adb_wifi { 6 } else { 3 });
+    let Some(addr) = find_adb(app, id, "connect", ip, wait).await else {
         // Not advertised: off, unless the phone says it's on (then mDNS is blocked).
         if twin {
             return Err(Missing::Other(anyhow!(
@@ -485,24 +489,56 @@ fn last_line(s: &str) -> Option<&str> {
     s.lines().rev().map(str::trim).find(|l| !l.is_empty())
 }
 
-/// An mDNS service of type `ty` on the host `ip`, within `wait`.
-async fn browse(ty: &'static str, ip: IpAddr, wait: Duration) -> Option<SocketAddr> {
+/// The phone's Wireless debugging `service` ("connect" or "pairing") at `ip`, within `wait`.
+/// Browsed over mDNS here and, at the same time, asked of the phone itself (newer apps), which
+/// finds it locally: some networks (a phone's hotspot) lose most multicast between clients.
+async fn find_adb(app: &App, id: &str, service: &'static str, ip: IpAddr, wait: Duration) -> Option<SocketAddr> {
+    let mut ports = app.adb_ports.subscribe();
+    app.send_control_to(Some(id), json!({ "t": "adb_find", "service": service }));
+    let from_phone = async {
+        loop {
+            match ports.recv().await {
+                Ok((dev, s, port)) if dev == id && s == service => return Some(SocketAddr::new(ip, port)),
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => return None,
+            }
+        }
+    };
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ty = format!("_adb-tls-{service}._tcp.local.");
+    let found = tokio::time::timeout(wait, async {
+        tokio::select! {
+            Some(addr) = from_phone => Some(addr),
+            Some(addr) = browse(ty, ip, wait, done.clone()) => Some(addr),
+            else => None,
+        }
+    })
+    .await
+    .ok()
+    .flatten();
+    done.store(true, std::sync::atomic::Ordering::Relaxed);
+    found
+}
+
+/// An mDNS service of type `ty` on the host `ip`, within `wait` or until `done`.
+async fn browse(ty: String, ip: IpAddr, wait: Duration, done: Arc<std::sync::atomic::AtomicBool>) -> Option<SocketAddr> {
     tokio::task::spawn_blocking(move || {
         let mdns = mdns_sd::ServiceDaemon::new().ok()?;
-        let rx = mdns.browse(ty).ok()?;
+        let rx = mdns.browse(&ty).ok()?;
         let deadline = Instant::now() + wait;
         let found = loop {
             let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
+            if left.is_zero() || done.load(std::sync::atomic::Ordering::Relaxed) {
                 break None;
             }
-            match rx.recv_timeout(left) {
+            match rx.recv_timeout(left.min(Duration::from_millis(250))) {
                 Ok(mdns_sd::ServiceEvent::ServiceResolved(info)) => {
                     if info.get_addresses().iter().any(|a| a.to_ip_addr() == ip) {
                         break Some(SocketAddr::new(ip, info.get_port()));
                     }
                 }
                 Ok(_) => {}
+                Err(_) if !rx.is_disconnected() => {}
                 Err(_) => break None,
             }
         };
