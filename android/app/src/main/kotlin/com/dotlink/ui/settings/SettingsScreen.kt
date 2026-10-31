@@ -6,6 +6,11 @@ package com.dotlink.ui.settings
 
 import android.content.Intent
 import android.net.Uri
+import com.dotlink.link.FileBrowser
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
+import android.os.Build
+import android.Manifest
 import com.dotlink.link.NotifListener
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.ui.unit.dp
@@ -156,6 +161,47 @@ fun SettingsScreen() {
                 }
                 Hint("Dismissing one on the PC dismisses it here. Ongoing ones (music, downloads) stay on the phone.")
                 if (apps) NotificationAppsSheet(onDismissRequest = { apps = false })
+            }
+        }
+        if (pc) {
+            Section("Browse from PC") {
+                // All files access is granted in the system's settings: read again on return.
+                var access by remember { mutableStateOf(FileBrowser.hasAccess(context)) }
+                LifecycleResumeEffect(Unit) {
+                    access = FileBrowser.hasAccess(context)
+                    onPauseOrDispose {}
+                }
+                var on by remember { mutableStateOf(prefs.browseFromPc) }
+                val storagePermission =
+                    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { access = FileBrowser.hasAccess(context) }
+                fun askAccess() {
+                    if (Build.VERSION.SDK_INT >= 30) {
+                        context.startActivity(
+                            Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${context.packageName}")),
+                        )
+                    } else {
+                        storagePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    }
+                }
+                ListGroup {
+                    ListRow(
+                        title = "Let ${prefs.serverName} browse files",
+                        subtitle = if (on && !access) "Needs All files access: tap to allow Dotlink" else "List, download, upload, rename and delete",
+                        leadingIcon = DotlineIcons.Folder,
+                        role = Role.Switch,
+                        onClick = {
+                            if (on && !access) {
+                                askAccess()
+                                return@ListRow
+                            }
+                            on = !on
+                            prefs.browseFromPc = on
+                            if (on && !access) askAccess()
+                        },
+                        trailing = { KuSwitch(checked = on && access, onCheckedChange = null) },
+                    )
+                }
+                Hint("The whole internal storage, except Android/data and Android/obb. Only your paired PCs can ask, not linked phones.")
             }
         }
         Section("Received files") {

@@ -220,6 +220,11 @@ class Prefs(
         get() = sp.getFloat("pointer_speed", 1.4f)
         set(v) = sp.edit { putFloat("pointer_speed", v) }
 
+    /** Browse from PC: the PC may list and change files in this phone's storage (FileBrowser). */
+    var browseFromPc: Boolean
+        get() = sp.getBoolean("browse_from_pc", false)
+        set(v) = sp.edit { putBoolean("browse_from_pc", v) }
+
     /** "Show notifications on PC" (it also needs Notification access, see NotifListener). */
     var notificationsToPc: Boolean
         get() = sp.getBoolean("notifications_to_pc", false)

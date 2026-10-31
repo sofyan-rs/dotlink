@@ -602,12 +602,24 @@ class Link(
             "clip" -> setPhoneClipboard(msg.optString("text"))
             "url" -> openUrl(msg.optString("url"), prefs.serverName)
             "battery" -> pcBattery.value = msg.optInt("level", -1).takeIf { it >= 0 }?.let { it.coerceAtMost(100) to msg.optBoolean("charging") }
+            "fs_list", "fs_get", "fs_rm", "fs_mv", "fs_mkdir" -> FileBrowser.handle(app, msg)
             "notif_dismiss" -> NotifListener.dismiss(msg.optString("key"))
             "ring" -> if (msg.optBoolean("on")) ringer.start(prefs.serverName) else ringer.stop()
             "camera", "mic" -> streamRequests.tryEmit(msg.optString("t") to msg.optBoolean("on"))
             "file" ->
                 scope.launch {
                     val (id, name, size) = Triple(msg.getString("id"), msg.optString("name", "file"), msg.optLong("size", -1))
+                    // Dropped into a folder in the PC's file browser: saved there, without asking.
+                    val dir = msg.optString("dir").takeIf { it.isNotEmpty() }
+                    if (dir != null) {
+                        val folder = runCatching { FileBrowser.resolve(dir) }.getOrNull()
+                        if (folder != null && FileBrowser.allowed(app) && folder.isDirectory) {
+                            downloadInto(id, name, size, folder)
+                        } else {
+                            control?.send(JSONObject().put("t", "decline").put("id", id).toString())
+                        }
+                        return@launch
+                    }
                     val batch =
                         IncomingBatch.from(
                             "pc",
@@ -804,6 +816,98 @@ class Link(
         } catch (e: Exception) {
             Log.w(TAG, "download $name failed", e)
             finish(t.id, e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    /** A file from the PC saved into [folder] (Browse from PC) rather than Download/Dotlink. */
+    private fun downloadInto(
+        id: String,
+        name: String,
+        size: Long,
+        folder: java.io.File,
+    ) {
+        val t = newTransfer(name, incoming = true, size = size)
+        val safe = name.substringAfterLast('/').substringAfterLast('\\').takeIf { it.isNotBlank() && it != "." && it != ".." } ?: "file"
+        // "a.jpg", then "a (1).jpg", "a (2).jpg"… when it's taken.
+        val (stem, ext) = if ('.' in safe.drop(1)) safe.substringBeforeLast('.') to "." + safe.substringAfterLast('.') else safe to ""
+        var dest = java.io.File(folder, safe)
+        var n = 1
+        while (dest.exists()) dest = java.io.File(folder, "$stem (${n++})$ext")
+        val part = java.io.File(folder, ".$safe.part")
+        try {
+            transferClient().newCall(request("/download/$id").build()).execute().use { res ->
+                if (!res.isSuccessful) error("PC answered ${res.code}")
+                res.body!!.byteStream().use { input ->
+                    part.outputStream().use { out ->
+                        val buf = ByteArray(256 * 1024)
+                        var got = 0L
+                        while (true) {
+                            val r = input.read(buf)
+                            if (r < 0) break
+                            out.write(buf, 0, r)
+                            got += r
+                            progress(t.id, got)
+                        }
+                        if (size >= 0 && got != size) error("cut off after $got of $size bytes")
+                    }
+                }
+            }
+            if (!part.renameTo(dest)) error("couldn't save ${dest.name}")
+            // So galleries and the Files app see it.
+            android.media.MediaScannerConnection.scanFile(app, arrayOf(dest.path), null, null)
+            finish(t.id, null)
+        } catch (e: Exception) {
+            part.delete()
+            Log.w(TAG, "download $name into ${folder.path} failed", e)
+            finish(t.id, e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    /** Uploads [file] for the PC's `fs_get` [req]: saved where the PC asked, without asking. */
+    fun uploadFile(
+        file: java.io.File,
+        req: String,
+    ) {
+        val t = newTransfer(file.name, incoming = false, size = file.length())
+        try {
+            val md = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buf = ByteArray(256 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    md.update(buf, 0, n)
+                }
+            }
+            val body =
+                object : RequestBody() {
+                    override fun contentType() = "application/octet-stream".toMediaType()
+
+                    override fun contentLength() = file.length()
+
+                    override fun writeTo(sink: BufferedSink) {
+                        file.inputStream().use { input ->
+                            val buf = ByteArray(256 * 1024)
+                            var sent = 0L
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n < 0) break
+                                sink.write(buf, 0, n)
+                                sent += n
+                                progress(t.id, sent)
+                            }
+                        }
+                    }
+                }
+            val url = "/upload?name=" + URLEncoder.encode(file.name, "UTF-8") + "&req=" + URLEncoder.encode(req, "UTF-8")
+            transferClient().newCall(request(url).header("X-Sha256", md.digest().toHex()).post(body).build()).execute().use { res ->
+                if (!res.isSuccessful) error(res.body?.string()?.ifBlank { null } ?: "PC answered ${res.code}")
+            }
+            finish(t.id, null)
+        } catch (e: Exception) {
+            Log.w(TAG, "upload ${file.name} failed", e)
+            finish(t.id, e.message ?: e.javaClass.simpleName)
+            sendControl(JSONObject().put("t", "fs_ok").put("req", req).put("error", e.message ?: "upload failed"))
         }
     }
 

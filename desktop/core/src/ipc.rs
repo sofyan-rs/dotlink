@@ -162,6 +162,33 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
             let msg = result(crate::cast::allow_sensitive_notifications(&app, req["id"].as_str()).await.map(String::from));
             w.write_all(reply(msg).as_bytes()).await?;
         }
+        // Browsing a phone's storage (`files.rs`): `op` list | get | put | rm | mv | mkdir.
+        "fs" => {
+            let (key, path) = (req["id"].as_str().unwrap_or(""), req["path"].as_str().unwrap_or("/"));
+            let msg = match req["op"].as_str().unwrap_or("") {
+                "list" => match crate::files::list(&app, key, path).await {
+                    Ok(entries) => json!({ "ok": "listed", "entries": entries }),
+                    Err(e) => json!({ "error": format!("{e:#}") }),
+                },
+                "get" => {
+                    let dir = req["dest"].as_str().map(PathBuf::from).unwrap_or_else(|| app.config().download_dir());
+                    match crate::files::get(&app, key, path, &dir).await {
+                        Ok(saved) => json!({ "ok": format!("saved {}", saved.display()), "path": saved }),
+                        Err(e) => json!({ "error": format!("{e:#}") }),
+                    }
+                }
+                "put" => {
+                    let paths: Vec<PathBuf> =
+                        req["paths"].as_array().into_iter().flatten().filter_map(|p| p.as_str().map(PathBuf::from)).collect();
+                    result(crate::files::put(&app, key, path, &paths).map(|(n, name)| format!("sending {n} file(s) to {name}:{path}")))
+                }
+                "rm" => result(crate::files::remove(&app, key, path).await.map(|()| "deleted".into())),
+                "mv" => result(crate::files::rename(&app, key, path, req["to"].as_str().unwrap_or("")).await.map(|()| "renamed".into())),
+                "mkdir" => result(crate::files::mkdir(&app, key, path).await.map(|()| "created".into())),
+                _ => json!({ "error": "unknown fs op" }),
+            };
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
         "answer_incoming" => {
             let (id, accept) = (req["id"].as_str().unwrap_or(""), req["accept"].as_bool().unwrap_or(false));
             let msg = if app.answer_incoming(id, accept) {

@@ -17,7 +17,7 @@ use gpui::{
 use gpui_component::WindowExt as _;
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::notification::Notification;
-use gpui_component::button::Button;
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_component::switch::Switch;
 use gpui_component::{ActiveTheme as _, Icon};
@@ -56,6 +56,11 @@ pub struct MainView {
     rename_input: Entity<InputState>,
     /// The device Forget was picked for, waiting on its confirmation: (id, name, a phone).
     forgetting: Option<(String, String, bool)>,
+    /// Browse from PC: the field for renaming an entry or naming a new folder, and which.
+    file_input: Entity<InputState>,
+    file_edit: Option<FileEdit>,
+    /// An entry of the open phone folder waiting for "Delete?".
+    file_deleting: Option<String>,
     _subs: Vec<Subscription>,
 }
 
@@ -155,6 +160,15 @@ impl MainView {
                 this.save_rename(cx);
             }
         }));
+        let file_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
+        subs.push(cx.subscribe_in(&file_input, window, |this, _, event: &InputEvent, _, cx| match event {
+            InputEvent::PressEnter { .. } => this.save_file_edit(cx),
+            InputEvent::Blur => {
+                this.file_edit = None;
+                cx.notify();
+            }
+            _ => {}
+        }));
         Self {
             model,
             form,
@@ -167,6 +181,9 @@ impl MainView {
             renaming: None,
             rename_input,
             forgetting: None,
+            file_input,
+            file_edit: None,
+            file_deleting: None,
             _subs: subs,
         }
     }
@@ -185,6 +202,33 @@ impl MainView {
         if !name.is_empty() {
             self.model.update(cx, |m, cx| m.rename_device(id, name, cx));
         }
+        cx.notify();
+    }
+
+    /// Renaming an entry of the open phone folder, or naming a new folder there.
+    fn start_file_edit(&mut self, edit: FileEdit, window: &mut Window, cx: &mut Context<Self>) {
+        let value = match &edit {
+            FileEdit::Rename(name) => name.clone(),
+            FileEdit::NewFolder => String::new(),
+        };
+        self.file_input.update(cx, |s, cx| s.set_value(value, window, cx));
+        self.file_input.update(cx, |s, cx| s.focus(window, cx));
+        self.file_edit = Some(edit);
+        cx.notify();
+    }
+
+    fn save_file_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(edit) = self.file_edit.take() else { return };
+        let name = self.file_input.read(cx).value().trim().to_string();
+        if name.is_empty() || name.contains('/') {
+            cx.notify();
+            return;
+        }
+        self.model.update(cx, |m, cx| match edit {
+            FileEdit::Rename(old) if old != name => m.rename_phone_file(old, name, cx),
+            FileEdit::Rename(_) => {}
+            FileEdit::NewFolder => m.new_phone_folder(name, cx),
+        });
         cx.notify();
     }
 
@@ -336,7 +380,7 @@ impl Render for MainView {
                         .children(self.incoming_banner(&p, cx))
                         .child(content),
                 ));
-        let body = div().size_full().relative().child(body).children(self.confirm_forget(&p, cx));
+        let body = div().size_full().relative().child(body).children(self.confirm_forget(&p, cx)).children(self.confirm_delete_file(&p, cx));
         // GNOME (and other compositors without server-side decorations) leave the title bar to
         // the app: draw one with window controls (title_bar.rs). gpui-component's Root already
         // adds the resizable frame and its shadow. KDE and Hyprland decorate (or tile) the window.
@@ -369,9 +413,239 @@ const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for yo
 #[cfg(target_os = "macos")]
 const SETUP_INTRO: &str = "What each feature needs from this Mac. Fix opens System Settings where you allow it.";
 
+/// What the field in a phone folder is for.
+#[derive(Clone)]
+enum FileEdit {
+    Rename(String),
+    NewFolder,
+}
+
 // ---------- confirming Forget ----------
 
 impl MainView {
+    /// "Delete <name>?" for an entry of the open phone folder: it can't be undone.
+    fn confirm_delete_file(&self, p: &Palette, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let name = self.file_deleting.clone()?;
+        let cancel = |this: &mut Self, cx: &mut Context<Self>| {
+            this.file_deleting = None;
+            cx.notify();
+        };
+        Some(
+            div()
+                .id("delete-backdrop")
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::black().opacity(0.6))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| cancel(this, cx)))
+                .child(
+                    div()
+                        .id("delete-dialog")
+                        .w(px(400.))
+                        .p(px(24.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(12.))
+                        .rounded(px(CARD_RADIUS))
+                        .bg(p.surface)
+                        .border_1()
+                        .border_color(p.line_strong)
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .child(div().text_size(px(20.)).font_weight(FontWeight::SEMIBOLD).child(format!("Delete {name}?")))
+                        .child(div().text_color(p.ink_muted).child("It's deleted on the phone, with what's in it for a folder. This can't be undone."))
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(8.))
+                                .pt(px(12.))
+                                .child(pill(p, "delete-cancel", "Cancel", Kind::Secondary).flex_1().justify_center().on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _, cx| cancel(this, cx),
+                                )))
+                                .child(pill(p, "delete-confirm", "Delete", Kind::Danger).flex_1().justify_center().on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _, cx| {
+                                        let name = name.clone();
+                                        this.file_deleting = None;
+                                        this.model.update(cx, |m, cx| m.delete_phone_file(name, cx));
+                                    },
+                                ))),
+                        ),
+                ),
+        )
+    }
+
+    /// Device page → Files (a connected phone): its storage, folders first. Click opens a
+    /// folder, double-click downloads and opens a file, ⋯ has Download, Rename and Delete;
+    /// files dropped on the list go into the open folder.
+    fn files_section(&self, p: &Palette, d: &DeviceInfo, cx: &mut Context<Self>) -> Div {
+        let folder = self.model.read(cx).folder.as_ref().filter(|f| f.device == d.id);
+        let Some(folder) = folder else {
+            let id = d.id.clone();
+            return group(p).child(
+                row(p)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(format!("{}'s storage", d.name))
+                            .child(div().text_size(px(13.)).text_color(p.ink_muted).child("Browse, download, upload, rename and delete. Needs Browse from PC on in the phone app.")),
+                    )
+                    .child(pill_icon(p, "files-open", IconName::FolderOpen, "Browse", Kind::Secondary).on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            let id = id.clone();
+                            this.model.update(cx, |m, cx| m.open_folder(id, "/".into(), cx))
+                        },
+                    ))),
+            );
+        };
+        let (id, parent) = (d.id.clone(), folder.parent());
+        let icon_button = |id: &'static str, icon: IconName| {
+            div()
+                .id(id)
+                .size(px(CONTROL))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(8.))
+                .cursor_pointer()
+                .hover(|s| s.bg(p.ink.opacity(0.06)))
+                .child(Icon::new(icon).size(px(16.)).text_color(p.ink_muted))
+        };
+        let up_id = id.clone();
+        let refresh = (id.clone(), folder.path.clone());
+        let toolbar = row(p)
+            .gap(px(4.))
+            .child(enabled(icon_button("files-up", IconName::ArrowUp), parent.is_some()).when_some(parent, |b, up| {
+                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    let (id, up) = (up_id.clone(), up.clone());
+                    this.model.update(cx, |m, cx| m.open_folder(id, up, cx))
+                }))
+            }))
+            .child(div().flex_1().min_w_0().truncate().font_family(MONO).text_size(px(13.)).child(if folder.loading {
+                format!("{}  …", folder.path)
+            } else {
+                folder.path.clone()
+            }))
+            .child(icon_button("files-new", IconName::FolderPlus).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.start_file_edit(FileEdit::NewFolder, window, cx)
+            })))
+            .child(icon_button("files-refresh", IconName::RefreshCw).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                let (id, path) = refresh.clone();
+                this.model.update(cx, |m, cx| m.open_folder(id, path, cx))
+            })))
+            .child(icon_button("files-close", IconName::X).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.model.update(cx, |m, cx| m.close_folder(cx))
+            })));
+        let edit = self.file_edit.as_ref().map(|e| {
+            let label = match e {
+                FileEdit::Rename(name) => format!("RENAME {}", name.to_uppercase()),
+                FileEdit::NewFolder => "NEW FOLDER".into(),
+            };
+            row(p)
+                .border_t_1()
+                .border_color(p.line)
+                .flex_col()
+                .items_start()
+                .gap(px(6.))
+                .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, _, cx| {
+                    if e.keystroke.key == "escape" {
+                        this.file_edit = None;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                }))
+                .child(mono_label(p, format!("{label} · ENTER TO SAVE · ESC TO CANCEL")))
+                .child(div().w_full().child(Input::new(&self.file_input)))
+        });
+        let error = folder.error.clone().map(|e| row(p).border_t_1().border_color(p.line).child(div().text_color(p.accent_text).child(e)));
+        let empty = (!folder.loading && folder.error.is_none() && folder.entries.is_empty())
+            .then(|| row(p).border_t_1().border_color(p.line).child(div().text_color(p.ink_muted).child("Empty folder. Drop files here to send them into it.")));
+        let view = cx.entity().downgrade();
+        let rows = folder.entries.iter().enumerate().map(|(i, e)| {
+            let (name, dir) = (e.name.clone(), e.dir);
+            let detail = if dir { format!("Folder · {}", ago(e.mtime)) } else { format!("{} · {}", human_size(e.size), ago(e.mtime)) };
+            let open_id = id.clone();
+            let child = folder.child(&name);
+            let click_name = name.clone();
+            let menu_view = view.clone();
+            let menu_name = name.clone();
+            row(p)
+                .id(("phone-file", i))
+                .border_t_1()
+                .border_color(p.line)
+                .cursor_pointer()
+                .hover(|s| s.bg(p.ink.opacity(0.04)))
+                .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
+                    if dir {
+                        let (id, path) = (open_id.clone(), child.clone());
+                        this.model.update(cx, |m, cx| m.open_folder(id, path, cx));
+                    } else if e.click_count() >= 2 {
+                        let name = click_name.clone();
+                        this.model.update(cx, |m, cx| m.download_phone_file(name, true, cx));
+                    }
+                }))
+                .child(Icon::new(if dir { IconName::Folder } else { IconName::File }).size(px(18.)).text_color(p.ink_muted))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(div().truncate().child(name.clone()))
+                        .child(div().text_size(px(12.)).font_family(MONO).text_color(p.ink_muted).child(detail)),
+                )
+                .child(
+                    Button::new(("phone-file-more", i)).ghost().icon(Icon::new(IconName::Ellipsis)).dropdown_menu_with_anchor(
+                        gpui::Anchor::TopRight,
+                        move |menu, _, _| {
+                            let (dl_view, rn_view, rm_view) = (menu_view.clone(), menu_view.clone(), menu_view.clone());
+                            let (dl_name, rn_name, rm_name) = (menu_name.clone(), menu_name.clone(), menu_name.clone());
+                            let menu = if dir {
+                                menu
+                            } else {
+                                menu.item(PopupMenuItem::new("Download").on_click(move |_, _, cx| {
+                                    let name = dl_name.clone();
+                                    dl_view.update(cx, |this, cx| this.model.update(cx, |m, cx| m.download_phone_file(name, false, cx))).ok();
+                                }))
+                            };
+                            menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
+                                let name = rn_name.clone();
+                                rn_view.update(cx, |this, cx| this.start_file_edit(FileEdit::Rename(name), window, cx)).ok();
+                            }))
+                            .item(PopupMenuItem::new("Delete").on_click(move |_, _, cx| {
+                                let name = rm_name.clone();
+                                rm_view
+                                    .update(cx, |this, cx| {
+                                        this.file_deleting = Some(name);
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            }))
+                            .min_w(px(140.))
+                        },
+                    ),
+                )
+        });
+        let tint = p.ink.opacity(0.04);
+        let list = div()
+            .id("phone-files")
+            .max_h(px(440.))
+            .overflow_y_scroll()
+            .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint))
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                let paths = paths.paths().to_vec();
+                this.model.update(cx, |m, cx| m.upload_to_folder(paths, cx));
+            }))
+            .children(empty)
+            .children(rows);
+        group(p).child(toolbar).children(edit).children(error).child(list)
+    }
+
     /// "Forget <name>?" over the window, like the phone app's dialog: the backdrop or Esc
     /// cancels.
     fn confirm_forget(&self, p: &Palette, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
@@ -772,6 +1046,7 @@ impl MainView {
             .gap(px(24.))
             .child(div().flex().flex_col().gap(px(20.)).child(self.device_header(p, &d, cx)).child(send))
             .children(streams.map(|g| section(p, "Screen, camera & mic", g)))
+            .children((d.is_phone() && d.online).then(|| section(p, "Files", self.files_section(p, &d, cx))))
             .child(section(p, "Sync", sync))
             .children(recent)
             .into_any_element()

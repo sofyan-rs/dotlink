@@ -8,6 +8,7 @@ use dotlink_core::events::{Event, Transfer};
 use dotlink_core::platform::{self, Check};
 use dotlink_core::update::{self, Release};
 use futures::StreamExt;
+use serde_json::json;
 use gpui::{App, AppContext, Context, Entity, EventEmitter};
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -21,6 +22,29 @@ pub enum Page {
     Activity,
     Setup,
     Settings,
+}
+
+/// A phone's folder open on its page (Browse from PC).
+pub struct PhoneFolder {
+    pub device: String,
+    /// `/` is the phone's internal storage.
+    pub path: String,
+    pub entries: Vec<dotlink_core::files::Entry>,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+impl PhoneFolder {
+    /// `name` inside this folder.
+    pub fn child(&self, name: &str) -> String {
+        format!("{}/{name}", self.path.trim_end_matches('/'))
+    }
+
+    /// The folder above, None at the top.
+    pub fn parent(&self) -> Option<String> {
+        let path = self.path.trim_end_matches('/');
+        (!path.is_empty()).then(|| path.rsplit_once('/').map(|(up, _)| up).filter(|up| !up.is_empty()).unwrap_or("/").to_string())
+    }
 }
 
 pub enum Pairing {
@@ -55,6 +79,8 @@ pub struct Model {
     pub pairing: Pairing,
     /// Bumped by each `start_pairing`; replies to an older one are ignored.
     pairing_id: u64,
+    /// The phone folder open on a device page.
+    pub folder: Option<PhoneFolder>,
     pub checks: Vec<Check>,
     pub checks_loading: bool,
     /// Setup check being fixed right now.
@@ -112,6 +138,7 @@ impl Model {
             pairing: Pairing::Idle,
             pairing_id: 0,
             checks: Vec::new(),
+            folder: None,
             checks_loading: false,
             fixing: None,
             clips: VecDeque::new(),
@@ -466,6 +493,111 @@ impl Model {
     pub fn send_link(&mut self, cx: &mut Context<Self>) {
         let call = self.client.send_link(None);
         self.report_all(vec![call], cx);
+    }
+
+    /// Opens `path` on phone `id` in its page's Files.
+    pub fn open_folder(&mut self, id: String, path: String, cx: &mut Context<Self>) {
+        let kept = self.folder.as_ref().filter(|f| f.device == id && f.path == path).map(|f| f.entries.clone());
+        self.folder = Some(PhoneFolder { device: id.clone(), path: path.clone(), entries: kept.unwrap_or_default(), loading: true, error: None });
+        cx.notify();
+        let call = self.client.fs(&id, "list", json!({ "path": path }));
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| {
+                // Another folder was opened meanwhile.
+                let Some(f) = this.folder.as_mut().filter(|f| f.device == id && f.path == path) else { return };
+                f.loading = false;
+                match result {
+                    Ok(v) => f.entries = serde_json::from_value(v["entries"].clone()).unwrap_or_default(),
+                    Err(e) => f.error = Some(capitalize(&format!("{e:#}"))),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn close_folder(&mut self, cx: &mut Context<Self>) {
+        self.folder = None;
+        cx.notify();
+    }
+
+    fn reload_folder(&mut self, cx: &mut Context<Self>) {
+        if let Some(f) = &self.folder {
+            let (id, path) = (f.device.clone(), f.path.clone());
+            self.open_folder(id, path, cx);
+        }
+    }
+
+    /// Downloads `name` from the open folder into the download folder; opens it after when
+    /// `open`.
+    pub fn download_phone_file(&mut self, name: String, open: bool, cx: &mut Context<Self>) {
+        let Some(f) = &self.folder else { return };
+        let call = self.client.fs(&f.device, "get", json!({ "path": f.child(&name) }));
+        self.notice(format!("Downloading {name}…"), false, cx);
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| match result {
+                Ok(v) => {
+                    let path = PathBuf::from(v["path"].as_str().unwrap_or_default());
+                    if open {
+                        platform::open_path(&path);
+                    } else {
+                        this.notice(format!("Saved {}", path.file_name().unwrap_or_default().to_string_lossy()), false, cx);
+                    }
+                }
+                Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Sends files into the open folder.
+    pub fn upload_to_folder(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let Some(f) = &self.folder else { return };
+        let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        let call = self.client.fs(&f.device, "put", json!({ "path": f.path, "paths": paths }));
+        self.folder_op(call, cx);
+    }
+
+    /// Deletes `name` (a folder with what's in it) in the open folder.
+    pub fn delete_phone_file(&mut self, name: String, cx: &mut Context<Self>) {
+        let Some(f) = &self.folder else { return };
+        let call = self.client.fs(&f.device, "rm", json!({ "path": f.child(&name) }));
+        self.folder_op(call, cx);
+    }
+
+    pub fn rename_phone_file(&mut self, name: String, to: String, cx: &mut Context<Self>) {
+        let Some(f) = &self.folder else { return };
+        let call = self.client.fs(&f.device, "mv", json!({ "path": f.child(&name), "to": f.child(&to) }));
+        self.folder_op(call, cx);
+    }
+
+    pub fn new_phone_folder(&mut self, name: String, cx: &mut Context<Self>) {
+        let Some(f) = &self.folder else { return };
+        let call = self.client.fs(&f.device, "mkdir", json!({ "path": f.child(&name) }));
+        self.folder_op(call, cx);
+    }
+
+    /// A change in the open folder: an error toast, then the folder again.
+    fn folder_op(&mut self, call: impl std::future::Future<Output = anyhow::Result<serde_json::Value>> + 'static, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(v) if v["ok"].as_str().is_some_and(|ok| ok.starts_with("sending")) => {
+                        this.notice(capitalize(v["ok"].as_str().unwrap_or_default()), false, cx)
+                    }
+                    Ok(_) => {}
+                    Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
+                }
+                this.reload_folder(cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Shows a phone's notifications here (`option` "notifications") or copies their codes

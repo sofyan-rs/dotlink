@@ -176,6 +176,14 @@ impl Client {
         ok_text(self.call(json!({ "cmd": "open", "to": to })))
     }
 
+    /// Browse from PC: `op` list | get | put | rm | mv | mkdir on the phone `id` (see `files.rs`).
+    pub fn fs(&self, id: &str, op: &str, mut req: Value) -> impl Future<Output = Result<Value>> + use<> {
+        req["cmd"] = json!("fs");
+        req["op"] = json!(op);
+        req["id"] = json!(id);
+        self.call(req)
+    }
+
     /// "notifications" or "copy_codes" on or off for a phone.
     pub fn device_option(&self, id: &str, option: &str, on: bool) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "device_option", "id": id, "option": option, "on": on })))

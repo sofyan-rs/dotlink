@@ -71,6 +71,19 @@ enum Cmd {
         #[arg(long)]
         stop: bool,
     },
+    /// List a folder on a phone (Browse from PC on in its app). `/` is its internal storage.
+    Ls {
+        phone: String,
+        #[arg(default_value = "/")]
+        path: String,
+    },
+    /// Download a file from a phone: `dotlink get Pixel:/DCIM/Camera/a.jpg [folder]`.
+    Get {
+        /// `<phone>:<path>`.
+        source: String,
+        /// Where to save it; the download folder without it.
+        dest: Option<PathBuf>,
+    },
     /// Link this PC to another one: paste the link its `dotlink pair` (or Pair page) shows, or
     /// give its name from `dotlink nearby` and the 6-digit code it shows. The two PCs then share
     /// files and the clipboard.
@@ -249,6 +262,28 @@ async fn command(cmd: Cmd) -> Result<()> {
             result
         }
         Cmd::Clip { to } => simple(json!({ "cmd": "clip", "to": to })).await,
+        Cmd::Ls { phone, path } => {
+            ipc::request(json!({ "cmd": "fs", "op": "list", "id": phone, "path": path }), |v| {
+                if let Some(e) = v["error"].as_str() {
+                    bail!("{e}");
+                }
+                for e in v["entries"].as_array().into_iter().flatten() {
+                    let name = e["name"].as_str().unwrap_or("");
+                    if e["dir"].as_bool() == Some(true) {
+                        println!("{:>12}  {name}/", "");
+                    } else {
+                        println!("{:>12}  {name}", e["size"].as_u64().unwrap_or(0));
+                    }
+                }
+                Ok(())
+            })
+            .await
+        }
+        Cmd::Get { source, dest } => {
+            let Some((phone, path)) = source.split_once(':') else { bail!("give <phone>:<path>, e.g. Pixel:/DCIM/a.jpg") };
+            let dest = dest.map(|d| std::path::absolute(d).map(|d| d.to_string_lossy().into_owned())).transpose()?;
+            simple(json!({ "cmd": "fs", "op": "get", "id": phone, "path": path, "dest": dest })).await
+        }
         Cmd::Ring { phone, stop } => simple(json!({ "cmd": "ring", "to": phone, "on": !stop })).await,
         Cmd::Open { url, to } => simple(json!({ "cmd": "open", "url": url, "to": to })).await,
         Cmd::Join { target, code: None } if target.starts_with("dotlink://") => {

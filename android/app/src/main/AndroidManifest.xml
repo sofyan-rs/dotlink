@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -17,6 +18,16 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- Updates: installs the APK of a newer GitHub release (Updater). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Browse from PC (off by default, FileBrowser): the whole storage as plain paths. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
     <!-- Ring from the PC: its notification fills the screen over the lock screen (Ringer). -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
@@ -34,6 +45,7 @@
     <application
         android:name=".DotlinkApp"
         android:allowBackup="false"
+        android:requestLegacyExternalStorage="true"
         android:icon="@mipmap/ic_launcher"
         android:label="Dotlink"
         android:supportsRtl="true"

@@ -18,6 +18,7 @@ are supported, and so is macOS (the webcam goes through OBS).
 | **Cast** | | The phone's screen in a window, with mouse and keyboard ([scrcpy](https://github.com/Genymobile/scrcpy)) |
 | **Links** | Share a link → Dotlink: it opens in the PC's browser | *Open copied link* (tray or the phone's page), or `dotlink open <url>` |
 | **Notifications** | The phone's notifications show on the PC with Dismiss; a verification code in one goes to the PC's clipboard (turn on **Show notifications on PC** in the phone's Settings) | |
+| **Browse files** | | The phone's storage on its page → **Files**: browse, download, drop files into a folder, rename, delete (turn on **Browse from PC** in the phone's Settings), or `dotlink ls` / `dotlink get` |
 | **Ring** | | **Ring** in the phone's ⋯ menu, or `dotlink ring`: full volume, even on silent |
 | **Battery** | The phone's level on its page and in the sidebar | A laptop's level under its name in the phone app |
 

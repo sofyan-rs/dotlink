@@ -149,6 +149,9 @@ Control messages (`{"t": …}`):
 | phone → PC | `media` | `state: needs_tap`: starting camera/mic waits for a tap |
 | phone → PC | `notif` | `key`, `app`, `pkg`, `title`, `text`, `time`, `icon` (base64 PNG, the first time per app on a connection) |
 | phone → PC | `notif_removed` | `key`: gone on the phone, taken away on the PC |
+| PC → phone | `fs_list`, `fs_get`, `fs_rm`, `fs_mv`, `fs_mkdir` | `req`, `path` (+ `to`): Browse from PC; `/` is the phone's internal storage |
+| phone → PC | `fs_list`, `fs_ok` | `req`, `entries` (`name`, `dir`, `size`, `mtime`), or `error`. `fs_get`'s file comes as `POST /upload?req=…`, saved where the PC asked |
+| PC → phone | `file` + `dir` | an upload into a phone folder (Browse from PC): saved there, without asking |
 | PC → phone | `notif_dismiss` | `key`: Dismiss on the PC |
 | phone → PC | `ring` | `on: bool`: it started or stopped ringing (Stop on either end, or the minute ran out) |
 | phone → PC | `battery` | `level` (percent), `charging`; on connect and when either changes. The sidebar and the phone's page show it while it's connected |
@@ -241,7 +244,7 @@ Windows the named pipe
 `\\.\pipe\dotlink-<user SID>` with an ACL that only lets that user in. One JSON
 request line in, one or more reply lines out.
 
-`pair` (also returns the code) · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `nearby` · `join_code` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` · `open` · `ring` · `notif_dismiss` · `device_option` · `allow_codes` ·
+`pair` (also returns the code) · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `nearby` · `join_code` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` · `open` · `ring` · `notif_dismiss` · `device_option` · `allow_codes` · `fs` (`op`: list, get, put, rm, mv, mkdir) ·
 `cast_pair` · `clear_transfers` (Activity → Clear: the finished and failed ones) · `watch` (event stream, see `events.rs`) · `show` · `quit`
 
 ## Features, briefly
@@ -305,6 +308,13 @@ request line in, one or more reply lines out.
   Android 15+ hides codes from listeners: **Allow** on the phone's page runs `adb shell appops
   set com.dotlink.android RECEIVE_SENSITIVE_NOTIFICATIONS allow` (`cast::allow_sensitive_notifications`,
   USB or Wireless debugging), which stays after debugging is off.
+- **Browse files.** No SSH or mount: `fs_*` messages over the control link (`files.rs` on the
+  PC, `FileBrowser` on the phone), each with a `req` the phone answers. The phone needs All
+  files access (`MANAGE_EXTERNAL_STORAGE`; storage permission on Android 10) and Browse from
+  PC on (off by default); every path is canonicalized under the storage root, `Android/data`
+  and `Android/obb` stay hidden, and only the PC link reaches it. Downloads are an upload from
+  the phone that `PhoneFiles::take_get` matches by `req` and saves in the folder asked
+  (SHA-256 checked); uploads are the usual offer with a `dir`.
 - **Ring.** `Ringer` on the phone plays the default ringtone (the alarm sound as fallback) with
   `USAGE_ALARM`, looping, the alarm volume at its maximum and put back after; a full-screen
   notification (`RingActivity`, over the lock screen) has Stop. It reports `ring` on and off, so

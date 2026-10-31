@@ -172,6 +172,8 @@ pub struct App {
     pub adb_ports: broadcast::Sender<(String, String, u16)>,
     /// Casting the phone screen with scrcpy.
     pub cast: crate::cast::Cast,
+    /// Browsing a phone's storage (`files.rs`).
+    pub files: crate::files::PhoneFiles,
     /// Links to the PCs this one joined.
     pub peers: crate::peer::Peers,
     /// Phone notifications shown here, by [notification_tag]: (device id, the phone's key).
@@ -218,6 +220,7 @@ impl App {
             streams: Mutex::new(BTreeMap::new()),
             phones: Mutex::new(HashMap::new()),
             cast: crate::cast::Cast::default(),
+            files: Default::default(),
             peers: crate::peer::Peers::default(),
             notifs: Mutex::new(HashMap::new()),
             battery: Mutex::new(platform::battery()),
@@ -910,7 +913,16 @@ impl App {
     /// Offers files to a phone (`to`: its name or id) or, for None, to every connected phone.
     /// The phone downloads them right away. Returns the count and the phones' names.
     pub fn offer_files(self: &Arc<Self>, paths: &[PathBuf], to: Option<&str>) -> Result<(usize, String)> {
-        let target = self.target(to)?;
+        self.offer_files_to(paths, self.target(to)?, None)
+    }
+
+    /// [Self::offer_files] to one phone (`id`), saved there in `dir` (Browse from PC) rather
+    /// than in Download/Dotlink.
+    pub fn offer_files_into(self: &Arc<Self>, paths: &[PathBuf], id: &str, dir: Option<&str>) -> Result<(usize, String)> {
+        self.offer_files_to(paths, self.target_of(Some(id), true)?, dir)
+    }
+
+    fn offer_files_to(self: &Arc<Self>, paths: &[PathBuf], target: Target, dir: Option<&str>) -> Result<(usize, String)> {
         for (id, _) in &target.peers {
             crate::peer::send_files(self, id, paths.to_vec())?;
         }
@@ -933,10 +945,11 @@ impl App {
         for (path, size) in paths.iter().zip(sizes) {
             let id = random_hex(12);
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
-            self.send_control_to(
-                target.id.as_deref(),
-                json!({ "t": "file", "id": id, "name": name, "size": size, "batch": batch, "count": paths.len(), "total": total }),
-            );
+            let mut offer = json!({ "t": "file", "id": id, "name": name, "size": size, "batch": batch, "count": paths.len(), "total": total });
+            if let Some(dir) = dir {
+                offer["dir"] = json!(dir);
+            }
+            self.send_control_to(target.id.as_deref(), offer);
             for (device, phone) in &target.phones {
                 self.put_transfer(Transfer {
                     id: transfer_id(&id, target.id.is_none(), device),
@@ -1400,6 +1413,9 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                         app.phones.lock().unwrap().entry(dev.id.clone()).or_default().ringing = on;
                         app.emit(Event::Devices);
                     }
+                    if v["t"] == "fs_list" || v["t"] == "fs_ok" {
+                        app.files.answer(v.clone());
+                    }
                     if v["t"] == "notif" {
                         app.phone_notification(&dev.id, &v).await;
                     }
@@ -1695,6 +1711,8 @@ struct UploadQuery {
     batch: Option<String>,
     count: Option<u64>,
     total: Option<u64>,
+    /// A file this PC asked the phone for (`fs_get`): saved where it was asked, without asking.
+    req: Option<String>,
 }
 
 async fn upload(
@@ -1708,9 +1726,10 @@ async fn upload(
         return (StatusCode::BAD_REQUEST, "bad file name").into_response();
     };
     let size = headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
+    let asked_for = q.req.as_deref().and_then(|req| app.files.take_get(req, &dev.id));
     // Nothing is read until it's accepted: the sender waits.
     let batch = Batch::from_sender(&dev.id, q.batch.as_deref(), q.count, q.total);
-    if !app.ask_incoming(&dev.name, &name, size, batch).await {
+    if asked_for.is_none() && !app.ask_incoming(&dev.name, &name, size, batch).await {
         return (StatusCode::FORBIDDEN, format!("{} declined it", app.name())).into_response();
     }
     let mut progress = Progress::new(
@@ -1728,13 +1747,20 @@ async fn upload(
         },
     );
     let sha = headers.get("x-sha256").and_then(|v| v.to_str().ok());
-    match save_stream(&app, &name, sha, body.into_data_stream(), &mut progress).await {
+    let dir = asked_for.as_ref().map(|g| g.dir.clone()).unwrap_or_else(|| app.config().download_dir());
+    let saved = save_stream_in(&dir, &name, sha, body.into_data_stream(), &mut progress).await;
+    if let Some(get) = asked_for {
+        let _ = get.done.send(saved.as_ref().map(Clone::clone).map_err(|e| format!("{e:#}")));
+    }
+    match saved {
         Ok(path) => {
             let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
             progress.transfer.name = name.clone();
             progress.transfer.path = path.to_string_lossy().into_owned();
             progress.finish(Ok(()));
-            platform::notify_file(&dev.name, &name, &path);
+            if q.req.is_none() {
+                platform::notify_file(&dev.name, &name, &path);
+            }
             Json(json!({ "ok": true, "name": name })).into_response()
         }
         Err(e) => {
@@ -1750,6 +1776,21 @@ pub(crate) async fn save_stream<S, E>(
     app: &App,
     name: &str,
     sha: Option<&str>,
+    stream: S,
+    progress: &mut Progress,
+) -> Result<PathBuf>
+where
+    S: futures::Stream<Item = std::result::Result<bytes::Bytes, E>> + Unpin,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    save_stream_in(&app.config().download_dir(), name, sha, stream, progress).await
+}
+
+/// [save_stream] into `dir`.
+async fn save_stream_in<S, E>(
+    dir: &std::path::Path,
+    name: &str,
+    sha: Option<&str>,
     mut stream: S,
     progress: &mut Progress,
 ) -> Result<PathBuf>
@@ -1757,9 +1798,8 @@ where
     S: futures::Stream<Item = std::result::Result<bytes::Bytes, E>> + Unpin,
     E: std::error::Error + Send + Sync + 'static,
 {
-    let dir = app.config().download_dir();
-    tokio::fs::create_dir_all(&dir).await?;
-    let dest = unique_path(&dir, name);
+    tokio::fs::create_dir_all(dir).await?;
+    let dest = unique_path(dir, name);
     let part = dir.join(format!(".{name}.{}.part", random_hex(4)));
     // Each write to a tokio File is a trip to the blocking pool; the body arrives in ~16 KB
     // TLS records, so batch them.

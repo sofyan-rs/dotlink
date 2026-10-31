@@ -7,7 +7,7 @@ use std::borrow::Cow;
 gpui_kit_assets::icon_assets!(pub Lucide, [
     Smartphone, Monitor, ScanLine, ArrowDownUp, ListChecks, Settings2, Upload, Files, ClipboardCopy, Cast, Square, Play,
     Copy, FolderOpen, Trash, Usb, Link, Wrench, Bug, Sparkles, RefreshCw, RotateCcw, Download, Check, X, Power, Save,
-    ExternalLink, Folder, Laptop, Ellipsis, Plus, Camera, Mic
+    ExternalLink, Folder, Laptop, Ellipsis, Plus, Camera, Mic, ArrowUp, File, Pencil, FolderPlus
 ]);
 
 pub struct Assets;

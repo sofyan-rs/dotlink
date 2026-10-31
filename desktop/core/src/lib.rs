@@ -5,6 +5,7 @@ pub mod cast;
 pub mod codes;
 pub mod config;
 pub mod events;
+pub mod files;
 pub mod input;
 pub mod pair_code;
 pub mod ipc;
