@@ -468,6 +468,40 @@ impl Model {
         self.report_all(vec![call], cx);
     }
 
+    /// Shows a phone's notifications here (`option` "notifications") or copies their codes
+    /// ("copy_codes").
+    pub fn set_device_option(&mut self, id: String, option: &'static str, on: bool, cx: &mut Context<Self>) {
+        let call = self.client.device_option(&id, option, on);
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| {
+                if let Err(e) = result {
+                    this.notice(capitalize(&format!("{e:#}")), true, cx);
+                }
+                this.refresh(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Dismiss on a phone's notification (macOS: from Notification Center).
+    pub fn dismiss_phone_notification(&mut self, tag: String, cx: &mut Context<Self>) {
+        let call = self.client.dismiss_phone_notification(&tag);
+        cx.spawn(async move |_, _| {
+            if let Err(e) = call.await {
+                tracing::debug!("dismiss: {e:#}");
+            }
+        })
+        .detach();
+    }
+
+    /// Lets Android 15+ show Dotlink the codes in notifications; the toast says how it went.
+    pub fn allow_codes(&mut self, id: String, cx: &mut Context<Self>) {
+        let call = self.client.allow_codes(&id);
+        self.report_all(vec![call], cx);
+    }
+
     /// Rings a phone, or stops it; the header shows RINGING once the phone says it rings.
     pub fn ring(&mut self, id: String, on: bool, cx: &mut Context<Self>) {
         let call = self.client.ring(&id, on);

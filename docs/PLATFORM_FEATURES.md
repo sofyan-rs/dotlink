@@ -39,6 +39,7 @@ isn't supported. macOS: 13 Ventura or newer.
 | Send links (`url`), both ways | 🔧 | 🔧 | 🟡 |
 | Ring the phone | 🔧 | 🔧 | 🟡 |
 | Presenter mode (Remote) | 🟡 | 🟡 | 🟡 |
+| Phone notifications on the PC, codes copied | 🔧 | 🔧 | 🟡 |
 | The laptop's battery on the phone | 🔧 | 🔧 | 🟡 |
 | Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | ✅ universal .dmg (x86_64 + arm64) from the release workflow, signed ad hoc |
 

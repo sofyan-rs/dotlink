@@ -54,6 +54,27 @@ pub fn notify_incoming(app: &std::sync::Arc<crate::server::App>, incoming: &crat
     });
 }
 
+/// A phone's notification with Dismiss, which dismisses it on the phone too.
+pub fn notify_phone(app: &std::sync::Arc<crate::server::App>, n: &super::PhoneNotification) {
+    let (app, n) = (app.clone(), n.clone());
+    tokio::spawn(async move {
+        let mut cmd = tokio::process::Command::new("notify-send");
+        cmd.args(["-a", "Dotlink", "--action=dismiss=Dismiss"]);
+        if let Some(icon) = &n.icon {
+            cmd.arg("-i").arg(icon);
+        }
+        let out = cmd.arg(&n.title).arg(&n.body).output().await;
+        if out.map(|o| String::from_utf8_lossy(&o.stdout).trim() == "dismiss").unwrap_or(false)
+            && let Err(e) = app.dismiss_phone_notification(&n.tag)
+        {
+            tracing::debug!("dismiss: {e}");
+        }
+    });
+}
+
+/// notify-send can't take a notification back: it expires by itself.
+pub fn dismiss_phone(_tag: &str) {}
+
 /// The program that started this one, for the log.
 pub fn parent_process() -> Option<String> {
     let stat = std::fs::read_to_string("/proc/self/stat").ok()?;

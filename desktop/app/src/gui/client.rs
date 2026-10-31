@@ -64,6 +64,18 @@ pub struct DeviceInfo {
     /// A phone ringing after Ring.
     #[serde(default)]
     pub ringing: bool,
+    /// A phone's notifications show here.
+    #[serde(default)]
+    pub notifications: bool,
+    /// Verification codes in them are copied.
+    #[serde(default)]
+    pub copy_codes: bool,
+    /// Android's API level; None or 0 from older apps.
+    #[serde(default)]
+    pub sdk: Option<u32>,
+    /// Android 15+ shows Dotlink the text of notifications holding codes.
+    #[serde(default)]
+    pub sensitive_notifications: Option<bool>,
 }
 
 impl DeviceInfo {
@@ -162,6 +174,21 @@ impl Client {
     /// Opens the link on this PC's clipboard on `to` (a device id, or every connected one).
     pub fn send_link(&self, to: Option<String>) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "open", "to": to })))
+    }
+
+    /// "notifications" or "copy_codes" on or off for a phone.
+    pub fn device_option(&self, id: &str, option: &str, on: bool) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "device_option", "id": id, "option": option, "on": on })))
+    }
+
+    /// Dismiss on a phone's notification shown here.
+    pub fn dismiss_phone_notification(&self, tag: &str) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "notif_dismiss", "tag": tag })))
+    }
+
+    /// Lets Android 15+ show Dotlink the codes in notifications (over adb).
+    pub fn allow_codes(&self, id: &str) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "allow_codes", "id": id })))
     }
 
     /// Makes a phone (by device id) ring, or stops it.

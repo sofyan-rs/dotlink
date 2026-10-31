@@ -146,6 +146,22 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
             );
             w.write_all(reply(msg).as_bytes()).await?;
         }
+        "notif_dismiss" => {
+            let msg = result(app.dismiss_phone_notification(req["tag"].as_str().unwrap_or("")).map(|()| "dismissed".into()));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "device_option" => {
+            let (option, on) = (req["option"].as_str().unwrap_or(""), req["on"].as_bool().unwrap_or(false));
+            let msg = result(app.set_device_option(req["id"].as_str().unwrap_or(""), option, on).map(|name| {
+                let what = if option == "copy_codes" { "verification codes copied" } else { "notifications shown" };
+                format!("{name}: {what} {}", if on { "on" } else { "off" })
+            }));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "allow_codes" => {
+            let msg = result(crate::cast::allow_sensitive_notifications(&app, req["id"].as_str()).await.map(String::from));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
         "answer_incoming" => {
             let (id, accept) = (req["id"].as_str().unwrap_or(""), req["accept"].as_bool().unwrap_or(false));
             let msg = if app.answer_incoming(id, accept) {

@@ -142,6 +142,42 @@ fn pick(app: &App, id: Option<&str>) -> Result<(String, String, PhoneInfo)> {
     Ok((dev.id.clone(), dev.name.clone(), info))
 }
 
+/// Android 15+ hides the text of notifications holding codes or private messages from apps
+/// that read notifications. This app op shows it to Dotlink again; set over adb, it stays
+/// after USB debugging is turned off. Needs the phone on USB or Wireless debugging, like Cast.
+pub async fn allow_sensitive_notifications(app: &Arc<App>, id: Option<&str>) -> Result<&'static str> {
+    let (id, name, info) = pick(app, id)?;
+    if find_tool("adb").is_none() {
+        let _one = app.cast.installing.lock().await;
+        if find_tool("adb").is_none() {
+            install().await.context("couldn't install adb")?;
+        }
+    }
+    let serial = match connect(app, &id, &name, &info, &app.cast.serials_in_use(&id)).await {
+        Ok((serial, _)) => serial,
+        Err(Missing::WifiDebugging) => {
+            app.send_control_to(Some(&id), json!({ "t": "adb_wifi" }));
+            bail!("plug {name} in over USB (USB debugging on), or turn on its Wireless debugging")
+        }
+        Err(Missing::Pairing) => bail!("pair {name}'s Wireless debugging first (Cast asks for its code)"),
+        Err(Missing::Other(e)) => return Err(e),
+    };
+    let out = adb(&["-s", &serial, "shell", "appops", "set", ANDROID_PACKAGE, "RECEIVE_SENSITIVE_NOTIFICATIONS", "allow"]).await?;
+    if !out.trim().is_empty() {
+        bail!("{}", last_line(&out).unwrap_or("adb failed"));
+    }
+    tracing::info!("{name} now shows verification codes to Dotlink");
+    // The phone says so in its next `info`; until then the device page would still ask.
+    if let Some(phone) = app.phones.lock().unwrap().get_mut(&id) {
+        phone.sensitive_notifications = true;
+    }
+    app.emit(Event::Devices);
+    Ok("verification codes are shown now")
+}
+
+/// The phone app's package, for adb.
+const ANDROID_PACKAGE: &str = "com.dotlink.android";
+
 /// Starts casting. Returns once scrcpy is up ("casting"), Stop was pressed meanwhile
 /// ("cancelled"), or what's missing is known (the error); the outcome is also in [Cast::state].
 pub async fn start(app: &Arc<App>, id: Option<&str>) -> Result<&'static str> {

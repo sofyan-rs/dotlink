@@ -5,6 +5,7 @@
 //! | `notify(title, body)` | desktop notification |
 //! | `notify_file(from, name, path)` | "file received" notification with Open / Show in folder |
 //! | `notify_incoming(app, incoming)`, `dismiss_incoming(id)` | "X wants to send …" with Accept / Decline (`App::answer_incoming`), and taking it away once answered |
+//! | `notify_phone(app, n)`, `dismiss_phone(tag)` | a phone's notification ([PhoneNotification]) with Dismiss (`App::dismiss_phone_notification`), and taking it away when the phone removed it |
 //! | `open_path(path)` | open a file or folder with the default app |
 //! | `open_url(url)` | open a web link in the default browser |
 //! | `clipboard::{watch, get, set}` | clipboard text, and pushing changes to the phone |
@@ -49,6 +50,18 @@ pub(crate) mod battery;
 pub(crate) mod cpal_sink;
 
 use serde::{Deserialize, Serialize};
+
+/// A phone's notification, as shown on this PC.
+#[derive(Debug, Clone)]
+pub struct PhoneNotification {
+    /// Short and stable (see `server::notification_tag`): what Dismiss and removal refer to.
+    pub tag: String,
+    /// "<app> · <phone>".
+    pub title: String,
+    pub body: String,
+    /// The app's icon, cached in `config::icon_dir()`.
+    pub icon: Option<std::path::PathBuf>,
+}
 
 /// One thing a feature needs from the system, as shown in the app's Setup screen.
 #[derive(Debug, Clone, Serialize, Deserialize)]

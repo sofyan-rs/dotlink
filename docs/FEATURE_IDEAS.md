@@ -6,7 +6,7 @@ Features worth adding, in the order they're worth building. 1, 2, 5, 7 and 8 com
 Connect app on the phone. Dotlink has its own Android app, so each feature is built on both
 ends and on all three desktops.
 
-1 to 4 are built (not yet tested on a phone; see PLATFORM_FEATURES.md); the rest don't exist
+1 to 5 are built (not yet tested on a phone; see PLATFORM_FEATURES.md); the rest don't exist
 yet. Each lands with its own control message (`{"t": …}` on `/ws/control`,
 see [ARCHITECTURE.md](ARCHITECTURE.md)); where it shows in the window is given against the
 device page (sidebar → a phone or PC: header, Send, Screen camera & mic, Sync, Recent).
@@ -19,7 +19,7 @@ device page (sidebar → a phone or PC: header, Send, Screen camera & mic, Sync,
 | 2 | [Ring the phone](#2-ring-the-phone) (built) | PC → phone | small | — |
 | 3 | [The laptop's battery on the phone](#3-the-laptops-battery-on-the-phone) (built) | PC → phone | small | — |
 | 4 | [Presenter mode in the Remote](#4-presenter-mode-in-the-remote) (built) | phone → PC | small | phone only |
-| 5 | [Phone notifications on the PC, codes copied](#5-phone-notifications-on-the-pc-codes-copied) | phone → PC | medium | notification access |
+| 5 | [Phone notifications on the PC, codes copied](#5-phone-notifications-on-the-pc-codes-copied) (built) | phone → PC | medium | notification access |
 | 6 | [Browse the phone's files](#6-browse-the-phones-files) | PC → phone | medium | All files access |
 | 7 | [Media control](#7-media-control) | both | large | notification access; MPRIS / SMTC / MediaRemote |
 | 8 | [Pause the PC's media on calls](#8-pause-the-pcs-media-on-calls) | phone → PC | small after 7 | `READ_PHONE_STATE` |

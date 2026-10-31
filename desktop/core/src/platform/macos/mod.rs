@@ -42,7 +42,8 @@ pub fn features() -> Features {
 #[derive(Debug, Clone)]
 pub enum Notify {
     /// `tag` says what it's about and what its buttons do: `file:<path>` (Open, Show in
-    /// Finder), `incoming:<id>` (Accept, Decline), anything else (click opens Dotlink).
+    /// Finder), `incoming:<id>` (Accept, Decline), `notif:<tag>` (a phone's notification:
+    /// Dismiss), anything else (click opens Dotlink).
     Show { tag: String, title: String, body: String, actions: Vec<(&'static str, &'static str)> },
     Dismiss { tag: String },
 }
@@ -79,6 +80,16 @@ pub fn notify_incoming(_app: &std::sync::Arc<crate::server::App>, incoming: &cra
 
 pub fn dismiss_incoming(id: &str) {
     post(Notify::Dismiss { tag: format!("incoming:{id}") });
+}
+
+/// A phone's notification with Dismiss (`notif:<tag>`; the app passes Dismiss on to
+/// `App::dismiss_phone_notification`).
+pub fn notify_phone(_app: &std::sync::Arc<crate::server::App>, n: &super::PhoneNotification) {
+    post(Notify::Show { tag: format!("notif:{}", n.tag), title: n.title.clone(), body: n.body.clone(), actions: vec![("dismiss", "Dismiss")] });
+}
+
+pub fn dismiss_phone(tag: &str) {
+    post(Notify::Dismiss { tag: format!("notif:{tag}") });
 }
 
 /// The parent's name, for the log.

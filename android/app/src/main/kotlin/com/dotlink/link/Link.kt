@@ -430,6 +430,8 @@ class Link(
                 .put("adb_wifi", globalFlag(ADB_WIFI_ENABLED))
                 .put("dev_options", globalFlag(Settings.Global.DEVELOPMENT_SETTINGS_ENABLED))
                 .put("name", deviceName())
+                .put("sdk", Build.VERSION.SDK_INT)
+                .put("sensitive_notifications", NotifListener.seesSensitive(app))
         control?.send(msg.toString())
     }
 
@@ -584,6 +586,7 @@ class Link(
                 prefs.serverName = name
                 msg.optString("os").takeIf { it.isNotEmpty() }?.let { prefs.pcOs = it }
                 state.value = LinkState.Online(name)
+                NotificationForwarder.reset()
                 sendInfo()
                 sendBattery(force = true)
             }
@@ -599,6 +602,7 @@ class Link(
             "clip" -> setPhoneClipboard(msg.optString("text"))
             "url" -> openUrl(msg.optString("url"), prefs.serverName)
             "battery" -> pcBattery.value = msg.optInt("level", -1).takeIf { it >= 0 }?.let { it.coerceAtMost(100) to msg.optBoolean("charging") }
+            "notif_dismiss" -> NotifListener.dismiss(msg.optString("key"))
             "ring" -> if (msg.optBoolean("on")) ringer.start(prefs.serverName) else ringer.stop()
             "camera", "mic" -> streamRequests.tryEmit(msg.optString("t") to msg.optBoolean("on"))
             "file" ->
@@ -631,6 +635,9 @@ class Link(
             cm.setPrimaryClip(ClipData.newPlainText("Dotlink", text))
         }
     }
+
+    /** Sends a control message to the PC. False when not connected. */
+    fun sendControl(msg: JSONObject): Boolean = control?.send(msg.toString()) ?: false
 
     // ---------- links ----------
 

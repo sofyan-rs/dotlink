@@ -137,6 +137,12 @@ pub struct Device {
     /// Named on this PC (`dotlink rename`): the name the phone sends no longer replaces it.
     #[serde(default)]
     pub renamed: bool,
+    /// Show the phone's notifications here. None until set: on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notifications: Option<bool>,
+    /// Copy verification codes from its notifications to the clipboard. None until set: on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_codes: Option<bool>,
     /// SHA-256 of the bearer token; the token itself is only known to the phone.
     pub token_sha256: String,
     pub paired_at: u64,
@@ -146,6 +152,14 @@ impl Device {
     /// Whether this PC's clipboard changes go to it as they happen.
     pub fn sends_clipboard(&self) -> bool {
         self.clipboard_sync.unwrap_or(self.kind == DeviceKind::Phone)
+    }
+
+    pub fn shows_notifications(&self) -> bool {
+        self.notifications.unwrap_or(true)
+    }
+
+    pub fn copies_codes(&self) -> bool {
+        self.copy_codes.unwrap_or(true)
     }
 }
 
@@ -257,6 +271,11 @@ pub fn instance_suffix() -> String {
 /// moves to `dotlink.old.log` and starts again.
 pub fn log_path() -> PathBuf {
     config_dir().join("dotlink.log")
+}
+
+/// Phone apps' icons, from their notifications (`<package>.png`).
+pub fn icon_dir() -> PathBuf {
+    config_dir().join("icons")
 }
 
 pub fn config_path() -> PathBuf {

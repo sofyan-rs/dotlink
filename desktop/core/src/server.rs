@@ -71,6 +71,11 @@ pub struct PhoneInfo {
     pub battery: Option<(u8, bool)>,
     /// Ringing after "Ring" (`ring` messages from the phone).
     pub ringing: bool,
+    /// Android's API level (`Build.VERSION.SDK_INT`), from `info`; 0 from older apps.
+    pub sdk: u32,
+    /// Android 15+ shows it the text of notifications holding codes (the
+    /// RECEIVE_SENSITIVE_NOTIFICATIONS app op, see `cast::allow_sensitive_notifications`).
+    pub sensitive_notifications: bool,
 }
 
 /// Where a file or clipboard goes: one phone, or every connected phone.
@@ -169,6 +174,8 @@ pub struct App {
     pub cast: crate::cast::Cast,
     /// Links to the PCs this one joined.
     pub peers: crate::peer::Peers,
+    /// Phone notifications shown here, by [notification_tag]: (device id, the phone's key).
+    notifs: Mutex<HashMap<String, (String, String)>>,
     /// This PC's battery as last read (laptops): (percent, on power).
     battery: Mutex<Option<(u8, bool)>>,
     /// "camera" / "mic" → the phone streaming it right now.
@@ -212,6 +219,7 @@ impl App {
             phones: Mutex::new(HashMap::new()),
             cast: crate::cast::Cast::default(),
             peers: crate::peer::Peers::default(),
+            notifs: Mutex::new(HashMap::new()),
             battery: Mutex::new(platform::battery()),
             ui: Mutex::new(None),
             shutdown: Notify::new(),
@@ -311,6 +319,10 @@ impl App {
                         .map(|(level, charging)| json!({ "level": level, "charging": charging })),
                     "clipboard_auto": d.sends_clipboard(),
                     "ringing": phones.get(&d.id).is_some_and(|p| p.ringing),
+                    "notifications": d.shows_notifications(),
+                    "copy_codes": d.copies_codes(),
+                    "sdk": phones.get(&d.id).map(|p| p.sdk),
+                    "sensitive_notifications": phones.get(&d.id).map(|p| p.sensitive_notifications),
                 })
             })
             .chain(state.peers.iter().map(|p| {
@@ -506,6 +518,100 @@ impl App {
         drop(state);
         self.emit(Event::Devices);
         Ok(old)
+    }
+
+    /// A phone's notification (`notif`): shown here as "<app> · <phone>" with Dismiss, unless
+    /// turned off for that phone. A verification code in it goes to the clipboard (not back to
+    /// the phone). The text isn't written anywhere; the app's icon is cached when it comes.
+    pub async fn phone_notification(self: &Arc<Self>, device: &str, v: &Value) {
+        let Some(dev) = self.state.lock().unwrap().devices.iter().find(|d| d.id == device).cloned() else { return };
+        if !dev.shows_notifications() {
+            return;
+        }
+        let (Some(key), Some(pkg)) = (v["key"].as_str(), v["pkg"].as_str()) else { return };
+        let field = |k: &str| v[k].as_str().unwrap_or("").chars().filter(|c| *c == '\n' || !c.is_control()).collect::<String>();
+        let (app_name, title, text) = (field("app"), field("title"), field("text"));
+        // A package name is letters, digits, `.` and `_`: nothing that leaves the icon folder.
+        let icon_name = pkg.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_').then(|| format!("{pkg}.png"));
+        let icon = icon_name.map(|n| crate::config::icon_dir().join(n));
+        if let (Some(path), Some(b64)) = (&icon, v["icon"].as_str()) {
+            use base64::Engine;
+            if let Ok(png) = base64::engine::general_purpose::STANDARD.decode(b64)
+                && png.len() < 512 * 1024
+            {
+                let _ = std::fs::create_dir_all(crate::config::icon_dir());
+                if let Err(e) = std::fs::write(path, png) {
+                    tracing::debug!("icon {pkg}: {e}");
+                }
+            }
+        }
+        let mut body = if title.is_empty() { text.clone() } else if text.is_empty() { title.clone() } else { format!("{title}\n{text}") };
+        if dev.copies_codes()
+            && let Some(code) = crate::codes::find(&format!("{title}\n{text}"))
+        {
+            // Remembered first: the clipboard watcher then doesn't send it back to the phone.
+            self.remember_clip(&code);
+            match clipboard::set(&code).await {
+                Ok(()) => {
+                    tracing::info!("verification code from {} copied", dev.name);
+                    body = format!("Code {code} copied\n{body}");
+                }
+                Err(e) => tracing::warn!("clipboard: {e}"),
+            }
+        }
+        let tag = notification_tag(device, key);
+        {
+            let mut notifs = self.notifs.lock().unwrap();
+            // Those the phone never said were removed: keep the map from growing for ever.
+            if notifs.len() > 500 {
+                notifs.clear();
+            }
+            notifs.insert(tag.clone(), (device.to_string(), key.to_string()));
+        }
+        let app_name = if app_name.is_empty() { pkg.to_string() } else { app_name };
+        let shown = platform::PhoneNotification {
+            tag,
+            title: format!("{app_name} · {}", dev.name),
+            body,
+            icon: icon.filter(|p| p.is_file()),
+        };
+        platform::notify_phone(self, &shown);
+    }
+
+    /// The phone's notification went away (read, dismissed there): take it away here too.
+    pub fn phone_notification_removed(&self, device: &str, key: &str) {
+        let tag = notification_tag(device, key);
+        if self.notifs.lock().unwrap().remove(&tag).is_some() {
+            platform::dismiss_phone(&tag);
+        }
+    }
+
+    /// Dismiss on a phone notification shown here: dismisses it on the phone.
+    pub fn dismiss_phone_notification(&self, tag: &str) -> Result<()> {
+        let Some((device, key)) = self.notifs.lock().unwrap().remove(tag) else {
+            bail!("that notification is gone");
+        };
+        self.send_control_to(Some(&device), json!({ "t": "notif_dismiss", "key": key }));
+        Ok(())
+    }
+
+    /// Turns showing a phone's notifications (`option` "notifications") or copying the codes in
+    /// them ("copy_codes") on or off (`key`: its name or id). Returns its name.
+    pub fn set_device_option(&self, key: &str, option: &str, on: bool) -> Result<String> {
+        let mut state = self.state.lock().unwrap();
+        let Some(d) = state.devices.iter_mut().find(|d| d.id == key || d.name.eq_ignore_ascii_case(key)) else {
+            bail!("no paired phone \"{key}\"");
+        };
+        match option {
+            "notifications" => d.notifications = Some(on),
+            "copy_codes" => d.copy_codes = Some(on),
+            _ => bail!("unknown option \"{option}\""),
+        }
+        let name = d.name.clone();
+        state.save()?;
+        drop(state);
+        self.emit(Event::Devices);
+        Ok(name)
     }
 
     /// Turns sending clipboard changes as they happen on or off for a phone or PC (`key`: name
@@ -1016,6 +1122,8 @@ fn add_device(app: &App, id: &str, name: &str, kind: DeviceKind, done: Option<on
             clipboard_sync: None,
             clipboard_auto: false,
             renamed: false,
+            notifications: None,
+            copy_codes: None,
             token_sha256: sha256_hex(token.as_bytes()),
             paired_at: now_secs(),
         });
@@ -1259,6 +1367,8 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                         info.model = v["model"].as_str().unwrap_or("").to_string();
                         info.adb_wifi = v["adb_wifi"].as_bool().unwrap_or(false);
                         info.dev_options = v["dev_options"].as_bool().unwrap_or(false);
+                        info.sdk = v["sdk"].as_u64().unwrap_or(0) as u32;
+                        info.sensitive_notifications = v["sensitive_notifications"].as_bool().unwrap_or(false);
                         drop(phones);
                         // The phone's name, as set in its app.
                         if let Some(name) = v["name"].as_str() {
@@ -1289,6 +1399,14 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                         let on = v["on"].as_bool().unwrap_or(false);
                         app.phones.lock().unwrap().entry(dev.id.clone()).or_default().ringing = on;
                         app.emit(Event::Devices);
+                    }
+                    if v["t"] == "notif" {
+                        app.phone_notification(&dev.id, &v).await;
+                    }
+                    if v["t"] == "notif_removed"
+                        && let Some(key) = v["key"].as_str()
+                    {
+                        app.phone_notification_removed(&dev.id, key);
                     }
                     if v["t"] == "url"
                         && let Some(url) = v["url"].as_str()
@@ -1827,6 +1945,12 @@ impl Drop for Progress {
     fn drop(&mut self) {
         self.finish(Err("interrupted".into()));
     }
+}
+
+/// A short id for a phone's notification: Windows limits a toast's tag to 64 characters, and
+/// Android's keys (`0|com.app|1|tag|10123`) can be longer.
+fn notification_tag(device: &str, key: &str) -> String {
+    sha256_hex(format!("{device}\n{key}").as_bytes())[..24].to_string()
 }
 
 /// Constant-time string comparison for secrets.

@@ -112,6 +112,14 @@ fn respond(response: SystemNotificationResponse, cx: &mut App) {
             // The notification itself: the window, where the banner asks too.
             _ => super::show_window(cx),
         }
+    } else if let Some(tag) = response.tag.strip_prefix("notif:") {
+        match action {
+            Some("dismiss") => {
+                let model = cx.global::<super::State>().model.clone();
+                model.update(cx, |m, cx| m.dismiss_phone_notification(tag.to_string(), cx));
+            }
+            _ => super::show_window(cx),
+        }
     } else {
         super::show_window(cx);
     }

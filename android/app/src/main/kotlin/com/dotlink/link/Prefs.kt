@@ -220,6 +220,43 @@ class Prefs(
         get() = sp.getFloat("pointer_speed", 1.4f)
         set(v) = sp.edit { putFloat("pointer_speed", v) }
 
+    /** "Show notifications on PC" (it also needs Notification access, see NotifListener). */
+    var notificationsToPc: Boolean
+        get() = sp.getBoolean("notifications_to_pc", false)
+        set(v) = sp.edit { putBoolean("notifications_to_pc", v) }
+
+    /** Apps turned on or off for the PC by hand: package → on. */
+    private var appChoices: Map<String, Boolean>
+        get() = runCatching { JSONObject(sp.getString("notification_apps", "{}")!!) }.getOrDefault(JSONObject()).let { o ->
+            o.keys().asSequence().associateWith { o.getBoolean(it) }
+        }
+        set(v) = sp.edit { putString("notification_apps", JSONObject(v).toString()) }
+
+    /** Whether [pkg]'s notifications go to the PC: chat apps start off, the rest on. */
+    fun forwardsApp(pkg: String): Boolean = appChoices[pkg] ?: (pkg !in CHAT_APPS)
+
+    fun setForwardsApp(
+        pkg: String,
+        on: Boolean,
+    ) {
+        appChoices = appChoices + (pkg to on)
+    }
+
+    /** Apps that posted a notification since it was turned on: package → name, for the list. */
+    val seenApps: Map<String, String>
+        get() = runCatching { JSONObject(sp.getString("notification_seen", "{}")!!) }.getOrDefault(JSONObject()).let { o ->
+            o.keys().asSequence().associateWith { o.getString(it) }
+        }
+
+    fun rememberApp(
+        pkg: String,
+        label: String,
+    ) {
+        val seen = seenApps
+        if (seen[pkg] == label || seen.size >= 300) return
+        sp.edit { putString("notification_seen", JSONObject(seen + (pkg to label)).toString()) }
+    }
+
     /** Forgets a PC that isn't the active one. */
     fun removePc(id: String) {
         pcs = pcs.filter { it.id != id }
@@ -262,5 +299,28 @@ class Prefs(
             pcs = emptyList()
         }
         sp.edit { listOf("hosts", "last_host", "port", "fingerprint", "token", "server_name", "server_id").forEach(::remove) }
+    }
+
+    companion object {
+        /** Chat apps: every message is a notification, so they start off. */
+        val CHAT_APPS =
+            setOf(
+                "com.whatsapp",
+                "com.whatsapp.w4b",
+                "org.telegram.messenger",
+                "org.telegram.messenger.web",
+                "org.thunderdog.challegram",
+                "org.thoughtcrime.securesms",
+                "com.facebook.orca",
+                "com.instagram.android",
+                "jp.naver.line.android",
+                "com.discord",
+                "com.Slack",
+                "com.tencent.mm",
+                "com.viber.voip",
+                "com.google.android.apps.dynamite",
+                "com.microsoft.teams",
+                "com.snapchat.android",
+            )
     }
 }

@@ -6,6 +6,13 @@ package com.dotlink.ui.settings
 
 import android.content.Intent
 import android.net.Uri
+import com.dotlink.link.NotifListener
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
+import android.provider.Settings
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -108,6 +115,48 @@ fun SettingsScreen() {
                 Hint("PC → phone is automatic. Phone → PC: open Dotlink, use Share → Dotlink, or the notification button.")
             }
 
+        }
+        if (pc) {
+            Section("Notifications") {
+                // Notification access is granted in the system's settings: read again on return.
+                var access by remember { mutableStateOf(NotifListener.enabled(context)) }
+                LifecycleResumeEffect(Unit) {
+                    access = NotifListener.enabled(context)
+                    onPauseOrDispose {}
+                }
+                var on by remember { mutableStateOf(prefs.notificationsToPc) }
+                var apps by remember { mutableStateOf(false) }
+                ListGroup {
+                    ListRow(
+                        title = "Show notifications on PC",
+                        subtitle = if (on && !access) "Needs Notification access: tap to allow Dotlink" else "Codes in them are copied on the PC",
+                        leadingIcon = DotlineIcons.Monitor,
+                        role = Role.Switch,
+                        onClick = {
+                            if (on && !access) {
+                                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                return@ListRow
+                            }
+                            on = !on
+                            prefs.notificationsToPc = on
+                            if (on && !access) context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        },
+                        trailing = { KuSwitch(checked = on && access, onCheckedChange = null) },
+                    )
+                    if (on) {
+                        ListDivider()
+                        ListRow(
+                            title = "Apps",
+                            subtitle = "Chat apps start off: they'd repeat every message",
+                            leadingIcon = DotlineIcons.Sliders,
+                            onClick = { apps = true },
+                            trailing = { ListRowChevron() },
+                        )
+                    }
+                }
+                Hint("Dismissing one on the PC dismisses it here. Ongoing ones (music, downloads) stay on the phone.")
+                if (apps) NotificationAppsSheet(onDismissRequest = { apps = false })
+            }
         }
         Section("Received files") {
             var ask by remember { mutableStateOf(prefs.askBeforeReceiving) }
@@ -300,6 +349,40 @@ fun SettingsScreen() {
                             trailing = { ListRowChevron() },
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/** Which apps' notifications go to the PC: those that posted one since it was turned on. */
+@Composable
+private fun NotificationAppsSheet(onDismissRequest: () -> Unit) {
+    val prefs = DotlinkApp.link.prefs
+    val apps = remember { prefs.seenApps.entries.sortedBy { it.value.lowercase() } }
+    DotlineBottomSheet(onDismissRequest = onDismissRequest) {
+        SheetHeader(icon = DotlineIcons.Sliders, title = "Apps on the PC", subtitle = null)
+        if (apps.isEmpty()) {
+            Hint("Apps show here once they post a notification.")
+            return@DotlineBottomSheet
+        }
+        Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+            ListGroup(inSheet = true) {
+                apps.forEachIndexed { i, (pkg, label) ->
+                    var on by remember(pkg) { mutableStateOf(prefs.forwardsApp(pkg)) }
+                    if (i > 0) ListDivider()
+                    ListRow(
+                        title = label,
+                        subtitle = pkg,
+                        subtitleIsData = true,
+                        inSheet = true,
+                        role = Role.Switch,
+                        onClick = {
+                            on = !on
+                            prefs.setForwardsApp(pkg, on)
+                        },
+                        trailing = { KuSwitch(checked = on, onCheckedChange = null) },
+                    )
                 }
             }
         }

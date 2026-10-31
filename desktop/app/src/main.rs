@@ -362,9 +362,11 @@ fn print_qr(data: &str) {
 #[cfg(windows)]
 async fn open_link(link: &str) -> Result<()> {
     let answer = link.strip_prefix("dotlink:accept/").map(|id| (id, true)).or(link.strip_prefix("dotlink:decline/").map(|id| (id, false)));
-    let result = match answer {
-        Some((id, accept)) => simple(json!({ "cmd": "answer_incoming", "id": id.trim_end_matches('/'), "accept": accept })).await,
-        None => dotlink_core::platform::open_link(link),
+    let result = match (answer, link.strip_prefix("dotlink:dismiss/")) {
+        (Some((id, accept)), _) => simple(json!({ "cmd": "answer_incoming", "id": id.trim_end_matches('/'), "accept": accept })).await,
+        // Dismiss on a phone's notification.
+        (None, Some(tag)) => simple(json!({ "cmd": "notif_dismiss", "tag": tag.trim_end_matches('/') })).await,
+        (None, None) => dotlink_core::platform::open_link(link),
     };
     if let Err(e) = result {
         dotlink_core::platform::notify("Dotlink", &format!("{e:#}"));

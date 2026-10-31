@@ -217,6 +217,50 @@ pub fn dismiss_incoming(id: &str) {
     }
 }
 
+const PHONE_GROUP: &str = "phone";
+
+/// A phone's notification with Dismiss: a `dotlink:dismiss/<tag>` link, which dismisses it on
+/// the phone too. The app's icon shows as the toast's logo.
+pub fn notify_phone(_app: &std::sync::Arc<crate::server::App>, n: &super::PhoneNotification) {
+    use windows::Data::Xml::Dom::XmlDocument;
+    use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+    use windows::core::HSTRING;
+    register_app_id();
+    register_url_scheme();
+    let logo = n.icon.as_ref().map(|p| {
+        format!(r#"<image placement="appLogoOverride" hint-crop="circle" src="{}"/>"#, xml_escape(&p.to_string_lossy()))
+    });
+    let xml = format!(
+        r#"<toast><visual><binding template="ToastGeneric">{logo}<text>{title}</text><text>{body}</text></binding></visual><actions><action content="Dismiss" activationType="protocol" arguments="{dismiss}"/></actions></toast>"#,
+        logo = logo.unwrap_or_default(),
+        title = xml_escape(&n.title),
+        body = xml_escape(&n.body),
+        dismiss = xml_escape(&format!("dotlink:dismiss/{}", n.tag)),
+    );
+    let shown = (|| -> windows::core::Result<()> {
+        let doc = XmlDocument::new()?;
+        doc.LoadXml(&HSTRING::from(xml))?;
+        let toast = ToastNotification::CreateToastNotification(&doc)?;
+        toast.SetTag(&HSTRING::from(n.tag.as_str()))?;
+        toast.SetGroup(&HSTRING::from(PHONE_GROUP))?;
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))?.Show(&toast)
+    })();
+    if let Err(e) = shown {
+        tracing::warn!("notification: {e}");
+    }
+}
+
+/// Takes away a phone's notification once the phone removed it.
+pub fn dismiss_phone(tag: &str) {
+    use windows::UI::Notifications::ToastNotificationManager;
+    use windows::core::HSTRING;
+    let removed = ToastNotificationManager::History()
+        .and_then(|h| h.RemoveGroupedTagWithId(&HSTRING::from(tag), &HSTRING::from(PHONE_GROUP), &HSTRING::from(APP_ID)));
+    if let Err(e) = removed {
+        tracing::debug!("notification: {e}");
+    }
+}
+
 /// `name`: what to show; `file`: the file's name in the download folder, for the links.
 fn file_toast_xml(from: &str, name: &str, file: &str) -> String {
     let link = |action: &str| xml_escape(&format!("dotlink:{action}/{}", crate::config::url_encode(file)));

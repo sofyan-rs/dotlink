@@ -144,9 +144,12 @@ Control messages (`{"t": …}`):
 | PC → phone | `ring` | `on: bool`: ring at full volume (an alarm, so silent mode doesn't mute it) until stopped or a minute passed |
 | phone ↔ PC, PC ↔ PC | `url` | `url`: open it in the default browser; only `http`/`https` are opened |
 | phone → PC | `clip` | phone clipboard text |
-| phone → PC | `info` | phone name, model, Wireless debugging on, Developer options on (for Cast) |
+| phone → PC | `info` | phone name, model, Wireless debugging on, Developer options on (for Cast), `sdk`, `sensitive_notifications` |
 | phone → PC | `decline` | `id`: the file offer it won't take ("Ask before receiving files"); the PC lists it as declined |
 | phone → PC | `media` | `state: needs_tap`: starting camera/mic waits for a tap |
+| phone → PC | `notif` | `key`, `app`, `pkg`, `title`, `text`, `time`, `icon` (base64 PNG, the first time per app on a connection) |
+| phone → PC | `notif_removed` | `key`: gone on the phone, taken away on the PC |
+| PC → phone | `notif_dismiss` | `key`: Dismiss on the PC |
 | phone → PC | `ring` | `on: bool`: it started or stopped ringing (Stop on either end, or the minute ran out) |
 | phone → PC | `battery` | `level` (percent), `charging`; on connect and when either changes. The sidebar and the phone's page show it while it's connected |
 
@@ -238,7 +241,7 @@ Windows the named pipe
 `\\.\pipe\dotlink-<user SID>` with an ACL that only lets that user in. One JSON
 request line in, one or more reply lines out.
 
-`pair` (also returns the code) · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `nearby` · `join_code` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` · `open` · `ring` ·
+`pair` (also returns the code) · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `nearby` · `join_code` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` · `open` · `ring` · `notif_dismiss` · `device_option` · `allow_codes` ·
 `cast_pair` · `clear_transfers` (Activity → Clear: the finished and failed ones) · `watch` (event stream, see `events.rs`) · `show` · `quit`
 
 ## Features, briefly
@@ -290,6 +293,18 @@ request line in, one or more reply lines out.
   makes a stray link noticed. The phone sends a link shared to Dotlink as `url` instead of
   `clip`; a link it receives opens right away when the app is on screen, else as a notification
   with Open (Android 10+ doesn't let a background app start an activity).
+- **Notifications.** `NotifListener` (a NotificationListenerService, behind Notification
+  access) forwards posted and removed notifications while linked, skipping ongoing ones,
+  group summaries, Dotlink's own and apps turned off (chat apps start off). The PC shows them
+  through `platform::notify_phone` (notify-send with a Dismiss action; a toast with a
+  `dotlink:dismiss/<tag>` button; a Notification Center notification the app posts) under a
+  short `notification_tag`, and Dismiss sends `notif_dismiss`. `codes::find` copies 4–8 digits
+  (or `G-123456`) near "code", "OTP", "verification", "kode", "verifikasi"… to the clipboard,
+  remembered as the last clip so it isn't sent back. Text isn't written to disk; icons are
+  cached in `icons/`. Per phone: `notifications` and `copy_codes` in state.json (both on).
+  Android 15+ hides codes from listeners: **Allow** on the phone's page runs `adb shell appops
+  set com.dotlink.android RECEIVE_SENSITIVE_NOTIFICATIONS allow` (`cast::allow_sensitive_notifications`,
+  USB or Wireless debugging), which stays after debugging is off.
 - **Ring.** `Ringer` on the phone plays the default ringtone (the alarm sound as fallback) with
   `USAGE_ALARM`, looping, the alarm volume at its maximum and put back after; a full-screen
   notification (`RingActivity`, over the lock screen) has Stop. It reports `ring` on and off, so

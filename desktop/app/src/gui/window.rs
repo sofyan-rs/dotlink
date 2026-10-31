@@ -680,7 +680,7 @@ impl MainView {
         });
 
         let clip_id = d.id.clone();
-        let sync = group(p).child(
+        let mut sync = group(p).child(
             row(p)
                 .child(
                     div()
@@ -696,6 +696,61 @@ impl MainView {
                     this.model.update(cx, |m, cx| m.set_clipboard_auto(id, on, cx));
                 }))),
         );
+        // A phone's notifications, and the codes in them.
+        if d.is_phone() {
+            let switch_row = |key: &'static str, title: &str, detail: String, checked: bool, cx: &mut Context<Self>| {
+                let id = d.id.clone();
+                row(p)
+                    .border_t_1()
+                    .border_color(p.line)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(title.to_string())
+                            .child(div().text_size(px(13.)).text_color(p.ink_muted).child(detail)),
+                    )
+                    .child(Switch::new(key).checked(checked).on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                        let (id, on) = (id.clone(), *checked);
+                        this.model.update(cx, |m, cx| m.set_device_option(id, key, on, cx));
+                    })))
+            };
+            sync = sync.child(switch_row(
+                "notifications",
+                "Notifications",
+                format!("{}'s notifications show here; Dismiss dismisses them there too. Turn on Show notifications on PC in the phone app.", d.name),
+                d.notifications,
+                cx,
+            ));
+            if d.notifications {
+                sync = sync.child(switch_row(
+                    "copy_codes",
+                    "Copy verification codes",
+                    "A code in a notification (an SMS, a bank) goes to this PC's clipboard.".into(),
+                    d.copy_codes,
+                    cx,
+                ));
+            }
+            // Android 15+ hides codes from apps reading notifications until allowed over adb.
+            if d.notifications && d.copy_codes && d.online && d.sdk.unwrap_or(0) >= 35 && d.sensitive_notifications == Some(false) {
+                let allow_id = d.id.clone();
+                sync = sync.child(
+                    row(p)
+                        .border_t_1()
+                        .border_color(p.line)
+                        .child(div().flex_1().min_w_0().text_size(px(13.)).text_color(p.ink_muted).child(format!(
+                            "Android 15 hides codes in notifications from Dotlink. Allow it once with {} on USB or Wireless debugging.",
+                            d.name
+                        )))
+                        .child(pill(p, "allow-codes", "Allow", Kind::Secondary).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            let id = allow_id.clone();
+                            this.model.update(cx, |m, cx| m.allow_codes(id, cx))
+                        }))),
+                );
+            }
+        }
 
         let recent: Vec<&Transfer> = status.transfers.iter().filter(|t| t.device == d.name).take(3).collect();
         let recent = (!recent.is_empty()).then(|| {

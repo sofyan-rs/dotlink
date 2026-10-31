@@ -112,6 +112,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- "Show notifications on PC": reads notifications once Notification access is granted. -->
+        <service
+            android:name=".link.NotifListener"
+            android:exported="true"
+            android:label="Dotlink: notifications on PC"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <service
             android:name=".link.LinkService"
             android:exported="false"
