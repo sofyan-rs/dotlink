@@ -193,6 +193,11 @@ impl Client {
         ok_text(self.call(json!({ "cmd": "join_code", "id": id, "code": code })))
     }
 
+    /// Names the device `id` on this PC.
+    pub fn rename(&self, id: &str, name: &str) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "rename", "id": id, "name": name })))
+    }
+
     /// Sends this PC's clipboard changes to a linked PC as they happen, or stops.
     pub fn clipboard_auto(&self, id: &str, on: bool) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "clipboard_auto", "id": id, "on": on })))

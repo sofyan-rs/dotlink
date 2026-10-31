@@ -10,7 +10,7 @@ are supported, and so is macOS (the webcam goes through OBS).
 | Feature | Phone → PC | PC → phone |
 |---|---|---|
 | **Files** | Share → Dotlink, or **Send** in the app | Drop files on the window, the tray's *Send files…*, right-click → *Share with Dotlink* (Windows) or *Quick Actions → Dotlink: …* (macOS), or `dotlink send` |
-| **Clipboard** | When you open the app, or the notification's *Send clipboard* | Automatic |
+| **Clipboard** | When you open the app, or the notification's *Send clipboard* | Automatic (turn it off per phone: **Clipboard sync** on its page) |
 | **Remote** | The phone as touchpad and keyboard | |
 | **Shell** | A terminal on the PC; the session survives reconnects | |
 | **Webcam** | The phone camera as **Dotlink Camera** in any app (calls, browsers, OBS) | |
@@ -119,7 +119,7 @@ Settings → Privacy & Security and click **Open Anyway**. Updates install from 
 #### The phone camera as a webcam on macOS
 
 1. Install OBS (Setup → *Webcam* → *Fix* opens its download page) and open it.
-2. In Dotlink: **Phones → Webcam → Copy OBS link**. The link stays the same, so this is once.
+2. In Dotlink: pick the phone in the sidebar → **Copy OBS link**. The link stays the same, so this is once.
 3. In OBS: **Sources → + → Browser**, name it "Dotlink", then:
    - **URL:** paste the link;
    - **Width** 1280, **Height** 720;
@@ -167,7 +167,7 @@ code**. Then pick the phone in **Phones** to send files or the clipboard, or cho
 Two PCs can send each other files and the clipboard. On the first PC, open **Pair**: it shows a
 6-digit code. On the second, open **Pair → Join a PC**, pick the first PC, type the code and press
 **Join** (or `dotlink nearby`, then `dotlink join "<name>" --code 123456`). Instead of the code,
-**Copy link** on the first PC and paste the link on the second also works (`dotlink join "<link>"`). The PC then shows on the **PCs** page. Clipboard changes go
+**Copy link** on the first PC and paste the link on the second also works (`dotlink join "<link>"`). The PC then shows in the sidebar, with its own page. Clipboard changes go
 to it only with **Clipboard sync** on for that PC (`dotlink clip-auto <pc> on`); **Send clipboard**
 works either way. A laptop's battery shows there too.
 
@@ -191,11 +191,11 @@ Dotlink).
 
 - Closing the window keeps Dotlink in the tray, so the phone stays connected. Quit from the tray or
   Settings.
-- The webcam and mic start from the phone, or from **Phones** on the PC (`dotlink camera on`). If
+- The webcam and mic start from the phone, or from the phone's page on the PC (`dotlink camera on`). If
   the phone app isn't open, the phone shows a notification: tap **Start**.
 - Phone → PC clipboard happens when you open the app: Android only lets the app in front read the
   clipboard.
-- **Phones** shows each connected phone's battery level and whether it's charging.
+- The sidebar and each phone's page show its battery level and whether it's charging.
 
 ## CLI
 
@@ -223,7 +223,6 @@ The **Settings** page, or `config.toml` in `~/.config/dotlink/` (Linux) or `%APP
 name = ""                  # what the phones call this PC (default: the hostname)
 port = 47390
 download_dir = "~/Downloads/Dotlink"
-clipboard_sync = true
 terminal = true            # false turns the Shell off
 terminal_pin = ""          # require this PIN to open the Shell
 shell = ""                 # default: your login shell (Linux), pwsh or powershell (Windows)
@@ -240,7 +239,7 @@ theme = "system"           # "system", "light" or "dark"
 
 The phone pins the PC's certificate when pairing, and every connection uses TLS plus a token.
 **A paired phone can open a shell on your PC**: turn the Shell off or set a PIN if that worries you.
-Forget a phone in **Phones** (or `dotlink unpair`) to cut it off right away.
+Forget a phone from its page, **⋯ → Forget** (or `dotlink unpair`), to cut it off right away.
 
 ## Limits
 

@@ -36,8 +36,15 @@ pub async fn run(
 }
 
 async fn start(ui: Option<mpsc::UnboundedSender<UiRequest>>) -> Result<(Arc<App>, tls::Identity)> {
-    let config = config::Config::load()?;
-    let state = config::State::load()?;
+    let mut config = config::Config::load()?;
+    let mut state = config::State::load()?;
+    if !config.clipboard_sync {
+        // Clipboard sync used to be one switch for all phones; it's per device now.
+        state.clipboard_off_everywhere();
+        state.save()?;
+        config.clipboard_sync = true;
+        config.save()?;
+    }
     let identity = tls::load_or_create()?;
     let app = App::new(config, state, identity.fingerprint.clone());
     if let Some(ui) = ui {
@@ -54,7 +61,7 @@ async fn start(ui: Option<mpsc::UnboundedSender<UiRequest>>) -> Result<(Arc<App>
 }
 
 async fn serve(app: Arc<App>, identity: tls::Identity) -> Result<()> {
-    // Always watched; `clipboard_sync` is checked per change so the setting applies live.
+    // Always watched; each device's clipboard sync is checked per change so it applies live.
     tokio::spawn(platform::clipboard::watch(app.clone()));
     tokio::spawn(crate::usb::watch(app.clone()));
     crate::peer::start_all(&app);

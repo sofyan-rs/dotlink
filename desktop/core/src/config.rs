@@ -16,7 +16,9 @@ pub struct Config {
     pub port: u16,
     /// Where files sent from the phone are saved. `~` is expanded.
     pub download_dir: String,
-    /// Push PC clipboard changes to the phone automatically.
+    /// The old switch for every phone at once; clipboard sync is per device now
+    /// (`Device::clipboard_sync`). Read so `false` can be carried over, never written.
+    #[serde(skip_serializing)]
     pub clipboard_sync: bool,
     /// Ask (notification, window) before taking a file from a phone or PC; off: take it.
     pub ask_before_receiving: bool,
@@ -124,13 +126,27 @@ pub struct Device {
     pub name: String,
     #[serde(default)]
     pub kind: DeviceKind,
-    /// A PC: send it this PC's clipboard changes as they happen (phones always get them while
-    /// `clipboard_sync` is on).
+    /// Send it this PC's clipboard changes as they happen. None until set: on for a phone, off
+    /// for a PC (two PCs copying would keep overwriting each other). See [`Device::sends_clipboard`].
     #[serde(default)]
+    pub clipboard_sync: Option<bool>,
+    /// The older per-PC setting, written `false` for every phone too: only a PC's is carried
+    /// over to `clipboard_sync` (in [`State::load`]), and it's never written again.
+    #[serde(default, skip_serializing)]
     pub clipboard_auto: bool,
+    /// Named on this PC (`dotlink rename`): the name the phone sends no longer replaces it.
+    #[serde(default)]
+    pub renamed: bool,
     /// SHA-256 of the bearer token; the token itself is only known to the phone.
     pub token_sha256: String,
     pub paired_at: u64,
+}
+
+impl Device {
+    /// Whether this PC's clipboard changes go to it as they happen.
+    pub fn sends_clipboard(&self) -> bool {
+        self.clipboard_sync.unwrap_or(self.kind == DeviceKind::Phone)
+    }
 }
 
 /// A PC this one linked to with its pairing link (`peer.rs`): this PC connects to it.
@@ -150,6 +166,9 @@ pub struct Peer {
     /// Send it this PC's clipboard changes as they happen.
     #[serde(default)]
     pub clipboard_auto: bool,
+    /// Named on this PC (`dotlink rename`): the name it sends no longer replaces it.
+    #[serde(default)]
+    pub renamed: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -171,6 +190,7 @@ impl State {
         } else {
             State::default()
         };
+        state.carry_over_clipboard_auto();
         if state.server_id.is_empty() {
             state.server_id = random_hex(8);
             state.save()?;
@@ -186,6 +206,26 @@ impl State {
         set_private(&tmp);
         std::fs::rename(tmp, path)?;
         Ok(())
+    }
+
+    /// A PC that had the older `clipboard_auto` on keeps getting the clipboard.
+    fn carry_over_clipboard_auto(&mut self) {
+        for d in &mut self.devices {
+            if d.kind == DeviceKind::Pc && d.clipboard_sync.is_none() && d.clipboard_auto {
+                d.clipboard_sync = Some(true);
+            }
+        }
+    }
+
+    /// Clipboard sync was turned off for every phone at once (`clipboard_sync = false`): keep
+    /// it off for each device, now that it's set per device.
+    pub fn clipboard_off_everywhere(&mut self) {
+        for d in &mut self.devices {
+            d.clipboard_sync = Some(false);
+        }
+        for p in &mut self.peers {
+            p.clipboard_auto = false;
+        }
     }
 
     pub fn device_for_token(&self, token: &str) -> Option<&Device> {
@@ -313,6 +353,23 @@ pub fn set_private(path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Older versions wrote `clipboard_auto: false` for every phone: phones keep syncing, and a
+    /// PC that had it on keeps it.
+    #[test]
+    fn clipboard_auto_carries_over() {
+        let mut state: State = serde_json::from_str(
+            r#"{"server_id":"x","devices":[
+                {"id":"a","name":"Phone","kind":"phone","clipboard_auto":false,"token_sha256":"","paired_at":0},
+                {"id":"b","name":"PC on","kind":"pc","clipboard_auto":true,"token_sha256":"","paired_at":0},
+                {"id":"c","name":"PC off","kind":"pc","clipboard_auto":false,"token_sha256":"","paired_at":0}]}"#,
+        )
+        .unwrap();
+        state.carry_over_clipboard_auto();
+        let on: Vec<bool> = state.devices.iter().map(Device::sends_clipboard).collect();
+        assert_eq!(on, [true, true, false]);
+        assert!(!serde_json::to_string(&state).unwrap().contains("clipboard_auto"));
+    }
 
     #[test]
     fn devices_paired_before_kinds_are_phones() {

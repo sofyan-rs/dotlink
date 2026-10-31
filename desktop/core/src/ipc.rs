@@ -197,6 +197,11 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
         "status" => {
             w.write_all(reply(app.status()).as_bytes()).await?;
         }
+        "rename" => {
+            let name = req["name"].as_str().unwrap_or("");
+            let msg = result(app.set_name(req["id"].as_str().unwrap_or(""), name).map(|old| format!("{old} is now {}", name.trim())));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
         "unpair" => {
             let msg = result(app.unpair(req["id"].as_str().unwrap_or("")).map(|name| format!("unpaired {name}")));
             w.write_all(reply(msg).as_bytes()).await?;

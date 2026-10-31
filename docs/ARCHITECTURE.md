@@ -145,7 +145,7 @@ Control messages (`{"t": …}`):
 | phone → PC | `info` | phone name, model, Wireless debugging on, Developer options on (for Cast) |
 | phone → PC | `decline` | `id`: the file offer it won't take ("Ask before receiving files"); the PC lists it as declined |
 | phone → PC | `media` | `state: needs_tap`: starting camera/mic waits for a tap |
-| phone → PC | `battery` | `level` (percent), `charging`; on connect and when either changes. The Phones page shows it while the phone is connected |
+| phone → PC | `battery` | `level` (percent), `charging`; on connect and when either changes. The sidebar and the phone's page show it while it's connected |
 
 ### Wi-Fi or USB
 
@@ -212,8 +212,10 @@ of PCs has one link; the other PC lists it as a paired device of kind `pc`, and 
 join it back. Either side can unpair: the joiner calls `DELETE /pair`, and the other PC's
 refusal (401) makes the joiner forget it.
 
-Phones get clipboard changes while `clipboard_sync` is on; a PC only with `clipboard_auto` set
-for it (`dotlink clip-auto <pc> on`), since two PCs copying would keep overwriting each other.
+Clipboard changes go to each device with `clipboard_auto` on (the **Clipboard sync** switch on
+its row, or `dotlink clip-auto <device> on|off`). Unset, it's on for a phone and off for a PC,
+since two PCs copying would keep overwriting each other. The old global `clipboard_sync = false`
+is carried over to every device once, at startup.
 `dotlink clip` and `dotlink send` reach linked PCs like phones.
 
 **Joining with a code.** The joining PC lists the others from mDNS (`nearby`: `_dotlink._tcp`
@@ -269,8 +271,8 @@ request line in, one or more reply lines out.
   voice-processing input is silent outside a call (vivo / iQOO) fall back to the plain mic.
   The phone offers 30 or 60 fps, only what the lens in use lists; the Windows camera offers
   both rates and paces by the one the app picks.
-- **Battery.** The phone reports its level and charging state (`battery`); the Phones page
-  shows it for connected phones. Linked PCs send each other the same message when they have
+- **Battery.** The phone reports its level and charging state (`battery`); the sidebar and
+  the phone's page show it while it's connected. Linked PCs send each other the same message when they have
   a battery (`platform::battery()`: `GetSystemPowerStatus` on Windows, `/sys/class/power_supply`
   on Linux, `pmset -g batt` on macOS), on connect and when it changes (read once a minute).
   "Charging" means on power, as on the phone.

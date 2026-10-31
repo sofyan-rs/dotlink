@@ -221,6 +221,7 @@ fn save_peer(app: &Arc<App>, id: &str, name: &str, fingerprint: &str, addr: Sock
             token: token.to_string(),
             paired_at: now_secs(),
             clipboard_auto: false,
+            renamed: false,
         });
         state.save()?;
     }
@@ -511,7 +512,7 @@ fn rename(app: &App, id: &str, name: &str) {
     let name: String = name.trim().chars().filter(|c| !c.is_control()).take(64).collect();
     let mut state = app.state.lock().unwrap();
     let Some(peer) = state.peers.iter_mut().find(|p| p.id == id) else { return };
-    if name.is_empty() || peer.name == name {
+    if name.is_empty() || peer.name == name || peer.renamed {
         return;
     }
     peer.name = name;

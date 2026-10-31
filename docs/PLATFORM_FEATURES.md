@@ -57,7 +57,7 @@ Everything goes over the phone's Dotlink connection to the PC: HTTPS and WebSock
 The phone tries the cable first. On Wi-Fi it checks for the cable every 5 s and moves over
 (the link drops for a few tens of milliseconds); plugging a cable in also retries at once
 when the phone was offline. Unplugged, it reconnects over Wi-Fi within seconds. The PC's
-Phones page and the phone show which one is in use ("Online · USB" / "USB cable"). The PC
+page for the phone and the phone show which one is in use ("Online · USB" / "USB cable"). The PC
 setting `usb_link = false` turns the cable link off.
 
 USB needs, once: Developer options and USB debugging on, and "Allow USB debugging" accepted

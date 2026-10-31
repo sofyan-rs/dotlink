@@ -1,6 +1,7 @@
-//! The Dotlink window: a sidebar and five pages.
+//! The Dotlink window: a sidebar listing the devices, a page per device, and Pair, Activity,
+//! Setup and Settings.
 
-use super::client::{Battery, DeviceInfo, Status};
+use super::client::{DeviceInfo, Status};
 use super::model::{Model, Notice, Page, Pairing, UpdateState};
 use super::theme::{self, DISPLAY, MONO, Palette, palette};
 use super::title_bar::TitleBar;
@@ -14,7 +15,7 @@ use gpui::{
     PathPromptOptions, SharedString, Stateful, Subscription, Window, canvas, div, fill, point, px, size,
 };
 use gpui_component::WindowExt as _;
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::button::Button;
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
@@ -50,6 +51,11 @@ pub struct MainView {
     /// The PC picked on the Pair page's Join a PC, and the code it shows.
     join_pick: Option<String>,
     join_code: Entity<InputState>,
+    /// The device whose name is being edited on its page, and the field.
+    renaming: Option<String>,
+    rename_input: Entity<InputState>,
+    /// The device Forget was picked for, waiting on its confirmation: (id, name, a phone).
+    forgetting: Option<(String, String, bool)>,
     _subs: Vec<Subscription>,
 }
 
@@ -63,7 +69,6 @@ struct SettingsForm {
     port: Entity<InputState>,
     camera_size: Entity<InputState>,
     cast_max_size: Entity<InputState>,
-    clipboard_sync: bool,
     ask_before_receiving: bool,
     terminal: bool,
     cast_screen_off: bool,
@@ -85,7 +90,6 @@ impl MainView {
             port: input("47390", window, cx),
             camera_size: input("1920x1080", window, cx),
             cast_max_size: input("Full resolution", window, cx),
-            clipboard_sync: true,
             ask_before_receiving: false,
             terminal: true,
             cast_screen_off: false,
@@ -127,7 +131,7 @@ impl MainView {
                     // Pairing countdown, and "Starting…" running out; only on the page showing it.
                     let ticking = match m.page {
                         Page::Pair => matches!(m.pairing, Pairing::Waiting { .. }),
-                        Page::Phones => !m.starting.is_empty(),
+                        Page::Device => !m.starting.is_empty(),
                         _ => false,
                     };
                     if ticking {
@@ -143,7 +147,45 @@ impl MainView {
         let cast_code = cx.new(|cx| InputState::new(window, cx).placeholder("6-digit code"));
         let join_link = cx.new(|cx| InputState::new(window, cx).placeholder("dotlink://pair?…"));
         let join_code = cx.new(|cx| InputState::new(window, cx).placeholder("6-digit code"));
-        Self { model, form, cast_code, qr: None, pair_tab: 0, join_link, join_pick: None, join_code, _subs: subs }
+        let rename_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
+        let mut subs = subs;
+        // Enter or clicking elsewhere saves the new name (Esc cancels, on the field).
+        subs.push(cx.subscribe_in(&rename_input, window, |this, _, event: &InputEvent, _, cx| {
+            if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                this.save_rename(cx);
+            }
+        }));
+        Self {
+            model,
+            form,
+            cast_code,
+            qr: None,
+            pair_tab: 0,
+            join_link,
+            join_pick: None,
+            join_code,
+            renaming: None,
+            rename_input,
+            forgetting: None,
+            _subs: subs,
+        }
+    }
+
+    /// Turns the device's name on its page into a field.
+    fn start_rename(&mut self, id: String, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.rename_input.update(cx, |s, cx| s.set_value(name, window, cx));
+        self.rename_input.update(cx, |s, cx| s.focus(window, cx));
+        self.renaming = Some(id);
+        cx.notify();
+    }
+
+    fn save_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.renaming.take() else { return };
+        let name = self.rename_input.read(cx).value().trim().to_string();
+        if !name.is_empty() {
+            self.model.update(cx, |m, cx| m.rename_device(id, name, cx));
+        }
+        cx.notify();
     }
 
     fn go(&mut self, page: Page, cx: &mut Context<Self>) {
@@ -158,8 +200,8 @@ impl MainView {
         });
     }
 
-    /// Picks files and sends them to the phones (`phones`) or the PCs, as chosen on that page.
-    fn pick_and_send(&mut self, phones: bool, cx: &mut Context<Self>) {
+    /// Picks files and sends them to the device `id`.
+    fn pick_and_send(&mut self, id: String, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -169,7 +211,7 @@ impl MainView {
         let model = self.model.clone();
         cx.spawn(async move |_, cx| {
             if let Ok(Ok(Some(paths))) = picked.await {
-                model.update(cx, |m, cx| m.send_files_to(paths, phones, cx));
+                model.update(cx, |m, cx| m.send_files_to(paths, id, cx));
             }
         })
         .detach();
@@ -194,7 +236,6 @@ impl MainView {
         if config.cast_max_size > 0 {
             set(&self.form.cast_max_size, config.cast_max_size.to_string(), window, cx);
         }
-        self.form.clipboard_sync = config.clipboard_sync;
         self.form.ask_before_receiving = config.ask_before_receiving;
         self.form.terminal = config.terminal;
         self.form.cast_screen_off = config.cast_screen_off;
@@ -217,7 +258,6 @@ impl MainView {
     /// Switches apply as soon as they're flipped (only the text fields wait for Save).
     fn save_switches(&mut self, cx: &mut Context<Self>) {
         let Some(mut config) = self.model.read(cx).status.as_ref().map(|s| s.config.clone()) else { return };
-        config.clipboard_sync = self.form.clipboard_sync;
         config.ask_before_receiving = self.form.ask_before_receiving;
         config.terminal = self.form.terminal;
         config.cast_screen_off = self.form.cast_screen_off;
@@ -253,7 +293,6 @@ impl MainView {
                 return;
             }
         }
-        config.clipboard_sync = self.form.clipboard_sync;
         config.ask_before_receiving = self.form.ask_before_receiving;
         config.terminal = self.form.terminal;
         config.cast_screen_off = self.form.cast_screen_off;
@@ -269,8 +308,7 @@ impl Render for MainView {
         let p = palette(cx);
         let page = self.model.read(cx).page;
         let content = match page {
-            Page::Phones => self.phones_page(&p, cx).into_any_element(),
-            Page::Pcs => self.pcs_page(&p, cx).into_any_element(),
+            Page::Device => self.device_page(&p, cx),
             Page::Pair => self.pair(&p, cx).into_any_element(),
             Page::Activity => self.activity(&p, cx).into_any_element(),
             Page::Setup => self.setup(&p, cx).into_any_element(),
@@ -298,6 +336,7 @@ impl Render for MainView {
                         .children(self.incoming_banner(&p, cx))
                         .child(content),
                 ));
+        let body = div().size_full().relative().child(body).children(self.confirm_forget(&p, cx));
         // GNOME (and other compositors without server-side decorations) leave the title bar to
         // the app: draw one with window controls (title_bar.rs). gpui-component's Root already
         // adds the resizable frame and its shadow. KDE and Hyprland decorate (or tile) the window.
@@ -329,6 +368,76 @@ const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for ad
 const SETUP_INTRO: &str = "What each feature needs from this PC. Fix asks for your password once (polkit).";
 #[cfg(target_os = "macos")]
 const SETUP_INTRO: &str = "What each feature needs from this Mac. Fix opens System Settings where you allow it.";
+
+// ---------- confirming Forget ----------
+
+impl MainView {
+    /// "Forget <name>?" over the window, like the phone app's dialog: the backdrop or Esc
+    /// cancels.
+    fn confirm_forget(&self, p: &Palette, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let (id, name, phone) = self.forgetting.clone()?;
+        let body = if phone {
+            "It stops connecting to this PC right away. To link it again, pair it from Pair."
+        } else {
+            "The two PCs stop sending each other files and the clipboard. Join again to link them."
+        };
+        let cancel = |this: &mut Self, cx: &mut Context<Self>| {
+            this.forgetting = None;
+            cx.notify();
+        };
+        Some(
+            div()
+                .id("forget-backdrop")
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::black().opacity(0.6))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| cancel(this, cx)))
+                .on_key_down(cx.listener(move |this, e: &gpui::KeyDownEvent, _, cx| {
+                    if e.keystroke.key == "escape" {
+                        cancel(this, cx);
+                    }
+                }))
+                .child(
+                    div()
+                        .id("forget-dialog")
+                        .w(px(400.))
+                        .p(px(24.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(12.))
+                        .rounded(px(CARD_RADIUS))
+                        .bg(p.surface)
+                        .border_1()
+                        .border_color(p.line_strong)
+                        // Clicks inside the card don't reach the backdrop.
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .child(div().text_size(px(20.)).font_weight(FontWeight::SEMIBOLD).child(format!("Forget {name}?")))
+                        .child(div().text_color(p.ink_muted).child(body))
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(8.))
+                                .pt(px(12.))
+                                .child(pill(p, "forget-cancel", "Cancel", Kind::Secondary).flex_1().justify_center().on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _, cx| cancel(this, cx),
+                                )))
+                                .child(pill(p, "forget-confirm", "Forget", Kind::Danger).flex_1().justify_center().on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _, cx| {
+                                        let id = id.clone();
+                                        this.forgetting = None;
+                                        this.model.update(cx, |m, cx| m.unpair(id, cx));
+                                    },
+                                ))),
+                        ),
+                ),
+        )
+    }
+}
 
 // ---------- incoming files ----------
 
@@ -383,25 +492,34 @@ impl MainView {
 // ---------- sidebar ----------
 
 impl MainView {
+    /// DOTLINK, the paired phones and linked PCs (each opens its page), Pair, then the pages
+    /// about this PC.
     fn sidebar(&self, p: &Palette, page: Page, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.model.read(cx);
         let connected = model.connected;
         let hostname = model.status.as_ref().map(|s| s.name.clone()).unwrap_or_default();
         let (phones, pcs) = model.online_counts();
+        let current = model.current_device().filter(|_| page == Page::Device).map(|d| d.id.clone());
+        let devices: Vec<DeviceInfo> = model.devices().into_iter().cloned().collect();
+        let mut list = div().flex().flex_col().gap(px(4.));
+        for d in devices {
+            let selected = current.as_deref() == Some(d.id.as_str());
+            let id = d.id.clone();
+            list = list.child(
+                nav_item(p, SharedString::from(format!("nav-device-{}", d.id)), selected)
+                    // The dot in an icon-wide box, so names line up with the labels below.
+                    .child(div().w(px(18.)).flex().justify_center().child(status_dot(if d.online { p.positive } else { p.ink_faint })))
+                    .child(div().flex_1().min_w_0().truncate().child(d.name.clone()))
+                    .children(d.battery.map(|b| mono_label(p, format!("{}%", b.level))))
+                    .child(Icon::new(device_icon(&d)).size(px(16.)).text_color(p.ink_faint))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        let id = id.clone();
+                        this.model.update(cx, |m, cx| m.open_device(id, cx));
+                    })),
+            );
+        }
         let nav = |id: &'static str, icon: IconName, label: &'static str, target: Page, cx: &mut Context<Self>| {
-            let selected = page == target;
-            div()
-                .id(id)
-                .flex()
-                .items_center()
-                .gap(px(12.))
-                .px(px(14.))
-                .py(px(9.))
-                .rounded(px(RADIUS))
-                .cursor_pointer()
-                .text_color(if selected { p.ink } else { p.ink_muted })
-                .when(selected, |d| d.bg(p.nav_selected).font_weight(FontWeight::MEDIUM))
-                .when(!selected, |d| d.hover(|s| s.bg(p.surface_raised).text_color(p.ink)))
+            nav_item(p, id, page == target)
                 .child(Icon::new(icon).size(px(18.)))
                 .child(label)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.go(target, cx)))
@@ -431,9 +549,10 @@ impl MainView {
                             .child("DOTLINK"),
                     )
                     .child(mono_label(p, hostname.to_uppercase()).px(px(14.)).pb(px(16.)))
-                    .child(nav("nav-phones", IconName::Smartphone, "Phones", Page::Phones, cx))
-                    .child(nav("nav-pcs", IconName::Monitor, "PCs", Page::Pcs, cx))
-                    .child(nav("nav-pair", IconName::ScanLine, "Pair", Page::Pair, cx))
+                    .child(mono_label(p, "DEVICES").px(px(14.)).pb(px(4.)))
+                    .child(list)
+                    .child(nav("nav-pair", IconName::Plus, "Pair", Page::Pair, cx))
+                    .child(div().h(px(1.)).mx(px(14.)).my(px(8.)).bg(p.line))
                     .child(nav("nav-activity", IconName::ArrowDownUp, "Activity", Page::Activity, cx))
                     .child(nav("nav-setup", IconName::ListChecks, "Setup", Page::Setup, cx))
                     .child(nav("nav-settings", IconName::Settings2, "Settings", Page::Settings, cx)),
@@ -469,424 +588,405 @@ impl MainView {
 // ---------- pages ----------
 
 impl MainView {
-    /// Phones: the paired phones, sending to them, Cast and the webcam/mic (all phone-only).
-    fn phones_page(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        // A copy, so `cx` is free for the listeners below.
-        let Some(status) = self.model.read(cx).status.clone() else {
-            return page(p, "Phones", None).child(self.not_connected(p, cx)).into_any_element();
+    /// One phone or PC, picked in the sidebar: what can be done with it (tiles), its settings
+    /// and the latest transfers with it.
+    fn device_page(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let (status, device) = {
+            let m = self.model.read(cx);
+            (m.status.clone(), m.current_device().cloned())
         };
-        let status = &status;
-        let phone_online = status.devices.iter().any(|d| d.online && d.is_phone());
-        let any_phone = status.devices.iter().any(|d| d.is_phone());
-        let streams = self.streams(p, status.camera.clone(), status.mic.clone(), phone_online, cx);
-        let cast = self.cast_card(p, status, cx);
-        let recent = self.recent(p, status, true, cx);
-        let mut phones = group(p);
-        if !any_phone {
-            phones = phones.child(
-                row(p).child(div().flex_1().min_w_0().text_color(p.ink_muted).child("No phone paired yet.")).child(
-                    pill_icon(p, "pair-empty", IconName::ScanLine, "Pair a phone", Kind::Primary).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.pair_tab = 0;
-                        this.go(Page::Pair, cx)
-                    })),
-                ),
-            );
-        }
-        for (i, d) in status.devices.iter().filter(|d| d.is_phone()).enumerate() {
-            let id = d.id.clone();
-            let subtitle = match (d.online, d.usb) {
-                (true, true) => "Online · USB".to_string(),
-                (true, false) => "Online · Wi-Fi".to_string(),
-                _ => format!("Paired {}", ago(d.paired_at)),
-            };
-            phones = phones.child(
-                row(p)
-                    .when(i > 0, |r| r.border_t_1().border_color(p.line))
-                    .child(status_dot(if d.online { p.positive } else { p.ink_faint }))
-                    .child(
-                        div()
-                            .flex_1().min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(div().font_weight(FontWeight::MEDIUM).child(d.name.clone()))
-                            .child(div().text_size(px(13.)).text_color(p.ink_muted).child(subtitle)),
-                    )
-                    .children(d.battery.map(|b| battery(p, b)))
-                    .child(pill_icon(p, SharedString::from(format!("unpair-{id}")), IconName::Trash, "Forget", Kind::Ghost).on_click(
-                        cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            let id = id.clone();
-                            this.model.update(cx, |m, cx| m.unpair(id, cx));
-                        }),
-                    )),
-            );
-        }
-        let addresses = status.addresses.iter().map(|a| format!("{a}:{}", status.port)).collect::<Vec<_>>().join("  ");
-
-        page(p, "Phones", None)
-            .child(section(p, "Paired", phones))
-            .when(any_phone, |page| page.child(section(p, "Send to phone", self.send_zone(p, status, true, cx))))
-            .when(any_phone, |page| page.child(section(p, "Cast screen", cast)))
-            .when_some(streams.filter(|_| any_phone), |page, streams| page.child(section(p, "Webcam & mic", streams)))
-            .when_some(recent, |page, recent| page.child(recent))
-            .child(section(
-                p,
-                "This PC",
-                group(p)
-                    .child(kv(p, "Name", status.name.clone()))
-                    .child(kv(p, "Address", addresses).border_t_1().border_color(p.line))
-                    .child(
-                        kv(p, "Fingerprint", format!("{}…", &status.fingerprint[..32.min(status.fingerprint.len())]))
-                            .border_t_1()
-                            .border_color(p.line),
-                    ),
-            ))
-            .into_any_element()
-    }
-
-    /// PCs: other PCs linked with this one (files and the clipboard), and sending to them.
-    fn pcs_page(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(status) = self.model.read(cx).status.clone() else {
-            return page(p, "PCs", None).child(self.not_connected(p, cx)).into_any_element();
+        let Some(status) = status else {
+            return page(p, "Devices", None).child(self.not_connected(p, cx)).into_any_element();
         };
-        let status = &status;
-        let pcs = self.pcs(p, status, cx).unwrap_or_else(|| {
-            group(p).child(
-                row(p)
-                    .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("No PC linked yet."))
-                    .child(pill_icon(p, "join-empty", IconName::Link, "Join a PC", Kind::Primary).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            this.pair_tab = 1;
-                            this.model.update(cx, |m, cx| m.refresh_nearby(cx));
-                            this.go(Page::Pair, cx)
-                        },
-                    ))),
-            )
-        });
-        let any_pc = status.devices.iter().any(|d| !d.is_phone());
-        let recent = self.recent(p, status, false, cx);
-        page(p, "PCs", Some("Other PCs linked with this one send each other files and the clipboard."))
-            .child(section(p, "Linked", pcs))
-            .when(any_pc, |page| page.child(section(p, "Send to PC", self.send_zone(p, status, false, cx))))
-            .when_some(recent, |page, recent| page.child(recent))
-            .into_any_element()
-    }
-
-    /// The latest transfers with phones (`phones`) or with PCs, under the drop zone so sending
-    /// shows its progress there. None when there are none.
-    fn recent(&self, p: &Palette, status: &Status, phones: bool, cx: &mut Context<Self>) -> Option<Div> {
-        let names: Vec<&str> = status.devices.iter().filter(|d| d.is_phone() == phones).map(|d| d.name.as_str()).collect();
-        let recent: Vec<&Transfer> = status.transfers.iter().filter(|t| names.contains(&t.device.as_str())).take(3).collect();
-        if recent.is_empty() {
-            return None;
-        }
-        let mut list = group(p);
-        for (i, t) in recent.into_iter().enumerate() {
-            list = list.child(transfer_row(p, t).when(i > 0, |r| r.border_t_1().border_color(p.line)));
-        }
-        Some(section_with(
-            p,
-            "Recent",
-            Some(
-                pill(p, if phones { "see-activity-phones" } else { "see-activity-pcs" }, "See all", Kind::Ghost)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go(Page::Activity, cx))),
-            ),
-            list,
-        ))
-    }
-
-    /// Drop files here, Send files…, Send clipboard: to the phones (`phones`) or the PCs, with a
-    /// picker when several are connected.
-    fn send_zone(&self, p: &Palette, status: &Status, phones: bool, cx: &mut Context<Self>) -> Stateful<Div> {
-        let online: Vec<(Option<String>, String)> = status
-            .devices
-            .iter()
-            .filter(|d| d.online && d.is_phone() == phones)
-            .map(|d| (Some(d.id.clone()), d.name.clone()))
-            .collect();
-        let any_online = !online.is_empty();
-        let several = online.len() > 1;
-        let target = several.then(|| {
-            let all = if phones { "All phones" } else { "All PCs" };
-            let options: Vec<_> = std::iter::once((None, all.to_string())).chain(online).collect();
-            let model = self.model.clone();
-            div().flex().items_center().gap(px(10.)).child(mono_label(p, "TO")).child(phone_picker(
-                if phones { "send-to-phone" } else { "send-to-pc" },
-                options,
-                self.model.read(cx).send_target(phones),
-                move |id, cx| {
-                    model.update(cx, |m, cx| {
-                        m.send_to = id;
-                        cx.notify();
-                    })
-                },
-            ))
-        });
-        let accent = p.accent;
-        let hint = match (phones, several, any_online) {
-            (_, true, _) => "Drop files here to send them where chosen",
-            (true, _, true) => "Drop files here to send them to your phone",
-            (false, _, true) => "Drop files here to send them to the linked PC",
-            (true, _, false) => "Open Dotlink on your phone to send it files",
-            (false, _, false) => "The linked PC isn't connected",
+        let Some(d) = device else {
+            return self.no_devices(p, cx).into_any_element();
         };
-        div()
-            .id(if phones { "drop-phones" } else { "drop-pcs" })
+        // Sending: a drop area with its two buttons, right under the header.
+        let (files_id, clip_id, drop_id) = (d.id.clone(), d.id.clone(), d.id.clone());
+        let (online, name) = (d.online, d.name.clone());
+        let tint = p.ink.opacity(0.04);
+        let strong = p.ink_muted;
+        let send = div()
+            .id("send-drop")
             .flex()
             .flex_col()
             .items_center()
             .gap(px(14.))
-            .py(px(28.))
+            .px(px(16.))
+            .py(px(36.))
             .rounded(px(CARD_RADIUS))
             .border_1()
             .border_dashed()
             .border_color(p.line_strong)
-            .drag_over::<ExternalPaths>(move |s, _, _, _| s.border_color(accent).bg(accent.opacity(0.06)))
+            .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint).border_color(strong))
             .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
                 let paths = paths.paths().to_vec();
-                this.model.update(cx, |m, cx| m.send_files_to(paths, phones, cx));
+                let (id, name) = (drop_id.clone(), name.clone());
+                this.model.update(cx, |m, cx| {
+                    if online {
+                        m.send_files_to(paths, id, cx)
+                    } else {
+                        m.notice(format!("{name} isn't connected"), true, cx)
+                    }
+                });
             }))
-            .children(target)
             .child(Icon::new(IconName::Upload).size(px(28.)).text_color(p.ink_muted))
-            .child(div().text_color(p.ink_muted).child(hint))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.))
-                    .child(
-                        enabled(
-                            pill_icon(p, if phones { "send-files-phones" } else { "send-files-pcs" }, IconName::Files, "Send files…", Kind::Primary),
-                            any_online,
-                        )
-                            .when(any_online, |b| {
-                                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.pick_and_send(phones, cx)))
-                            }),
-                    )
-                    .child(
-                        enabled(
-                            pill_icon(
-                                p,
-                                if phones { "send-clip-phones" } else { "send-clip-pcs" },
-                                IconName::ClipboardCopy,
-                                "Send clipboard",
-                                Kind::Secondary,
-                            ),
-                            any_online,
-                        )
-                            .when(any_online, |b| {
-                                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.model.update(cx, |m, cx| m.send_clipboard_to(phones, cx))
-                                }))
-                            }),
-                    ),
+            .child(div().text_color(p.ink_muted).child(if online {
+                format!("Drop files to send them to {}", d.name)
+            } else {
+                format!("{} isn't connected", d.name)
+            }))
+            .child(div().flex().gap(px(8.)).child(enabled(pill_icon(p, "send-files", IconName::Files, "Send files…", Kind::Primary), online).when(online, |b| {
+                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.pick_and_send(files_id.clone(), cx)))
+            }))
+            .child(enabled(pill_icon(p, "send-clip", IconName::ClipboardCopy, "Send clipboard", Kind::Secondary), online).when(
+                online,
+                |b| {
+                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        let id = clip_id.clone();
+                        this.model.update(cx, |m, cx| m.send_clipboard_to(id, cx))
+                    }))
+                },
+            )));
+
+        // A phone's screen, camera and mic: rows that start and stop, with what each needs
+        // under them.
+        let streams = d.is_phone().then(|| {
+            let mut rows: Vec<Div> = Vec::new();
+            let (cast, note) = self.cast_row(p, &status, &d, cx);
+            rows.push(cast);
+            rows.extend(note);
+            let features = platform::features();
+            if features.camera {
+                rows.push(self.stream_row(p, &status, &d, "camera", cx));
+                // Only while this phone's camera is on: that's when OBS needs the link.
+                if status.camera.as_deref() == Some(d.name.as_str()) {
+                    rows.extend(self.obs_note(p, cx));
+                }
+            }
+            if features.mic {
+                rows.push(self.stream_row(p, &status, &d, "mic", cx));
+            }
+            rows.into_iter().enumerate().fold(group(p), |g, (i, r)| g.child(r.when(i > 0, |r| r.border_t_1().border_color(p.line))))
+        });
+
+        let clip_id = d.id.clone();
+        let sync = group(p).child(
+            row(p)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child("Clipboard sync")
+                        .child(div().text_size(px(13.)).text_color(p.ink_muted).child(format!("Text you copy here goes to {} right away.", d.name))),
+                )
+                .child(Switch::new("clip-auto").checked(d.clipboard_auto).on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                    let (id, on) = (clip_id.clone(), *checked);
+                    this.model.update(cx, |m, cx| m.set_clipboard_auto(id, on, cx));
+                }))),
+        );
+
+        let recent: Vec<&Transfer> = status.transfers.iter().filter(|t| t.device == d.name).take(3).collect();
+        let recent = (!recent.is_empty()).then(|| {
+            let list = recent
+                .into_iter()
+                .enumerate()
+                .fold(group(p), |g, (i, t)| g.child(transfer_row(p, t).when(i > 0, |r| r.border_t_1().border_color(p.line))));
+            section_with(
+                p,
+                "Recent",
+                Some(pill(p, "see-activity", "See all", Kind::Ghost).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go(Page::Activity, cx)))),
+                list,
             )
+        });
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(24.))
+            .child(div().flex().flex_col().gap(px(20.)).child(self.device_header(p, &d, cx)).child(send))
+            .children(streams.map(|g| section(p, "Screen, camera & mic", g)))
+            .child(section(p, "Sync", sync))
+            .children(recent)
+            .into_any_element()
     }
 
-    /// Each phone's screen in its own scrcpy window: one row per connected phone (and any phone
-    /// still casting), with its state, Cast/Stop, and pairing when it's needed.
-    fn cast_card(&self, p: &Palette, status: &Status, cx: &mut Context<Self>) -> Div {
-        let phones: Vec<&DeviceInfo> = status
-            .devices
-            .iter()
-            .filter(|d| d.is_phone() && (d.online || status.casts.contains_key(&d.id)))
-            .collect();
-        let mut card = group(p);
-        if phones.is_empty() {
-            return card.child(
-                row(p).child(status_dot(p.ink_faint)).child(
-                    div().flex_1().min_w(px(0.)).text_color(p.ink_muted).child(
-                        "Shows a connected phone's screen in a window, with mouse and keyboard. Over USB or Wi-Fi.",
+    /// The device's name in the display face (a field while renaming), then one mono line: how
+    /// it's connected and its battery as a dot meter. ⋯ holds Rename and Forget.
+    fn device_header(&self, p: &Palette, d: &DeviceInfo, cx: &mut Context<Self>) -> Div {
+        let connection = match (d.online, d.is_phone(), d.usb) {
+            (true, true, true) => "ONLINE · USB".to_string(),
+            (true, true, false) => "ONLINE · WI-FI".to_string(),
+            (true, false, _) => "ONLINE".to_string(),
+            (false, true, _) => format!("OFFLINE · PAIRED {}", ago(d.paired_at).to_uppercase()),
+            (false, false, _) => format!("OFFLINE · LINKED {}", ago(d.paired_at).to_uppercase()),
+        };
+        let renaming = self.renaming.as_deref() == Some(d.id.as_str());
+        let title: AnyElement = if renaming {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, _, cx| {
+                    if e.keystroke.key == "escape" {
+                        this.renaming = None;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                }))
+                .child(
+                    div().max_w(px(420.)).border_b_1().border_color(p.line_strong).child(
+                        // The plain face while typing; the dot face is for reading.
+                        Input::new(&self.rename_input)
+                            .appearance(false)
+                            .px(px(0.))
+                            .py(px(0.))
+                            .text_size(px(28.))
+                            .line_height(px(40.))
+                            .h(px(48.)),
                     ),
-                ),
-            );
-        }
-        // One code field: pairing is done for one phone at a time.
-        let mut code_shown = false;
-        for (i, d) in phones.into_iter().enumerate() {
-            let cast = status.cast(&d.id);
-            let (dot, detail): (Hsla, String) = match &cast {
-                CastState::Idle => (p.ink_faint, "Shows its screen in a window, with mouse and keyboard.".into()),
-                CastState::Installing { .. } => (p.ink, "Installing scrcpy (18 MB, once)…".into()),
-                CastState::Connecting { .. } => (p.ink, "Connecting…".into()),
-                CastState::Casting { usb, .. } => (
-                    p.positive,
-                    format!("Casting over {}. Close the window or press Stop to end.", if *usb { "USB" } else { "Wi-Fi" }),
-                ),
-                CastState::NeedsWifiDebugging { .. } => (
-                    p.accent,
-                    "Wireless debugging is off. The phone shows a notification that opens the setting; or plug it in over USB."
-                        .into(),
-                ),
-                CastState::NeedsPairing { .. } => (
-                    p.accent,
-                    "Pair once: Developer options → Wireless debugging → Pair device with pairing code. Type the code here."
-                        .into(),
-                ),
-                CastState::Failed { error, .. } => (p.accent, format!("Couldn't cast: {error}")),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .min_w_0()
+                .truncate()
+                .child(page_title(&d.name))
+                .into_any_element()
+        };
+        let battery = d.battery.map(|b| {
+            let colour = if b.charging {
+                p.positive
+            } else if b.level <= 15 {
+                p.accent_text
+            } else {
+                p.ink_muted
             };
-            let busy = matches!(cast, CastState::Connecting { .. } | CastState::Installing { .. });
-            let pill_id = SharedString::from(format!("cast-{}", d.id));
-            let (id, online) = (d.id.clone(), d.online);
-            let button = match cast {
-                // Connecting can take a while (mDNS, adb connect); Cancel ends it like Stop.
-                CastState::Casting { .. } | CastState::Connecting { .. } | CastState::Installing { .. } => {
-                    pill_icon(p, pill_id, IconName::Square, if busy { "Cancel" } else { "Stop" }, Kind::Ghost).on_click(cx.listener(
-                        move |this, _: &ClickEvent, _, cx| {
-                            let id = id.clone();
-                            this.model.update(cx, |m, cx| m.set_cast(false, Some(id), cx))
-                        },
-                    ))
-                }
-                ref other => {
-                    let (icon, label, kind) =
-                        if matches!(other, CastState::Idle) {
-                            (IconName::Cast, "Cast", Kind::Primary)
-                        } else {
-                            (IconName::RotateCcw, "Try again", Kind::Secondary)
-                        };
-                    enabled(pill_icon(p, pill_id, icon, label, kind), online).when(online, |b| {
-                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            let id = id.clone();
-                            this.model.update(cx, |m, cx| m.set_cast(true, Some(id), cx))
-                        }))
-                    })
-                }
-            };
-            card = card.child(
-                row(p)
-                    .when(i > 0, |r| r.border_t_1().border_color(p.line))
-                    .child(status_dot(dot))
-                    .child(
+            let lit = (b.level.min(100) as usize).div_ceil(10);
+            let unlit = p.line_strong.opacity(0.5);
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .child(div().flex().gap(px(3.)).children((0..10).map(|i| div().size(px(5.)).rounded(px(2.5)).bg(if i < lit { colour } else { unlit }))))
+                .child(div().text_color(colour).child(format!("{}%{}", b.level, if b.charging { " · CHARGING" } else { "" })))
+        });
+        let (view, id, name, phone) = (cx.entity().downgrade(), d.id.clone(), d.name.clone(), d.is_phone());
+        let red = p.accent_text;
+        let more = Button::new("device-more")
+            .outline()
+            .h(px(CONTROL))
+            .w(px(CONTROL))
+            .icon(Icon::new(IconName::Ellipsis))
+            .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu, _, _| {
+                let (rename_view, forget_view, id, name) = (view.clone(), view.clone(), id.clone(), name.clone());
+                let (forget_id, forget_name) = (id.clone(), name.clone());
+                menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
+                    let (id, name) = (id.clone(), name.clone());
+                    rename_view.update(cx, |this, cx| this.start_rename(id, name, window, cx)).ok();
+                }))
+                // Red, and asks first: it can't be undone from here.
+                .item(PopupMenuItem::element(move |_, _| div().text_color(red).child("Forget")).on_click(move |_, _, cx| {
+                    let target = (forget_id.clone(), forget_name.clone(), phone);
+                    forget_view
+                        .update(cx, |this, cx| {
+                            this.forgetting = Some(target);
+                            cx.notify();
+                        })
+                        .ok();
+                }))
+                .min_w(px(160.))
+            });
+        div()
+            .flex()
+            .items_start()
+            .gap(px(14.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .child(title)
+                    .when(renaming, |c| c.child(mono_label(p, "ENTER TO SAVE · ESC TO CANCEL")))
+                    .when(!renaming, |c| c.child(
                         div()
-                            .flex_1()
-                            .min_w(px(0.))
                             .flex()
-                            .flex_col()
-                            .child(div().font_weight(FontWeight::MEDIUM).child(d.name.clone()))
-                            .child(div().text_size(px(13.)).text_color(p.ink_muted).child(detail)),
-                    )
-                    .child(button),
-            );
-            if matches!(cast, CastState::NeedsPairing { .. }) && !code_shown {
-                code_shown = true;
-                let id = d.id.clone();
-                card = card.child(
+                            .flex_wrap()
+                            .items_center()
+                            .gap(px(16.))
+                            .font_family(MONO)
+                            .text_size(px(12.))
+                            .text_color(p.ink_muted)
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(status_dot(if d.online { p.positive } else { p.ink_faint }))
+                                    .child(connection),
+                            )
+                            .children(battery),
+                    )),
+            )
+            .when(!renaming, |d| d.child(more))
+    }
+
+    /// Cast's row: what it does or how it's going, and Start / Stop. Plus a row under it when
+    /// it needs something (Wireless debugging, a pairing code) or failed.
+    fn cast_row(&self, p: &Palette, status: &Status, d: &DeviceInfo, cx: &mut Context<Self>) -> (Div, Option<Div>) {
+        let cast = status.cast(&d.id);
+        let (detail, live) = match &cast {
+            CastState::Idle => (describe(p, "Its screen in a window, with mouse and keyboard."), false),
+            CastState::Installing { .. } => (state("INSTALLING SCRCPY…", p.ink), false),
+            CastState::Connecting { .. } => (state("CONNECTING…", p.ink), false),
+            CastState::Casting { usb, .. } => (state(if *usb { "LIVE · USB" } else { "LIVE · WI-FI" }, p.positive), true),
+            CastState::NeedsWifiDebugging { .. } => (state("TURN ON WIRELESS DEBUGGING", p.accent_text), false),
+            CastState::NeedsPairing { .. } => (state("ENTER THE PAIRING CODE", p.accent_text), false),
+            CastState::Failed { .. } => (state("FAILED", p.accent_text), false),
+        };
+        let (id, online) = (d.id.clone(), d.online);
+        let button = match cast {
+            // Connecting can take a while (mDNS, adb connect); Cancel ends it like Stop.
+            CastState::Casting { .. } | CastState::Connecting { .. } | CastState::Installing { .. } => {
+                let label = if live { "Stop" } else { "Cancel" };
+                pill_icon(p, "cast", IconName::Square, label, Kind::Ghost).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    let id = id.clone();
+                    this.model.update(cx, |m, cx| m.set_cast(false, Some(id), cx))
+                }))
+            }
+            ref other => {
+                let (icon, label, kind) = if matches!(other, CastState::Idle) {
+                    (IconName::Cast, "Start", Kind::Secondary)
+                } else {
+                    (IconName::RotateCcw, "Try again", Kind::Secondary)
+                };
+                enabled(pill_icon(p, "cast", icon, label, kind), online).when(online, |b| {
+                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        let id = id.clone();
+                        this.model.update(cx, |m, cx| m.set_cast(true, Some(id), cx))
+                    }))
+                })
+            }
+        };
+        let row = feature_row(p, IconName::Cast, "Cast screen", detail, live, button);
+        let detail = match &cast {
+            CastState::NeedsWifiDebugging { .. } => {
+                "Wireless debugging is off. The phone shows a notification that opens the setting; or plug it in over USB.".to_string()
+            }
+            CastState::NeedsPairing { .. } => {
+                "Pair once: Developer options → Wireless debugging → Pair device with pairing code. Type the code here.".to_string()
+            }
+            CastState::Failed { error, .. } => format!("Couldn't cast: {error}"),
+            _ => return (row, None),
+        };
+        let pairing = matches!(cast, CastState::NeedsPairing { .. });
+        let id = d.id.clone();
+        let note = row_note(p, detail).when(pairing, |r| {
+            r.child(div().w(px(160.)).child(Styled::h(Input::new(&self.cast_code), px(CONTROL)))).child(
+                pill_icon(p, "cast-pair", IconName::Link, "Pair", Kind::Primary).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    let code = this.cast_code.read(cx).value().to_string();
+                    let id = id.clone();
+                    this.model.update(cx, |m, cx| m.pair_cast(id, code, cx));
+                })),
+            )
+        });
+        (row, Some(note))
+    }
+
+    /// Webcam's or Microphone's row (`kind`: "camera" | "mic"). One phone streams each at a
+    /// time, so another phone's stream shows here as "in use".
+    fn stream_row(&self, p: &Palette, status: &Status, d: &DeviceInfo, kind: &'static str, cx: &mut Context<Self>) -> Div {
+        let (title, icon, sink, what, from) = if kind == "camera" {
+            ("Webcam", IconName::Camera, CAMERA_NAME, "The phone camera as a webcam in any app.", &status.camera)
+        } else {
+            ("Microphone", IconName::Mic, "Dotlink Mic", "The phone mic as a microphone on this PC.", &status.mic)
+        };
+        let starting = from.is_none() && self.model.read(cx).is_starting(kind, &d.id);
+        let live = from.as_deref() == Some(d.name.as_str());
+        let detail = match from {
+            Some(_) if live => state(&format!("LIVE · {}", sink.to_uppercase()), p.positive),
+            Some(name) => state(&format!("IN USE BY {}", name.to_uppercase()), p.ink_muted),
+            None if starting => state("STARTING… CHECK THE PHONE", p.ink),
+            None => describe(p, what),
+        };
+        let id = d.id.clone();
+        let button = if live {
+            pill_icon(p, SharedString::from(format!("stop-{kind}")), IconName::Square, "Stop", Kind::Ghost)
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.set_stream(kind, false, id.clone(), cx))))
+        } else if starting {
+            enabled(pill(p, SharedString::from(format!("start-{kind}")), "Starting…", Kind::Secondary), false)
+        } else {
+            let usable = d.online && from.is_none();
+            enabled(pill_icon(p, SharedString::from(format!("start-{kind}")), IconName::Play, "Start", Kind::Secondary), usable).when(usable, |b| {
+                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.set_stream(kind, true, id.clone(), cx))))
+            })
+        };
+        feature_row(p, icon, title, detail, live, button)
+    }
+
+    /// macOS: the webcam reaches apps through OBS, which shows this link (platform/macos/camera.rs).
+    #[cfg(target_os = "macos")]
+    fn obs_note(&self, p: &Palette, cx: &mut Context<Self>) -> Option<Div> {
+        let port = self.model.read(cx).status.as_ref().map_or(dotlink_core::config::DEFAULT_PORT, |s| s.port);
+        Some(
+            row(p)
+                .child(div().w(px(18.)))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(13.))
+                        .text_color(p.ink_muted)
+                        .child("The webcam reaches apps through OBS: add this link as a Browser source, then Start Virtual Camera."),
+                )
+                .child(pill_icon(p, "copy-obs-link", IconName::Copy, "Copy OBS link", Kind::Ghost).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(platform::camera_url(port)));
+                        this.model.update(cx, |m, cx| m.notice("Copied: paste it as the URL of a Browser source in OBS", false, cx));
+                    },
+                ))),
+        )
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn obs_note(&self, _p: &Palette, _cx: &mut Context<Self>) -> Option<Div> {
+        None
+    }
+
+    /// Nothing paired or linked yet.
+    fn no_devices(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
+        page(p, "Devices", None).child(
+            group(p)
+                .child(
+                    row(p)
+                        .child(Icon::new(IconName::Smartphone).size(px(18.)).text_color(p.ink_muted))
+                        .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("Pair your phone to send files, share the clipboard and use it as a webcam."))
+                        .child(pill_icon(p, "pair-empty", IconName::ScanLine, "Pair a phone", Kind::Primary).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.pair_tab = 0;
+                                this.go(Page::Pair, cx)
+                            },
+                        ))),
+                )
+                .child(
                     row(p)
                         .border_t_1()
                         .border_color(p.line)
-                        .child(div().w(px(200.)).child(Styled::h(Input::new(&self.cast_code), px(CONTROL))))
-                        .child(pill_icon(p, "cast-pair", IconName::Link, "Pair", Kind::Primary).on_click(cx.listener(
-                            move |this, _: &ClickEvent, _, cx| {
-                                let code = this.cast_code.read(cx).value().to_string();
-                                let id = id.clone();
-                                this.model.update(cx, |m, cx| m.pair_cast(id, code, cx));
+                        .child(Icon::new(IconName::Monitor).size(px(18.)).text_color(p.ink_muted))
+                        .child(div().flex_1().min_w_0().text_color(p.ink_muted).child("Another PC with Dotlink on this network?"))
+                        .child(pill_icon(p, "join-empty", IconName::Link, "Join a PC", Kind::Ghost).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.pair_tab = 1;
+                                this.model.update(cx, |m, cx| m.refresh_nearby(cx));
+                                this.go(Page::Pair, cx)
                             },
                         ))),
-                );
-            }
-        }
-        card
-    }
-
-    /// Phone camera and mic: what's streaming, and Start/Stop. None where the platform has neither.
-    fn streams(
-        &self,
-        p: &Palette,
-        camera: Option<String>,
-        mic: Option<String>,
-        any_online: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<Div> {
-        let features = platform::features();
-        let model = self.model.read(cx);
-        let rows: Vec<(&'static str, &'static str, &'static str, Option<String>)> = [
-            features.camera.then_some(("camera", "Webcam", CAMERA_NAME, camera)),
-            features.mic.then_some(("mic", "Microphone", "Dotlink Mic", mic)),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        if rows.is_empty() {
-            return None;
-        }
-        let mut list = group(p);
-        // Several phones online: choose the one the webcam and mic start on.
-        let online: Vec<(Option<String>, String)> = model
-            .status
-            .iter()
-            .flat_map(|s| &s.devices)
-            .filter(|d| d.online && d.is_phone())
-            .map(|d| (Some(d.id.clone()), d.name.clone()))
-            .collect();
-        let first = usize::from(online.len() > 1);
-        if online.len() > 1 {
-            let entity = self.model.clone();
-            list = list.child(row(p).child(div().flex_1().min_w_0().child("Phone")).child(phone_picker(
-                "stream-from",
-                online,
-                model.stream_source(),
-                move |id, cx| {
-                    entity.update(cx, |m, cx| {
-                        m.stream_from = id;
-                        cx.notify();
-                    })
-                },
-            )));
-        }
-        for (i, (kind, title, device_name, from)) in rows.into_iter().enumerate() {
-            let starting = from.is_none() && model.is_starting(kind);
-            let (subtitle, dot) = match (&from, starting) {
-                (Some(phone), _) => (format!("On · {phone} → {device_name}"), p.positive),
-                (None, true) => ("Starting… check your phone".to_string(), p.ink),
-                (None, false) => ("Off".to_string(), p.ink_faint),
-            };
-            let on = from.is_some();
-            let button =
-                if on {
-                    pill_icon(p, SharedString::from(format!("stop-{kind}")), IconName::Square, "Stop", Kind::Ghost).on_click(cx.listener(
-                        move |this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.set_stream(kind, false, cx)),
-                    ))
-                } else if starting {
-                    enabled(pill(p, SharedString::from(format!("start-{kind}")), "Starting…", Kind::Primary), false)
-                } else {
-                    enabled(pill_icon(p, SharedString::from(format!("start-{kind}")), IconName::Play, "Start", Kind::Primary), any_online)
-                        .when(any_online, |b| {
-                            b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.model.update(cx, |m, cx| m.set_stream(kind, true, cx))
-                            }))
-                        })
-                };
-            // macOS: the stream for OBS, whose virtual camera apps use (platform/macos/camera.rs).
-            #[cfg(target_os = "macos")]
-            let copy_link = (kind == "camera").then(|| {
-                let port = model.status.as_ref().map_or(dotlink_core::config::DEFAULT_PORT, |s| s.port);
-                pill_icon(p, "copy-obs-link", IconName::Copy, "Copy OBS link", Kind::Ghost).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(platform::camera_url(port)));
-                        this.model.update(cx, |m, cx| {
-                            m.notice("Copied: paste it as the URL of a Browser source in OBS", false, cx)
-                        });
-                    },
-                ))
-            });
-            #[cfg(not(target_os = "macos"))]
-            let copy_link: Option<Div> = None;
-            list = list.child(
-                row(p)
-                    .when(i + first > 0, |r| r.border_t_1().border_color(p.line))
-                    .child(status_dot(dot))
-                    .child(
-                        div()
-                            .flex_1().min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(div().font_weight(FontWeight::MEDIUM).child(title))
-                            .child(div().font_family(MONO).text_size(px(13.)).text_color(p.ink_muted).child(subtitle)),
-                    )
-                    .children(copy_link)
-                    .child(button),
-            );
-        }
-        Some(list)
+                ),
+        )
     }
 
     fn pair(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
@@ -911,9 +1011,7 @@ impl MainView {
                             .flex()
                             .flex_col()
                             .gap(px(14.))
-                            .child(step(p, "1", "Open Dotlink on your phone."))
-                            .child(step(p, "2", "Tap Pair and scan this code."))
-                            .child(step(p, "3", "Keep both on the same Wi-Fi, or use a USB cable."))
+                            .child(div().text_color(p.ink_muted).child("Open Dotlink on your phone, tap Pair and scan the code. Same Wi-Fi, or a USB cable."))
                             .child(
                                 div()
                                     .flex()
@@ -969,7 +1067,7 @@ impl MainView {
                         .gap(px(8.))
                         .child(
                             pill(p, "paired-done", "Done", Kind::Primary)
-                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go(Page::Phones, cx))),
+                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go(Page::Device, cx))),
                         )
                         .child(pill_icon(p, "pair-another", IconName::ScanLine, "Pair another", Kind::Ghost).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| this.model.update(cx, |m, cx| m.start_pairing(cx)),
@@ -1015,11 +1113,7 @@ impl MainView {
         let pick = self.join_pick.clone().filter(|id| pcs.iter().any(|pc| pc.id == *id && !pc.linked));
         let mut list = group(p);
         if pcs.is_empty() {
-            list = list.child(row(p).child(div().flex_1().min_w_0().text_color(p.ink_muted).child(if loading {
-                "Looking for PCs…"
-            } else {
-                "No other Dotlink PC found. Open Dotlink on it, on the same network."
-            })));
+            list = list.child(empty(p, if loading { "Looking for PCs…" } else { "No other Dotlink PC on this network" }));
         }
         for (i, pc) in pcs.iter().enumerate() {
             let (id, chosen) = (pc.id.clone(), pick.as_deref() == Some(pc.id.as_str()));
@@ -1049,8 +1143,7 @@ impl MainView {
             .flex_col()
             .gap(px(14.))
             .max_w(px(560.))
-            .child(step(p, "1", "On the other PC, open Dotlink → Pair: it shows a 6-digit code."))
-            .child(step(p, "2", "Pick that PC here and type its code."))
+            .child(div().text_color(p.ink_muted).child("Open Dotlink → Pair on the other PC, pick it here and type the 6-digit code it shows."))
             .child(section_with(
                 p,
                 "PCs on this network",
@@ -1119,65 +1212,12 @@ impl MainView {
             .into_any_element()
     }
 
-    /// PCs linked with this one: files and the clipboard, nothing phone-only. None when there
-    /// are none.
-    fn pcs(&self, p: &Palette, status: &Status, cx: &mut Context<Self>) -> Option<Div> {
-        let pcs: Vec<&DeviceInfo> = status.devices.iter().filter(|d| !d.is_phone()).collect();
-        if pcs.is_empty() {
-            return None;
-        }
-        let mut list = group(p);
-        for (i, d) in pcs.into_iter().enumerate() {
-            let (id, auto) = (d.id.clone(), d.clipboard_auto);
-            let subtitle = if d.online { "Online".to_string() } else { format!("Linked {}", ago(d.paired_at)) };
-            let switch_id = SharedString::from(format!("clip-auto-{id}"));
-            let toggle_id = id.clone();
-            list = list.child(
-                row(p)
-                    .when(i > 0, |r| r.border_t_1().border_color(p.line))
-                    .child(status_dot(if d.online { p.positive } else { p.ink_faint }))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(div().font_weight(FontWeight::MEDIUM).child(d.name.clone()))
-                            .child(div().text_size(px(13.)).text_color(p.ink_muted).child(subtitle)),
-                    )
-                    .children(d.battery.map(|b| battery(p, b)))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .text_size(px(13.))
-                            .text_color(p.ink_muted)
-                            .child("Clipboard sync")
-                            .child(Switch::new(switch_id).checked(auto).on_click(cx.listener(
-                                move |this, checked: &bool, _, cx| {
-                                    let (id, on) = (toggle_id.clone(), *checked);
-                                    this.model.update(cx, |m, cx| m.set_clipboard_auto(id, on, cx));
-                                },
-                            ))),
-                    )
-                    .child(pill_icon(p, SharedString::from(format!("unpair-{id}")), IconName::Trash, "Forget", Kind::Ghost).on_click(
-                        cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            let id = id.clone();
-                            this.model.update(cx, |m, cx| m.unpair(id, cx));
-                        }),
-                    )),
-            );
-        }
-        Some(list)
-    }
-
     fn activity(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.model.read(cx);
         let transfers = model.status.as_ref().map(|s| s.transfers.clone()).unwrap_or_default();
         let mut files = group(p);
         if transfers.is_empty() {
-            files = files.child(row(p).text_color(p.ink_muted).child("Nothing sent or received yet."));
+            files = files.child(empty(p, "Nothing sent or received yet"));
         }
         // "PC" after a linked PC's name: the names alone don't tell a phone from a PC.
         let pc_names: Vec<String> = model
@@ -1196,7 +1236,7 @@ impl MainView {
         }
         let mut clips = group(p);
         if model.clips.is_empty() {
-            clips = clips.child(row(p).text_color(p.ink_muted).child("No clipboard sync since Dotlink started."));
+            clips = clips.child(empty(p, "No clipboard sync since Dotlink started"));
         }
         for (i, c) in model.clips.iter().enumerate() {
             let device = if pc_names.contains(&c.device) { format!("{} (PC)", c.device) } else { c.device.clone() };
@@ -1209,6 +1249,15 @@ impl MainView {
                     .child(mono_label(p, format!("{} CHARS · {}", c.chars, ago_instant(c.at)))),
             );
         }
+        // Only this window's list: the texts themselves were never kept.
+        let clear_clips = (!model.clips.is_empty()).then(|| {
+            pill_icon(p, "clear-clips", IconName::Trash, "Clear", Kind::Ghost).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.model.update(cx, |m, cx| {
+                    m.clips.clear();
+                    cx.notify();
+                })
+            }))
+        });
         let download_dir = model.status.as_ref().map(|s| s.config.download_dir());
         // Only what has finished can go: waiting and running transfers stay in the list.
         let clearable = transfers.iter().any(|t| matches!(t.state, TransferState::Done | TransferState::Failed(_)));
@@ -1228,7 +1277,7 @@ impl MainView {
             }));
         page(p, "Activity", None)
             .child(section_with(p, "Files", Some(actions), files))
-            .child(section(p, "Clipboard", clips))
+            .child(section_with(p, "Clipboard", clear_clips, clips))
     }
 
     fn setup(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1334,6 +1383,10 @@ impl MainView {
 
     fn settings(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.model.read(cx);
+        // This PC's address and certificate fingerprint, shown under its name.
+        let identity = model.status.as_ref().map(|s| {
+            (s.addresses.iter().map(|a| format!("{a}:{}", s.port)).collect::<Vec<_>>().join("  "), s.fingerprint.clone())
+        });
         let autostart = model.autostart;
         let wm_hint = platform::autostart::wm_hint();
         let restart = model.restart_needed;
@@ -1424,22 +1477,20 @@ impl MainView {
                             ),
                         )
                     })
-                    .child(switch_row(
-                        "clipboard",
-                        "Clipboard sync",
-                        "Text you copy here goes to the phone right away.",
-                        form.clipboard_sync,
-                        false,
-                        |this, on, cx| {
-                            this.form.clipboard_sync = on;
-                            this.save_switches(cx);
-                        },
-                    )),
+
             ))
             .child(section(
                 p,
                 "This PC",
-                group(p).child(field("Name", "What your phones call this PC.", &form.name, true)),
+                group(p).child(field("Name", "What your phones call this PC.", &form.name, true)).when_some(
+                    identity,
+                    |group, (addresses, fingerprint)| {
+                        let short = format!("{}…", &fingerprint[..32.min(fingerprint.len())]);
+                        group.child(info_row(p, "Address", "Where phones and PCs reach it.", addresses.clone(), "copy-address", addresses, cx)).child(
+                            info_row(p, "Fingerprint", "Its certificate, as paired devices know it.", short, "copy-fingerprint", fingerprint, cx),
+                        )
+                    },
+                ),
             ))
             .child(section(
                 p,
@@ -1726,36 +1777,68 @@ fn segmented(
     ))
 }
 
-/// A button showing the chosen phone that opens a menu of `options` (device id, or None for
-/// "all"; name).
-fn phone_picker(
-    id: &'static str,
-    options: Vec<(Option<String>, String)>,
-    selected: Option<String>,
-    on_select: impl Fn(Option<String>, &mut App) + 'static,
-) -> impl IntoElement {
-    let label = options.iter().find(|(d, _)| *d == selected).map(|(_, n)| n.clone()).unwrap_or_default();
-    let on_select = std::rc::Rc::new(on_select);
-    Button::new(id).outline().h(px(CONTROL)).label(label).dropdown_caret(true).dropdown_menu_with_anchor(
-        gpui::Anchor::TopRight,
-        move |mut menu, _, _| {
-            for (device, name) in &options {
-                let on_select = on_select.clone();
-                let device = device.clone();
-                menu = menu.item(
-                    PopupMenuItem::new(name.clone())
-                        .checked(device == selected)
-                        .on_click(move |_, _, cx| on_select(device.clone(), cx)),
-                );
-            }
-            menu.min_w(px(200.))
-        },
-    )
+/// A sidebar entry: the selected one filled, the others muted until hovered.
+fn nav_item(p: &Palette, id: impl Into<gpui::ElementId>, selected: bool) -> Stateful<Div> {
+    let hover = p.surface_raised;
+    let ink = p.ink;
+    div()
+        .id(id.into())
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .px(px(14.))
+        .py(px(9.))
+        .rounded(px(RADIUS))
+        .cursor_pointer()
+        .text_color(if selected { p.ink } else { p.ink_muted })
+        .when(selected, |d| d.bg(p.nav_selected).font_weight(FontWeight::MEDIUM))
+        .when(!selected, |d| d.hover(move |s| s.bg(hover).text_color(ink)))
+}
+
+/// A phone, a laptop (a PC with a battery) or a desktop PC.
+fn device_icon(d: &DeviceInfo) -> IconName {
+    if d.is_phone() {
+        IconName::Smartphone
+    } else if d.battery.is_some() {
+        IconName::Laptop
+    } else {
+        IconName::Monitor
+    }
+}
+
+/// A feature of a phone that starts and stops (Cast, Webcam, Mic): icon, title, `detail` under
+/// it (what it does, or how it's going), a green dot while `live`, and its button.
+fn feature_row(p: &Palette, icon: IconName, title: &str, detail: Div, live: bool, button: Stateful<Div>) -> Div {
+    row(p)
+        .child(Icon::new(icon).size(px(18.)).text_color(p.ink_muted))
+        .child(div().flex_1().min_w_0().flex().flex_col().gap(px(2.)).child(title.to_string()).child(detail))
+        .when(live, |r| r.child(status_dot(p.positive)))
+        .child(button)
+}
+
+/// What a feature does, under its title.
+fn describe(p: &Palette, text: &str) -> Div {
+    div().text_size(px(13.)).text_color(p.ink_muted).child(text.to_string())
+}
+
+/// How a feature is going, under its title (LIVE · USB, CONNECTING…).
+fn state(text: &str, color: Hsla) -> Div {
+    div().font_family(MONO).text_size(px(12.)).text_color(color).child(text.to_string())
+}
+
+/// A row under a feature saying what it needs, lined up with the titles above.
+fn row_note(p: &Palette, text: String) -> Div {
+    row(p).child(div().w(px(18.))).child(div().flex_1().min_w_0().text_size(px(13.)).text_color(p.ink_muted).child(text))
 }
 
 /// Greys out a pill that can't be used right now.
 fn enabled(button: Stateful<Div>, on: bool) -> Stateful<Div> {
     if on { button } else { button.opacity(0.4).cursor_default() }
+}
+
+/// A page's title in the display face, like DOTLINK in the sidebar.
+fn page_title(title: &str) -> Div {
+    div().font_family(DISPLAY).font_weight(FontWeight::BLACK).text_size(px(32.)).line_height(px(36.)).child(title.to_uppercase())
 }
 
 fn page(p: &Palette, title: &str, subtitle: Option<&str>) -> Div {
@@ -1764,7 +1847,7 @@ fn page(p: &Palette, title: &str, subtitle: Option<&str>) -> Div {
             .flex()
             .flex_col()
             .gap(px(6.))
-            .child(div().text_size(px(28.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
+            .child(page_title(title))
             .when_some(subtitle, |d, s| d.child(div().text_color(p.ink_muted).child(s.to_string()))),
     )
 }
@@ -1797,6 +1880,34 @@ fn group(p: &Palette) -> Div {
 
 fn row(_p: &Palette) -> Div {
     div().flex().items_center().gap(px(12.)).px(px(16.)).py(px(12.)).min_h(px(52.))
+}
+
+/// A read-only Settings row: title and detail, a monospaced value and Copy (copies `copy`).
+fn info_row(
+    p: &Palette,
+    title: &'static str,
+    detail: &'static str,
+    value: String,
+    id: &'static str,
+    copy: String,
+    cx: &mut Context<MainView>,
+) -> Div {
+    row(p)
+        .border_t_1()
+        .border_color(p.line)
+        .child(
+            div()
+                .w(px(236.))
+                .flex()
+                .flex_col()
+                .child(title)
+                .child(div().text_size(px(13.)).text_color(p.ink_muted).child(detail)),
+        )
+        .child(div().flex_1().min_w_0().font_family(MONO).text_size(px(14.)).truncate().child(value))
+        .child(pill_icon(p, id, IconName::Copy, "Copy", Kind::Ghost).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.clone()));
+            this.model.update(cx, |m, cx| m.notice(format!("{title} copied."), false, cx));
+        })))
 }
 
 fn kv(p: &Palette, key: &str, value: String) -> Div {
@@ -1833,83 +1944,29 @@ fn capitalize(s: &str) -> String {
 fn direction(p: &Palette, to_phone: bool) -> Div {
     div()
         .flex_none()
-        .size(px(28.))
-        .rounded(px(14.))
-        .bg(p.surface_raised)
+        .w(px(18.))
         .flex()
-        .items_center()
         .justify_center()
         .font_family(MONO)
-        .text_size(px(15.))
+        .text_size(px(16.))
         .text_color(if to_phone { p.ink } else { p.positive })
         .child(if to_phone { "↑" } else { "↓" })
 }
 
-/// The phone's battery: a small battery filled to its level, the percentage, and "Charging".
-/// Green while charging, red when low (15 % or less) and not charging.
-fn battery(p: &Palette, b: Battery) -> Div {
-    let colour = if b.charging {
-        p.positive
-    } else if b.level <= 15 {
-        p.accent
-    } else {
-        p.ink
-    };
-    // 20 × 10 body with a 1 px outline and 1 px inner gap, so the bar is 16 px at 100 %.
-    let fill = 16. * b.level.min(100) as f32 / 100.;
-    let glyph = div()
-        .flex()
-        .items_center()
-        .child(
-            div()
-                .w(px(20.))
-                .h(px(10.))
-                .rounded(px(2.5))
-                .border_1()
-                .border_color(colour)
-                .p(px(1.))
-                .child(div().h_full().w(px(fill)).rounded(px(1.)).bg(colour)),
-        )
-        // The terminal.
-        .child(div().w(px(2.)).h(px(4.)).rounded_r(px(1.)).bg(colour));
+/// Nothing to list yet: a faint dot meter and a mono line, in place of the rows.
+fn empty(p: &Palette, text: &str) -> Div {
     div()
         .flex()
+        .flex_col()
         .items_center()
-        .gap(px(8.))
-        .child(glyph)
-        .child(
-            div()
-                .font_family(MONO)
-                .text_size(px(13.))
-                .text_color(if b.charging { p.positive } else { p.ink_muted })
-                .child(if b.charging { format!("{}% · Charging", b.level) } else { format!("{}%", b.level) }),
-        )
+        .gap(px(12.))
+        .py(px(28.))
+        .child(dot_meter(p, 5, 0))
+        .child(mono_label(p, text.to_uppercase()))
 }
 
 fn status_dot(color: Hsla) -> Div {
     div().flex_none().size(px(8.)).rounded(px(4.)).bg(color)
-}
-
-fn step(p: &Palette, n: &str, text: &str) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(12.))
-        .child(
-            div()
-                .flex_none()
-                .size(px(26.))
-                .rounded(px(13.))
-                .border_1()
-                .border_color(p.line_strong)
-                .flex()
-                .items_center()
-                .justify_center()
-                .font_family(MONO)
-                .text_size(px(13.))
-                .child(n.to_string()),
-        )
-        .child(div().flex_1().min_w_0().child(text.to_string()))
 }
 
 fn transfer_row(p: &Palette, t: &Transfer) -> Div {

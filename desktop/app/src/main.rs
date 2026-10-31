@@ -67,13 +67,16 @@ enum Cmd {
     },
     /// List the Dotlink PCs on this network (to join one with a code).
     Nearby,
-    /// Send this PC's clipboard changes to a linked PC as they happen (`on`), or only on
-    /// `dotlink clip` (`off`, the default).
+    /// Send this PC's clipboard changes to a phone or linked PC as they happen (`on`), or only
+    /// on `dotlink clip` (`off`). Phones start on, PCs off.
     ClipAuto { device: String, state: OnOff },
     /// List paired phones and linked PCs.
     Devices,
     /// Forget a paired phone (by name or id).
     Unpair { device: String },
+    /// Give a phone or linked PC another name on this PC; the name it sets itself no longer
+    /// replaces it.
+    Rename { device: String, name: String },
     /// Turn the phone camera (Dotlink Camera) on or off.
     Camera {
         state: OnOff,
@@ -266,6 +269,7 @@ async fn command(cmd: Cmd) -> Result<()> {
             simple(json!({ "cmd": "clipboard_auto", "id": device, "on": matches!(state, OnOff::On) })).await
         }
         Cmd::Unpair { device } => simple(json!({ "cmd": "unpair", "id": device })).await,
+        Cmd::Rename { device, name } => simple(json!({ "cmd": "rename", "id": device, "name": name })).await,
         Cmd::Quit => simple(json!({ "cmd": "quit" })).await,
         Cmd::Url { link } => open_link(&link).await,
         Cmd::Cast { to, action: None } => simple(json!({ "cmd": "cast", "on": true, "id": to })).await,

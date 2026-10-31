@@ -306,7 +306,7 @@ impl App {
                         .and_then(|p| p.battery)
                         .filter(|_| online.get(&d.id).copied().unwrap_or(0) > 0)
                         .map(|(level, charging)| json!({ "level": level, "charging": charging })),
-                    "clipboard_auto": d.clipboard_auto,
+                    "clipboard_auto": d.sends_clipboard(),
                 })
             })
             .chain(state.peers.iter().map(|p| {
@@ -443,12 +443,11 @@ impl App {
         }
     }
 
-    /// Text copied on this PC: send it to the phones (when clipboard sync is on).
+    /// Text copied on this PC: send it to the devices with clipboard sync on.
     pub fn clip_from_desktop(&self, text: String) {
-        if text.is_empty() || !self.config.lock().unwrap().clipboard_sync || !self.remember_clip(&text) {
+        if text.is_empty() || !self.remember_clip(&text) {
             return;
         }
-        // Phones always; PCs only when asked to (two PCs copying would keep overwriting each other).
         let (ids, mut names): (Vec<String>, Vec<String>) = {
             let online = self.online.lock().unwrap();
             let state = self.state.lock().unwrap();
@@ -456,7 +455,7 @@ impl App {
                 .devices
                 .iter()
                 .filter(|d| online.get(&d.id).copied().unwrap_or(0) > 0)
-                .filter(|d| d.kind == DeviceKind::Phone || d.clipboard_auto)
+                .filter(|d| d.sends_clipboard())
                 .map(|d| (d.id.clone(), d.name.clone()))
                 .unzip()
         };
@@ -481,14 +480,36 @@ impl App {
         self.emit(Event::Clipboard { to_phone: true, device: names.join(", "), chars });
     }
 
-    /// Turns sending clipboard changes as they happen on or off for a PC (`key`: name or id).
+    /// Names a phone or PC on this PC (`key`: its name or id); the name it sends itself no
+    /// longer replaces this one. Returns the old name.
+    pub fn set_name(&self, key: &str, name: &str) -> Result<String> {
+        let name: String = name.trim().chars().filter(|c| !c.is_control()).take(64).collect();
+        if name.is_empty() {
+            bail!("the name is empty");
+        }
+        let mut state = self.state.lock().unwrap();
+        let old = if let Some(d) = state.devices.iter_mut().find(|d| d.id == key || d.name.eq_ignore_ascii_case(key)) {
+            d.renamed = true;
+            std::mem::replace(&mut d.name, name)
+        } else if let Some(p) = state.peers.iter_mut().find(|p| p.id == key || p.name.eq_ignore_ascii_case(key)) {
+            p.renamed = true;
+            std::mem::replace(&mut p.name, name)
+        } else {
+            bail!("no paired device \"{key}\"");
+        };
+        state.save()?;
+        update_share_menu(&state);
+        drop(state);
+        self.emit(Event::Devices);
+        Ok(old)
+    }
+
+    /// Turns sending clipboard changes as they happen on or off for a phone or PC (`key`: name
+    /// or id).
     pub fn set_clipboard_auto(&self, key: &str, on: bool) -> Result<String> {
         let mut state = self.state.lock().unwrap();
         let name = if let Some(d) = state.devices.iter_mut().find(|d| d.id == key || d.name.eq_ignore_ascii_case(key)) {
-            if d.kind == DeviceKind::Phone {
-                bail!("{} is a phone: it follows the clipboard sync setting", d.name);
-            }
-            d.clipboard_auto = on;
+            d.clipboard_sync = Some(on);
             d.name.clone()
         } else if let Some(p) = state.peers.iter_mut().find(|p| p.id == key || p.name.eq_ignore_ascii_case(key)) {
             p.clipboard_auto = on;
@@ -783,7 +804,7 @@ impl App {
         Ok((count, target.names))
     }
 
-    /// Saves a phone's new name (from its `info` message).
+    /// Saves a phone's new name (from its `info` message), unless it was named on this PC.
     pub fn rename_device(&self, id: &str, name: &str) {
         let name: String = name.trim().chars().filter(|c| !c.is_control()).take(64).collect();
         if name.is_empty() {
@@ -791,7 +812,7 @@ impl App {
         }
         let mut state = self.state.lock().unwrap();
         let Some(dev) = state.devices.iter_mut().find(|d| d.id == id) else { return };
-        if dev.name == name {
+        if dev.name == name || dev.renamed {
             return;
         }
         tracing::info!("{} is now called {name}", dev.name);
@@ -943,7 +964,9 @@ fn add_device(app: &App, id: &str, name: &str, kind: DeviceKind, done: Option<on
             id: id.chars().take(64).collect(),
             name: name.clone(),
             kind,
+            clipboard_sync: None,
             clipboard_auto: false,
+            renamed: false,
             token_sha256: sha256_hex(token.as_bytes()),
             paired_at: now_secs(),
         });

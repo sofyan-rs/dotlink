@@ -1,7 +1,7 @@
 //! App-wide state the window shows. It outlives the window: closing it to the tray and
 //! opening it again finds everything where it was.
 
-use super::client::{Client, NearbyPc, PairUpdate, Status, Update};
+use super::client::{Client, DeviceInfo, NearbyPc, PairUpdate, Status, Update};
 use dotlink_core::cast::CastState;
 use dotlink_core::config::Config;
 use dotlink_core::events::{Event, Transfer};
@@ -15,8 +15,8 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
-    Phones,
-    Pcs,
+    /// One phone or PC ([Model::current_device]): its actions, settings and recent transfers.
+    Device,
     Pair,
     Activity,
     Setup,
@@ -64,12 +64,10 @@ pub struct Model {
     /// A setting changed that applies after a restart.
     pub restart_needed: bool,
     pub has_tray: bool,
-    /// Camera/mic asked to start, waiting for the phone: (kind, when).
-    pub starting: Vec<(&'static str, Instant)>,
-    /// Device id that Send files / Send clipboard go to; None for every connected phone.
-    pub send_to: Option<String>,
-    /// Device id the webcam and mic start on, when several phones are connected.
-    pub stream_from: Option<String>,
+    /// Camera/mic asked to start, waiting for the phone: (kind, device id, when).
+    pub starting: Vec<(&'static str, String, Instant)>,
+    /// The device the Device page shows, as picked in the sidebar; see [Model::current_device].
+    pub device: Option<String>,
     /// Other Dotlink PCs on the network (the Pair page's Join a PC), and whether a scan runs.
     pub nearby: Vec<NearbyPc>,
     pub nearby_loading: bool,
@@ -110,7 +108,7 @@ impl Model {
             owns_service,
             connected: false,
             status: None,
-            page: Page::Phones,
+            page: Page::Device,
             pairing: Pairing::Idle,
             pairing_id: 0,
             checks: Vec::new(),
@@ -129,8 +127,7 @@ impl Model {
             restart_needed: false,
             has_tray: false,
             starting: Vec::new(),
-            send_to: None,
-            stream_from: None,
+            device: None,
             nearby: Vec::new(),
             nearby_loading: false,
             refreshing: false,
@@ -221,7 +218,7 @@ impl Model {
                 match result {
                     Ok(s) => {
                         // A stream that is now running is no longer "starting".
-                        this.starting.retain(|(kind, _)| match *kind {
+                        this.starting.retain(|(kind, _, _)| match *kind {
                             "camera" => s.camera.is_none(),
                             _ => s.mic.is_none(),
                         });
@@ -422,43 +419,41 @@ impl Model {
         .detach();
     }
 
-    /// [Model::send_to] while that device is online and of the kind asked for (`phones`);
-    /// otherwise None (every connected one of that kind).
-    pub fn send_target(&self, phones: bool) -> Option<String> {
-        let id = self.send_to.as_ref()?;
-        let ok = self.status.as_ref()?.devices.iter().any(|d| &d.id == id && d.online && d.is_phone() == phones);
-        ok.then(|| id.clone())
+    /// Paired phones and linked PCs in the sidebar's order: online first, phones before PCs.
+    pub fn devices(&self) -> Vec<&DeviceInfo> {
+        let mut devices: Vec<&DeviceInfo> = self.status.iter().flat_map(|s| &s.devices).collect();
+        devices.sort_by_key(|d| (!d.online, !d.is_phone()));
+        devices
     }
 
-    /// Where Send goes on the Phones (`phones`) or PCs page: the device picked there, or every
-    /// connected one of that kind.
-    fn send_ids(&self, phones: bool) -> Vec<String> {
-        if let Some(id) = self.send_target(phones) {
-            return vec![id];
-        }
-        self.status
-            .iter()
-            .flat_map(|s| &s.devices)
-            .filter(|d| d.online && d.is_phone() == phones)
-            .map(|d| d.id.clone())
-            .collect()
+    /// The device the Device page shows: the one picked in the sidebar while it's still paired,
+    /// else the first in the sidebar.
+    pub fn current_device(&self) -> Option<&DeviceInfo> {
+        let devices = self.devices();
+        let picked = self.device.as_deref().and_then(|id| devices.iter().find(|d| d.id == id));
+        picked.or(devices.first()).copied()
     }
 
-    /// Sends files to the phones (`phones`) or the PCs, as chosen on that page.
-    pub fn send_files_to(&mut self, paths: Vec<PathBuf>, phones: bool, cx: &mut Context<Self>) {
-        let ids = self.send_ids(phones);
-        if paths.is_empty() || ids.is_empty() {
+    /// Shows a device's page.
+    pub fn open_device(&mut self, id: String, cx: &mut Context<Self>) {
+        self.device = Some(id);
+        self.page = Page::Device;
+        cx.notify();
+    }
+
+    /// Sends files to one device.
+    pub fn send_files_to(&mut self, paths: Vec<PathBuf>, id: String, cx: &mut Context<Self>) {
+        if paths.is_empty() {
             return;
         }
-        let calls: Vec<_> = ids.into_iter().map(|id| self.client.send_files(paths.clone(), Some(id))).collect();
-        self.report_all(calls, cx);
+        let call = self.client.send_files(paths, Some(id));
+        self.report_all(vec![call], cx);
     }
 
-    /// Sends the clipboard to the phones (`phones`) or the PCs, as chosen on that page.
-    pub fn send_clipboard_to(&mut self, phones: bool, cx: &mut Context<Self>) {
-        let ids = self.send_ids(phones);
-        let calls: Vec<_> = ids.into_iter().map(|id| self.client.send_clipboard(Some(id))).collect();
-        self.report_all(calls, cx);
+    /// Sends this PC's clipboard to one device.
+    pub fn send_clipboard_to(&mut self, id: String, cx: &mut Context<Self>) {
+        let call = self.client.send_clipboard(Some(id));
+        self.report_all(vec![call], cx);
     }
 
     /// One toast for several sends: the errors if any, else what was done.
@@ -486,20 +481,6 @@ impl Model {
             .ok();
         })
         .detach();
-    }
-
-    /// [Model::stream_from] while that phone is online; otherwise the first online phone.
-    pub fn stream_source(&self) -> Option<String> {
-        let online: Vec<&str> = self
-            .status
-            .as_ref()?
-            .devices
-            .iter()
-            .filter(|d| d.online && d.is_phone())
-            .map(|d| d.id.as_str())
-            .collect();
-        let chosen = self.stream_from.as_deref().filter(|id| online.contains(id));
-        chosen.or(online.first().copied()).map(str::to_string)
     }
 
     pub fn send_files(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
@@ -574,19 +555,19 @@ impl Model {
         .detach();
     }
 
-    /// Starts or stops the phone camera ("camera") or mic ("mic").
-    pub fn set_stream(&mut self, kind: &'static str, on: bool, cx: &mut Context<Self>) {
-        self.starting.retain(|(k, _)| *k != kind);
+    /// Starts or stops the camera ("camera") or mic ("mic") of the phone `id`.
+    pub fn set_stream(&mut self, kind: &'static str, on: bool, id: String, cx: &mut Context<Self>) {
+        self.starting.retain(|(k, _, _)| *k != kind);
         if on {
-            self.starting.push((kind, Instant::now()));
+            self.starting.push((kind, id.clone(), Instant::now()));
         }
         cx.notify();
-        let call = self.client.media(kind, on, self.stream_source());
+        let call = self.client.media(kind, on, Some(id));
         cx.spawn(async move |this, cx| {
             let result = call.await;
             this.update(cx, |this, cx| {
                 if let Err(e) = result {
-                    this.starting.retain(|(k, _)| *k != kind);
+                    this.starting.retain(|(k, _, _)| *k != kind);
                     this.notice(capitalize(&format!("{e:#}")), true, cx);
                 }
                 cx.notify();
@@ -596,9 +577,9 @@ impl Model {
         .detach();
     }
 
-    /// The camera/mic was asked to start a moment ago and the phone hasn't begun yet.
-    pub fn is_starting(&self, kind: &str) -> bool {
-        self.starting.iter().any(|(k, at)| *k == kind && at.elapsed() < START_WAIT)
+    /// The camera/mic was asked to start on the phone `id` a moment ago and it hasn't begun yet.
+    pub fn is_starting(&self, kind: &str, id: &str) -> bool {
+        self.starting.iter().any(|(k, d, at)| *k == kind && d == id && at.elapsed() < START_WAIT)
     }
 
     /// Opens the current pairing link on the phones on the cable; the result is a toast.
@@ -647,7 +628,7 @@ impl Model {
             this.update(cx, |this, cx| match result {
                 Ok(msg) => {
                     this.notice(capitalize(&msg), false, cx);
-                    this.page = Page::Pcs;
+                    this.page = Page::Device;
                     this.refresh(cx);
                     done(cx);
                 }
@@ -666,11 +647,28 @@ impl Model {
             this.update(cx, |this, cx| match result {
                 Ok(msg) => {
                     this.notice(capitalize(&msg), false, cx);
-                    this.page = Page::Pcs;
+                    this.page = Page::Device;
                     this.refresh(cx);
                     done(cx);
                 }
                 Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Names a device on this PC; the toast says what changed.
+    pub fn rename_device(&mut self, id: String, name: String, cx: &mut Context<Self>) {
+        let call = self.client.rename(&id, &name);
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(msg) => this.notice(capitalize(&msg), false, cx),
+                    Err(e) => this.notice(capitalize(&format!("{e:#}")), true, cx),
+                }
+                this.refresh(cx);
             })
             .ok();
         })
