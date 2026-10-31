@@ -1,284 +1,247 @@
 # Feature ideas
 
-Features worth adding, picked from a look at [Velquo](https://github.com/vsnthdev/Velquo) (a
-native macOS KDE Connect client) on 2026-10-31. Velquo only writes the Mac side and leans on the
-KDE Connect app on the phone; Dotlink has its own Android app, so each feature here is built on
-both ends and on all three desktops.
+Features worth adding, in the order they're worth building. 1, 2, 5, 7 and 8 come from a look at
+[Velquo](https://github.com/vsnthdev/Velquo) (a native macOS client for KDE Connect) on
+2026-10-31; the others are Dotlink's own. Velquo only writes the Mac side and relies on the KDE
+Connect app on the phone. Dotlink has its own Android app, so each feature is built on both
+ends and on all three desktops.
 
-None of these exist yet: there is no `NotificationListenerService`, `MediaSession`, telephony or
-"ring" code in `android/` or `desktop/`.
+None of them exist yet. Each lands with its own control message (`{"t": …}` on `/ws/control`,
+see [ARCHITECTURE.md](ARCHITECTURE.md)); where it shows in the window is given against the
+device page (sidebar → a phone or PC: header, Send, Screen camera & mic, Sync, Recent).
 
 ## Summary
 
 | # | Feature | Direction | Size | Needs |
 |---|---|---|---|---|
-| 1 | [Send links](#1-send-links) | both | small | nothing new |
-| 2 | [Ring the phone](#2-ring-the-phone) | PC → phone | small | nothing new |
-| 3 | [Phone notifications on the PC, OTP auto-copy](#3-phone-notifications-on-the-pc-otp-auto-copy) | phone → PC | medium | notification access |
-| 4 | [Media control](#4-media-control) | both | large | notification access; MPRIS / SMTC / MediaRemote |
-| 5 | [Pause the PC's media on calls](#5-pause-the-pcs-media-on-calls) | phone → PC | small once 4 is done | `READ_PHONE_STATE` |
-| 6 | [The laptop's battery on the phone](#6-the-laptops-battery-on-the-phone) | PC → phone | small | nothing new |
-| 7 | [Presenter mode in the Remote](#7-presenter-mode-in-the-remote) | phone → PC | small | nothing new (phone only) |
-| 8 | [Browse the phone's files from the PC](#8-browse-the-phones-files-from-the-pc) | PC → phone | medium | All files access on the phone |
+| 1 | [Send links](#1-send-links) | both | small | — |
+| 2 | [Ring the phone](#2-ring-the-phone) | PC → phone | small | — |
+| 3 | [The laptop's battery on the phone](#3-the-laptops-battery-on-the-phone) | PC → phone | small | — |
+| 4 | [Presenter mode in the Remote](#4-presenter-mode-in-the-remote) | phone → PC | small | phone only |
+| 5 | [Phone notifications on the PC, codes copied](#5-phone-notifications-on-the-pc-codes-copied) | phone → PC | medium | notification access |
+| 6 | [Browse the phone's files](#6-browse-the-phones-files) | PC → phone | medium | All files access |
+| 7 | [Media control](#7-media-control) | both | large | notification access; MPRIS / SMTC / MediaRemote |
+| 8 | [Pause the PC's media on calls](#8-pause-the-pcs-media-on-calls) | phone → PC | small after 7 | `READ_PHONE_STATE` |
 
-Suggested order: 1, 2 and 6 first (small, a day or two together), then 7, then 3 (the most
-useful), then 8, then 4 and 5.
-
-Not planned: run-command (Shell covers it).
+1 to 3 take a day or two together. 5 is the one people will notice most. Not planned:
+run-command, which the Shell covers.
 
 ## 1. Send links
 
-**What.** A link shared to Dotlink on the phone opens in the PC's default browser, and the
-other way round.
+**What.** A link shared to Dotlink on the phone opens in the PC's browser, and the other way
+round.
 
-**Today.** `ShareActivity.sendToPc` sends shared text as `clip`, so a link lands on the PC's
+**Today.** `ShareActivity.sendToPc` sends shared text as `clip`: the link lands on the PC's
 clipboard and nothing opens.
 
-**Protocol.** New control message, both ways:
-
-| Direction | `t` | Meaning |
+| Direction | `t` | Fields |
 |---|---|---|
 | phone ↔ PC | `url` | `url`: open it in the default browser |
 
 **Phone.**
-- `ShareActivity`: when `EXTRA_TEXT` is a single `http(s)` URL (trimmed, no spaces), send `url`
-  instead of `clip`. Toast "Opened on <PC>".
-- Incoming `url` (`Link.kt`): open with `ACTION_VIEW`. Android 10+ blocks activity starts from
-  the background, so post a notification with **Open** instead when the app isn't on screen.
+- `ShareActivity`: when `EXTRA_TEXT` is a single `http(s)` URL, send `url` instead of `clip`;
+  toast "Opened on <PC>".
+- Incoming `url` (`Link.kt`): `ACTION_VIEW`. Android 10+ doesn't let a background app start an
+  activity, so off screen it posts a notification with **Open** instead.
 
 **PC.**
-- Incoming `url` (`server.rs`, control loop): only `http`/`https`, then `xdg-open` /
-  `ShellExecuteW` / `open`. Opening isn't silent: show a notification "Opened <host> from
-  <phone>" so a stray link is noticed.
-- Sending: tray **Send link…** (opens with the clipboard's URL filled in), the window's phone
-  menu, and `dotlink open <url> [--to <phone>]` through the control socket (`ipc.rs`).
-- Linked PCs (`kind: pc`) take `url` too.
+- Incoming `url` (`server.rs`): `http`/`https` only, then `xdg-open` / `ShellExecuteW` /
+  `open`, and a notification "Opened <host> from <phone>" so a stray link is noticed.
+- Sending: **Send link…** in the tray (filled in with the clipboard's URL), and
+  `dotlink open <url> [--to <device>]` (`ipc.rs`). Linked PCs take `url` too.
 
-**Done when.** Share → Dotlink on a link from Chrome opens it on each desktop; `dotlink open`
-opens it on the phone, from the foreground and from a notification.
+**Done when.** Share → Dotlink on a link in Chrome opens it on each desktop; `dotlink open`
+opens it on the phone, with the app open and from the notification.
 
 ## 2. Ring the phone
 
-**What.** **Ring** on a phone's page (and `dotlink ring [<phone>]`) makes the phone ring at full
-volume, even on silent, until it's stopped on the phone.
+**What.** **Ring** makes the phone ring at full volume, even on silent, until it's stopped.
 
-**Protocol.**
-
-| Direction | `t` | Meaning |
+| Direction | `t` | Fields |
 |---|---|---|
-| PC → phone | `ring` | `on: bool`: start or stop ringing |
+| PC → phone | `ring` | `on`: start or stop |
 
 **Phone.**
-- `MediaPlayer` with the default ringtone (`RingtoneManager.TYPE_RINGTONE`, alarm as fallback),
-  `AudioAttributes.USAGE_ALARM` so silent and vibrate modes don't mute it, looping; `STREAM_ALARM`
-  raised to max and put back after.
-- A full-screen notification "Ringing from <PC>" with **Stop** (`USE_FULL_SCREEN_INTENT`; on
-  Android 14+ it may fall back to a heads-up notification). Stops after 60 s by itself.
+- `MediaPlayer` with the default ringtone (alarm as fallback), `USAGE_ALARM` so silent and
+  vibrate don't mute it, looping; `STREAM_ALARM` raised to max and put back after.
+- A full-screen notification "Ringing from <PC>" with **Stop** (`USE_FULL_SCREEN_INTENT`;
+  Android 14+ may show it as heads-up). Stops by itself after 60 s.
 
-**PC.** Button on each connected phone's card; while ringing it turns into **Stop**. CLI through
-`ipc.rs`. Only for `kind: phone`.
+**PC.** **Ring** in a connected phone's ⋯ menu; while it rings, the header shows `RINGING`
+with **Stop**. `dotlink ring [<phone>]`.
 
-**Done when.** The phone rings from silent mode with the screen off, and Stop works from both
-ends.
+**Done when.** The phone rings in silent mode with the screen off; Stop works from both ends.
 
-## 3. Phone notifications on the PC, OTP auto-copy
+## 3. The laptop's battery on the phone
 
-**What.** The phone's notifications show on the PC. A verification code in one is copied to the
+**What.** The phone shows the PC's battery and charging state when the PC has a battery. A
+desktop PC shows nothing.
+
+**Today.** Half done. `platform::battery()` is read once a minute (`App::watch_battery`) and
+is `None` without a battery. The `battery` message already goes to linked PCs, but only to
+them: `DeviceKind::Pc` filters it in the control loop (sent after `hello`) and in
+`watch_battery`'s targets.
+
+**PC.** Drop both filters. The message is the same (`battery`: `level`, `charging`).
+
+**Phone.**
+- `Link.kt`: keep the last `battery` in the link state, cleared on disconnect.
+- Home (`LinkScreen.kt`): the level next to the PC's name as a dot meter, green while
+  charging, as on the PC's device page.
+- Optional: a notification at 20 % while not charging (Settings, off by default).
+
+**Done when.** A laptop on each OS shows its level on the phone, updated within a minute of
+plugging in or out; a desktop PC shows nothing.
+
+## 4. Presenter mode in the Remote
+
+**What.** A Remote mode for slides: large Next and Previous, Start, End, Black, a timer, and
+the volume keys as Next / Previous.
+
+**PC.** Nothing: it's keys over `/ws/input`, like the keyboard.
+
+**Phone.**
+- The Remote gets a switch: Touchpad / Presenter.
+- Presenter: Previous on the left third, Next on the rest, so it works without looking. A row
+  with Start, End (`Esc`), Black (`B`) and a timer (tap to start, hold to reset; optional
+  vibration at a set minute).
+- Keys: Next `→`, Previous `←`. Start follows the PC's OS from `hello`: `F5` (PowerPoint,
+  LibreOffice; `Shift+F5` from the current slide), `⌥⌘P` for Keynote.
+- Volume up / down as Next / Previous while it's open (`onKeyDown`, consumed). The screen
+  stays on.
+- Later: a laser pointer (the gyro moving a dot over the slides) needs an overlay window on the
+  PC.
+
+**Done when.** PowerPoint (Windows), Keynote (macOS), Impress (Linux) and Google Slides in a
+browser go forward, back, start and end, from the screen and the volume keys.
+
+## 5. Phone notifications on the PC, codes copied
+
+**What.** The phone's notifications show on the PC. A verification code in one goes to the
 PC's clipboard by itself. Dismissing on the PC dismisses on the phone.
 
-**Phone.**
-- `NotificationListenerService` (`BIND_NOTIFICATION_LISTENER_SERVICE`), turned on from Settings
-  → **Show notifications on PC**, which opens the system's Notification access screen.
-- Forward `onNotificationPosted` while linked: app name, app icon (small PNG, cached on the PC
-  by package), title, text, key, posted time. Skip ongoing, group-summary and Dotlink's own
-  notifications, and any app the user turned off (a per-app list in Settings, chat apps such as
-  WhatsApp off by default since they repeat every message).
-- Forward `onNotificationRemoved` so the PC drops it too; an incoming `notif_dismiss` calls
-  `cancelNotification(key)`.
-
-**Android 15+.** The system hides the text of notifications with codes or private messages from
-listeners ("Sensitive notification content hidden"). It shows again after
-`adb shell appops set com.dotlink RECEIVE_SENSITIVE_NOTIFICATIONS allow`, which persists after
-USB debugging is turned off. Dotlink already runs adb for Cast, so this becomes a **Setup → Fix**
-item ("Show verification codes"), run while the phone is connected over USB or Wireless
-debugging. Velquo only documents it as manual steps.
-
-**Protocol.**
-
-| Direction | `t` | Meaning |
+| Direction | `t` | Fields |
 |---|---|---|
-| phone → PC | `notif` | `key`, `app`, `pkg`, `title`, `text`, `time`, `icon` (base64 PNG, only the first time per `pkg`) |
+| phone → PC | `notif` | `key`, `app`, `pkg`, `title`, `text`, `time`, `icon` (base64 PNG, the first time per `pkg`) |
 | phone → PC | `notif_removed` | `key` |
 | PC → phone | `notif_dismiss` | `key` |
 
+**Phone.**
+- A `NotificationListenerService`, turned on in Settings → **Show notifications on PC** (opens
+  the system's Notification access screen).
+- Forwards posted and removed notifications while linked. Skips ongoing ones, group summaries,
+  Dotlink's own, and apps turned off in a per-app list (chat apps off by default: they repeat
+  every message).
+- `notif_dismiss` → `cancelNotification(key)`.
+
+**Android 15+** hides the text of notifications holding codes or private messages from
+listeners ("Sensitive notification content hidden"). It comes back after
+`adb shell appops set com.dotlink RECEIVE_SENSITIVE_NOTIFICATIONS allow`, which stays after USB
+debugging is off. Dotlink already runs adb for Cast, so this is a **Setup → Fix** item ("Show
+verification codes") for a phone on USB or Wireless debugging. Velquo leaves it to manual steps.
+
 **PC.**
-- Show through the existing notification path (`platform::Notify`): notify-send, toasts,
-  UNUserNotificationCenter. Title "<app> · <phone>", with **Dismiss** as an action.
-- OTP: when title or text has a code (4–8 digits, or `G-123456`-style, next to words like
-  "code", "OTP", "verification", "kode", "verifikasi"), copy it to the clipboard and say so in
-  the notification ("Code 123456 copied"). Not sent back to the phone as `clip`. Setting:
-  **Copy verification codes** (on by default).
-- Settings: **Show phone notifications** per phone.
+- Shown through `platform::Notify` (notify-send, toasts, UNUserNotificationCenter) as
+  "<app> · <phone>", with **Dismiss**.
+- Codes: 4–8 digits (or `G-123456`) near "code", "OTP", "verification", "kode",
+  "verifikasi" are copied, and the notification says "Code 123456 copied". Not echoed back to
+  the phone as `clip`.
+- Device page → Sync: **Notifications** and **Copy verification codes**, per phone.
 
-**Privacy.** Notification text only travels over the paired TLS link and is never written to
-disk; the icon cache holds only icons.
+**Privacy.** Text only travels over the paired TLS link and isn't written to disk; only the
+icons are cached.
 
-**Done when.** A WhatsApp/SMS/bank notification shows on each desktop within a second; an SMS
-OTP lands on the PC's clipboard on Android 14 and, after Setup's Fix, on Android 15+.
+**Done when.** A chat, SMS or bank notification shows on each desktop within a second, and an
+SMS code reaches the PC's clipboard on Android 14, and on 15+ after Setup's Fix.
 
-## 4. Media control
+## 6. Browse the phone's files
 
-**What.** The phone controls what plays on the PC (title, artist, art, play/pause, next,
-previous, seek, volume) and the PC controls what plays on the phone.
+**What.** The phone's storage from the PC: folders and files, download, upload into the open
+folder, rename and delete.
 
-**Today.** The Remote sends media keys to the PC: blind, no "now playing".
+**Why not SFTP.** KDE Connect runs an SSH server on the phone and mounts it. Dotlink already has
+a TLS link with transfers both ways, so browsing is a few messages on top: no SSH server, no
+`sshfs` / macFUSE / WinFsp on the PC.
 
-**Phone → controls the PC.**
-- PC side reads and drives the active player: MPRIS over D-Bus (Linux, `zbus`), Global System
-  Media Transport Controls (Windows, `windows` crate), MediaRemote's private framework
-  (macOS; Velquo does this with an Objective-C bridge, `velquo_mr_bridge.m`). New
-  `platform::media` with `now_playing()` and `command()`.
-- A **Media** tab or card on the phone showing what the PC plays.
-
-**PC → controls the phone.**
-- `MediaSessionManager.getActiveSessions(listener component)`, so it needs the notification
-  access from 3. Send the active session's metadata and state; take commands back through
-  `MediaController.transportControls`.
-- On the PC: a "Now playing on <phone>" card in the window and the tray.
-
-**Protocol.**
-
-| Direction | `t` | Meaning |
+| Direction | `t` | Fields |
 |---|---|---|
-| phone ↔ PC | `media_state` | `player`, `title`, `artist`, `album`, `playing`, `position`, `duration`, `art` (base64 JPEG, only when it changes) |
-| phone ↔ PC | `media_cmd` | `cmd`: `play`, `pause`, `toggle`, `next`, `prev`, `seek` (+ `ms`), `volume` (+ `level`) |
-
-(`media` is taken: `state: needs_tap` for camera/mic.)
-
-**Done when.** Spotify/YouTube in a browser on each desktop shows and is controlled from the
-phone, and the phone's player from the PC.
-
-## 5. Pause the PC's media on calls
-
-**What.** The PC pauses what it plays when the phone rings or a call starts, and resumes when
-the call ends, only if it paused it.
-
-**Phone.** `TelephonyCallback.CallStateListener` (Android 12+; `PhoneStateListener` before),
-needs `READ_PHONE_STATE`, asked when the setting is turned on. Sends the state while linked.
-
-**Protocol.**
-
-| Direction | `t` | Meaning |
-|---|---|---|
-| phone → PC | `call` | `state`: `ringing`, `offhook`, `idle` |
-
-**PC.** On `ringing`/`offhook`: if `platform::media` reports playing, pause and remember. On
-`idle`: resume what it paused. Setting: **Pause media during calls** per phone. Without 4,
-a fallback sends the play/pause media key, but it can't tell whether anything was playing.
-
-**Done when.** A call pauses music on each desktop and resumes it after hang-up; a call while
-nothing plays leaves it that way.
-
-## 6. The laptop's battery on the phone
-
-**What.** The phone shows the PC's battery level and charging state, only when the PC has a
-battery (a laptop). A desktop PC shows nothing.
-
-**Today.** Half done: linked PCs already send each other `battery` (`platform::battery()`,
-read once a minute by `App::watch_battery`; `None` without a battery, so no message). It's
-filtered to `DeviceKind::Pc` in two places in `server.rs`: the first message after `hello` in
-the control loop, and `watch_battery`'s list of targets.
-
-**PC.** Drop the `kind == Pc` filter in both places, so phones get the same `battery` message.
-Nothing new in the protocol: PC → phone `battery` with `level`, `charging`.
-
-**Phone.**
-- `Link.kt`: handle incoming `battery`, keep it in the link state (cleared on disconnect, as a
-  PC without a battery never sends one).
-- Home (`LinkScreen.kt`): next to the PC's name, a battery icon with the level and a bolt
-  while charging. Nothing shown when no `battery` arrived.
-- Optional: a notification when the laptop drops to 20% and isn't charging (Settings, off by
-  default).
-
-**Done when.** A laptop on each OS shows its level on the phone and updates within a minute of
-plugging in or out; a desktop PC shows nothing.
-
-## 7. Presenter mode in the Remote
-
-**What.** A mode in the Remote for slides: big Next / Previous, Start / End, Black screen, a
-timer, and the volume keys as Next / Previous.
-
-**PC.** Nothing new: it sends keys through `/ws/input` like the keyboard does.
-
-**Phone.**
-- Remote gets a mode switch: Touchpad (today) / Presenter.
-- Presenter screen: two large areas, Previous (left third) and Next (the rest), so it works
-  without looking; a row with Start, End (`Esc`), Black (`B`) and a timer (tap to start,
-  long-press to reset; optional vibration at a set minute).
-- Keys: Next `→` / `Page Down`, Previous `←` / `Page Up`. Start depends on the PC's OS (from
-  `hello`): `F5` (PowerPoint, LibreOffice, Google Slides with `Ctrl+F5` for "from current"),
-  `⌥⌘P` for Keynote on macOS. A small "Start from beginning / from current slide" choice.
-- Volume up / down as Next / Previous while the screen is open (`onKeyDown`, consumed so the
-  volume doesn't change). Keep the screen on while in Presenter mode.
-- Later: a laser pointer (the gyro moving a highlight over the slides) needs an overlay window
-  on the PC; not part of the first version.
-
-**Done when.** PowerPoint (Windows), Keynote (macOS), LibreOffice Impress (Linux) and Google
-Slides in a browser go forward, back, start and end from the phone with the screen on and with
-the volume keys.
-
-## 8. Browse the phone's files from the PC
-
-**What.** A **Files** tab for a connected phone in the PC's window: folders and files of the
-phone's storage, download to the PC, upload into the open folder, delete and rename.
-
-**Why not SFTP.** KDE Connect runs an SSH server on the phone and mounts it with SFTP. Dotlink
-already has an authenticated TLS link and file transfer both ways, so browsing is a few
-request/response messages on top; no SSH server, no `sshfs` / macFUSE / WinFsp on the PC.
-
-**Storage access on the phone.** Two options:
-- **All files access** (`MANAGE_EXTERNAL_STORAGE`, Android 11+; Android 10 uses
-  `READ/WRITE_EXTERNAL_STORAGE` with `requestLegacyExternalStorage`). Whole storage as plain
-  `java.io.File` paths: simplest and fastest. Google Play restricts it to file managers and
-  similar apps, but Dotlink ships through GitHub releases, so it's fine.
-- **Storage Access Framework**: the user picks folders (`ACTION_OPEN_DOCUMENT_TREE`) and only
-  those are visible. Works without the special permission, slower (`DocumentFile`).
-
-Recommended: All files access, asked when the user first opens Files on the PC (the phone
-shows a notification leading to the system switch), with **Browse from PC** off by default in
-the phone's Settings. `Android/data` and `Android/obb` stay hidden by Android either way.
-
-**Protocol.**
-
-| Direction | `t` | Meaning |
-|---|---|---|
-| PC → phone | `fs_list` | `req`, `path`: list a folder (`/` is internal storage) |
-| phone → PC | `fs_list` | `req`, `entries`: `name`, `dir`, `size`, `mtime`; or `error` |
-| PC → phone | `fs_get` | `req`, `path`: send this file; the phone uploads it through `POST /upload` with `req` so the PC saves it where asked instead of `~/Downloads/Dotlink` |
-| PC → phone | `fs_put` | `req`, `path`, then the file goes the usual way (`file` offer + `/download/{id}`), saved into `path` instead of `Download/Dotlink` |
+| PC → phone | `fs_list` | `req`, `path` (`/` is internal storage) |
+| phone → PC | `fs_list` | `req`, `entries` (`name`, `dir`, `size`, `mtime`), or `error` |
+| PC → phone | `fs_get` | `req`, `path`: the phone uploads it (`POST /upload` with `req`), saved where the PC asked |
+| PC → phone | `fs_put` | `req`, `path`: the usual `file` offer, saved into `path` instead of `Download/Dotlink` |
 | PC → phone | `fs_rm`, `fs_mv`, `fs_mkdir` | `req`, `path` (+ `to`) |
 | phone → PC | `fs_ok` | `req`, or `error` |
 
-Paths are checked on the phone: canonicalized and kept under the storage root, so `..` can't
-leave it. Only for `kind: pc` devices that are paired; refused while **Browse from PC** is off.
+**Phone.**
+- **All files access** (`MANAGE_EXTERNAL_STORAGE`, Android 11+; legacy storage on 10): the
+  whole storage as plain paths, simple and fast. Play restricts it to file managers, but
+  Dotlink ships on GitHub. (The Storage Access Framework would limit it to folders the user
+  picks, slower.)
+- **Browse from PC** in Settings, off by default; the first request shows a notification
+  leading to the system switch. `Android/data` and `Android/obb` stay hidden either way.
+- Every path is canonicalized and kept under the storage root. Only paired PCs may ask, not
+  linked phones.
 
 **PC.**
-- Window: Files tab per connected phone: path bar, list with name / size / date, folders
-  first; double-click a folder to open, a file to download and open; drop files on the list to
-  upload into that folder; right-click for Download / Rename / Delete.
-- Thumbnails for images (later: `fs_thumb` returning a small JPEG).
-- CLI: `dotlink ls [<phone>] <path>`, `dotlink get <phone>:<path> [<dest>]`.
-
-**Later.** Mount it as a drive (Finder / Explorer / Nautilus): a local WebDAV server on
-`127.0.0.1` in the PC app that forwards to these messages. All three desktops can mount WebDAV
-without extra drivers (Windows' WebClient has quirks with large files).
+- Device page → **Files**: a path bar, folders first, name / size / date. Double-click opens a
+  folder, or downloads and opens a file; files dropped on the list go into that folder;
+  right-click for Download, Rename, Delete. Image thumbnails later (`fs_thumb`).
+- `dotlink ls <phone> <path>`, `dotlink get <phone>:<path> [<dest>]`.
+- Later: mount it as a drive through a WebDAV server on `127.0.0.1` that forwards to these
+  messages. All three desktops mount WebDAV without drivers (Windows' WebClient is fussy with
+  large files).
 
 **Done when.** On each desktop: browse internal storage, download a 1 GB video (SHA-256
-checked), upload a folder's files into `DCIM`, rename and delete; Browse from PC off makes
-every request fail.
+checked), upload files into `DCIM`, rename and delete. With Browse from PC off, every request
+fails.
 
-## Docs to update when each lands
+## 7. Media control
 
-- README's feature table.
-- [ARCHITECTURE.md](ARCHITECTURE.md): control messages and "Features, briefly".
-- [PLATFORM_FEATURES.md](PLATFORM_FEATURES.md): a section per feature, per OS.
+**What.** The phone shows and controls what plays on the PC, and the PC shows and controls what
+plays on the phone: title, artist, artwork, play/pause, next, previous, seek, volume.
+
+**Today.** The Remote sends media keys to the PC, blind.
+
+| Direction | `t` | Fields |
+|---|---|---|
+| phone ↔ PC | `media_state` | `player`, `title`, `artist`, `album`, `playing`, `position`, `duration`, `art` (base64 JPEG, when it changes) |
+| phone ↔ PC | `media_cmd` | `cmd`: `play`, `pause`, `toggle`, `next`, `prev`, `seek` (+ `ms`), `volume` (+ `level`) |
+
+(`media` is taken: camera and mic use it for `needs_tap`.)
+
+**The PC's player.** A new `platform::media` (`now_playing()`, `command()`): MPRIS over D-Bus
+on Linux, the System Media Transport Controls on Windows, MediaRemote on macOS (a private
+framework; Velquo reaches it through an Objective-C bridge). The phone shows it on a **Media**
+card in the app.
+
+**The phone's player.** `MediaSessionManager.getActiveSessions`, which needs the notification
+access from 5; commands go to `MediaController.transportControls`. The PC shows it on the
+device page (Now playing, with the controls) and in the tray.
+
+**Done when.** Spotify, and YouTube in a browser, on each desktop show on the phone and follow
+its controls; the phone's player shows on the PC and follows the PC's.
+
+## 8. Pause the PC's media on calls
+
+**What.** When the phone rings or a call starts, the PC pauses what it plays, and resumes it
+when the call ends, only if it was the one that paused it.
+
+| Direction | `t` | Fields |
+|---|---|---|
+| phone → PC | `call` | `state`: `ringing`, `offhook`, `idle` |
+
+**Phone.** `TelephonyCallback.CallStateListener` (Android 12+; `PhoneStateListener` before),
+with `READ_PHONE_STATE` asked when the setting is turned on.
+
+**PC.** On `ringing` or `offhook`, pause if `platform::media` (7) says something plays, and
+remember it; on `idle`, resume. Device page → Sync: **Pause media during calls**. Without 7 it
+could press the play/pause key, but couldn't tell whether anything was playing.
+
+**Done when.** A call pauses music on each desktop and it resumes after hanging up; a call while
+nothing plays starts nothing.
+
+## When one lands
+
+- README: the feature table.
+- [ARCHITECTURE.md](ARCHITECTURE.md): the control message, and "Features, briefly".
+- [PLATFORM_FEATURES.md](PLATFORM_FEATURES.md): how it's done on each OS, and what was tested.
