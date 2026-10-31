@@ -137,6 +137,9 @@ class Link(
     /** "Ring" from the PC; tells the PC when it starts and stops ringing. */
     val ringer = Ringer(app) { on -> control?.send(JSONObject().put("t", "ring").put("on", on).toString()) }
 
+    /** What plays on the PC (its `media_state`); null when nothing does or offline. */
+    val pcMedia = MutableStateFlow<PcMedia?>(null)
+
     /** The PC's battery from its `battery` message: (percent, charging). Null on a desktop PC or offline. */
     val pcBattery = MutableStateFlow<Pair<Int, Boolean>?>(null)
 
@@ -522,6 +525,7 @@ class Link(
                     ws.cancel()
                     control = null
                     pcBattery.value = null
+                    pcMedia.value = null
                     currentHost = null
                 }
             }
@@ -587,6 +591,8 @@ class Link(
                 msg.optString("os").takeIf { it.isNotEmpty() }?.let { prefs.pcOs = it }
                 state.value = LinkState.Online(name)
                 NotificationForwarder.reset()
+                MediaBridge.connected(app)
+                CallWatcher.update(app)
                 sendInfo()
                 sendBattery(force = true)
             }
@@ -603,6 +609,8 @@ class Link(
             "url" -> openUrl(msg.optString("url"), prefs.serverName)
             "battery" -> pcBattery.value = msg.optInt("level", -1).takeIf { it >= 0 }?.let { it.coerceAtMost(100) to msg.optBoolean("charging") }
             "fs_list", "fs_get", "fs_rm", "fs_mv", "fs_mkdir" -> FileBrowser.handle(app, msg)
+            "media_state" -> MediaBridge.fromPc(msg)
+            "media_cmd" -> MediaBridge.command(msg)
             "notif_dismiss" -> NotifListener.dismiss(msg.optString("key"))
             "ring" -> if (msg.optBoolean("on")) ringer.start(prefs.serverName) else ringer.stop()
             "camera", "mic" -> streamRequests.tryEmit(msg.optString("t") to msg.optBoolean("on"))

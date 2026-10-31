@@ -6,6 +6,7 @@
 //! | `notify_file(from, name, path)` | "file received" notification with Open / Show in folder |
 //! | `notify_incoming(app, incoming)`, `dismiss_incoming(id)` | "X wants to send …" with Accept / Decline (`App::answer_incoming`), and taking it away once answered |
 //! | `notify_phone(app, n)`, `dismiss_phone(tag)` | a phone's notification ([PhoneNotification]) with Dismiss (`App::dismiss_phone_notification`), and taking it away when the phone removed it |
+//! | `now_playing()`, `media_command(cmd)` | what plays on this PC ([NowPlaying]) and controlling it ([MediaCmd]): MPRIS through playerctl, the System Media Transport Controls, AppleScript (Spotify, Music) |
 //! | `open_path(path)` | open a file or folder with the default app |
 //! | `open_url(url)` | open a web link in the default browser |
 //! | `clipboard::{watch, get, set}` | clipboard text, and pushing changes to the phone |
@@ -50,6 +51,62 @@ pub(crate) mod battery;
 pub(crate) mod cpal_sink;
 
 use serde::{Deserialize, Serialize};
+
+/// What plays on this PC, for the phone's Media card.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NowPlaying {
+    /// The app: "spotify", "firefox", "Music"…
+    pub player: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub playing: bool,
+    pub position_ms: u64,
+    /// 0 when unknown (a live stream).
+    pub duration_ms: u64,
+    pub art: Option<Art>,
+    /// The output volume, 0 to 1; None when it can't be read.
+    pub volume: Option<f32>,
+}
+
+/// Where a track's artwork is.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Art {
+    /// `file://` or `http(s)://`.
+    Url(String),
+    /// JPEG or PNG bytes.
+    Bytes(Vec<u8>),
+}
+
+/// A command from the phone's Media card (`media_cmd`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum MediaCmd {
+    Play,
+    Pause,
+    Toggle,
+    Next,
+    Prev,
+    /// To this position, ms.
+    Seek(u64),
+    /// The output volume, 0 to 1.
+    Volume(f32),
+}
+
+impl MediaCmd {
+    /// From a `media_cmd` message: `cmd`, with `ms` for seek and `level` (0–100) for volume.
+    pub fn from_msg(v: &serde_json::Value) -> Option<Self> {
+        Some(match v["cmd"].as_str()? {
+            "play" => Self::Play,
+            "pause" => Self::Pause,
+            "toggle" => Self::Toggle,
+            "next" => Self::Next,
+            "prev" => Self::Prev,
+            "seek" => Self::Seek(v["ms"].as_u64()?),
+            "volume" => Self::Volume((v["level"].as_f64()? / 100.0).clamp(0.0, 1.0) as f32),
+            _ => return None,
+        })
+    }
+}
 
 /// A phone's notification, as shown on this PC.
 #[derive(Debug, Clone)]

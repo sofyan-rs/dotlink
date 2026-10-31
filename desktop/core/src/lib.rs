@@ -9,6 +9,7 @@ pub mod files;
 pub mod input;
 pub mod pair_code;
 pub mod ipc;
+pub mod media;
 pub mod peer;
 pub mod platform;
 pub mod server;

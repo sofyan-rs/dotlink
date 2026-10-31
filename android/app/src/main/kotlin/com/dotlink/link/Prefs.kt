@@ -220,6 +220,11 @@ class Prefs(
         get() = sp.getFloat("pointer_speed", 1.4f)
         set(v) = sp.edit { putFloat("pointer_speed", v) }
 
+    /** Tell the PC about calls, so it pauses its player (CallWatcher). */
+    var pauseOnCalls: Boolean
+        get() = sp.getBoolean("pause_on_calls", false)
+        set(v) = sp.edit { putBoolean("pause_on_calls", v) }
+
     /** Browse from PC: the PC may list and change files in this phone's storage (FileBrowser). */
     var browseFromPc: Boolean
         get() = sp.getBoolean("browse_from_pc", false)

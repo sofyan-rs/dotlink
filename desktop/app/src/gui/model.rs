@@ -495,6 +495,17 @@ impl Model {
         self.report_all(vec![call], cx);
     }
 
+    /// Play / pause, next or previous on a phone's player.
+    pub fn phone_media(&mut self, id: String, action: &'static str, cx: &mut Context<Self>) {
+        let call = self.client.phone_media(&id, action, None);
+        cx.spawn(async move |this, cx| {
+            if let Err(e) = call.await {
+                this.update(cx, |this, cx| this.notice(capitalize(&format!("{e:#}")), true, cx)).ok();
+            }
+        })
+        .detach();
+    }
+
     /// Opens `path` on phone `id` in its page's Files.
     pub fn open_folder(&mut self, id: String, path: String, cx: &mut Context<Self>) {
         let kept = self.folder.as_ref().filter(|f| f.device == id && f.path == path).map(|f| f.entries.clone());

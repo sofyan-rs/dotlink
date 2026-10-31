@@ -66,6 +66,7 @@ async fn serve(app: Arc<App>, identity: tls::Identity) -> Result<()> {
     tokio::spawn(crate::usb::watch(app.clone()));
     crate::peer::start_all(&app);
     tokio::spawn(app.clone().watch_battery());
+    tokio::spawn(crate::media::watch(app.clone()));
     let _mdns = advertise(&app).map_err(|e| tracing::warn!("mDNS disabled: {e}")).ok();
 
     let pem = axum_server::tls_rustls::RustlsConfig::from_pem(identity.cert_pem, identity.key_pem).await?;

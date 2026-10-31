@@ -143,6 +143,17 @@ pub fn checks(port: u16) -> Vec<Check> {
         );
     }
 
+    // Media: what plays here, on the phone's Media card (MPRIS).
+    let playerctl = which("playerctl");
+    check(
+        "playerctl",
+        "Media",
+        "playerctl",
+        playerctl,
+        if playerctl { String::new() } else { install_hint("playerctl") },
+        !playerctl && can_install("playerctl"),
+    );
+
     // Notifications
     let notify = which("notify-send");
     check(
@@ -323,6 +334,7 @@ fn package(pm: Pm, what: &str) -> Option<&'static str> {
     }
     Some(match (pm, what) {
         (_, "wl-copy") => "wl-clipboard",
+        (_, "playerctl") => "playerctl",
         (Pm::Apt, "notify-send") => "libnotify-bin",
         (_, "notify-send") => "libnotify",
         (Pm::Apt, "pw-cat") => "pipewire-bin",

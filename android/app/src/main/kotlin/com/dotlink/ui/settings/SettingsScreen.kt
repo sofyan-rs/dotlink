@@ -6,6 +6,7 @@ package com.dotlink.ui.settings
 
 import android.content.Intent
 import android.net.Uri
+import com.dotlink.link.CallWatcher
 import com.dotlink.link.FileBrowser
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -161,6 +162,36 @@ fun SettingsScreen() {
                 }
                 Hint("Dismissing one on the PC dismisses it here. Ongoing ones (music, downloads) stay on the phone.")
                 if (apps) NotificationAppsSheet(onDismissRequest = { apps = false })
+            }
+        }
+        if (pc) {
+            Section("Calls") {
+                var on by remember { mutableStateOf(prefs.pauseOnCalls && CallWatcher.allowed(context)) }
+                val phonePermission =
+                    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                        on = granted
+                        prefs.pauseOnCalls = granted
+                        CallWatcher.update(context)
+                    }
+                ListGroup {
+                    ListRow(
+                        title = "Pause PC media during calls",
+                        subtitle = "Resumes when the call ends, if it was playing",
+                        leadingIcon = DotlineIcons.Smartphone,
+                        role = Role.Switch,
+                        onClick = {
+                            if (!on && !CallWatcher.allowed(context)) {
+                                phonePermission.launch(Manifest.permission.READ_PHONE_STATE)
+                                return@ListRow
+                            }
+                            on = !on
+                            prefs.pauseOnCalls = on
+                            CallWatcher.update(context)
+                        },
+                        trailing = { KuSwitch(checked = on, onCheckedChange = null) },
+                    )
+                }
+                Hint("Android asks to let Dotlink see the call state; nothing about the call itself is sent.")
             }
         }
         if (pc) {

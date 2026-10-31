@@ -18,6 +18,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- Updates: installs the APK of a newer GitHub release (Updater). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- "Pause PC media during calls" (off by default, CallWatcher): asked when turned on. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <!-- Browse from PC (off by default, FileBrowser): the whole storage as plain paths. -->
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"

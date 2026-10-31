@@ -84,6 +84,12 @@ enum Cmd {
         /// Where to save it; the download folder without it.
         dest: Option<PathBuf>,
     },
+    /// Control what plays on a phone: play, pause, toggle, next, prev, seek <ms>, volume <0-100>.
+    Media {
+        phone: String,
+        action: String,
+        value: Option<u64>,
+    },
     /// Link this PC to another one: paste the link its `dotlink pair` (or Pair page) shows, or
     /// give its name from `dotlink nearby` and the 6-digit code it shows. The two PCs then share
     /// files and the clipboard.
@@ -283,6 +289,9 @@ async fn command(cmd: Cmd) -> Result<()> {
             let Some((phone, path)) = source.split_once(':') else { bail!("give <phone>:<path>, e.g. Pixel:/DCIM/a.jpg") };
             let dest = dest.map(|d| std::path::absolute(d).map(|d| d.to_string_lossy().into_owned())).transpose()?;
             simple(json!({ "cmd": "fs", "op": "get", "id": phone, "path": path, "dest": dest })).await
+        }
+        Cmd::Media { phone, action, value } => {
+            simple(json!({ "cmd": "media_cmd", "id": phone, "action": action, "value": value })).await
         }
         Cmd::Ring { phone, stop } => simple(json!({ "cmd": "ring", "to": phone, "on": !stop })).await,
         Cmd::Open { url, to } => simple(json!({ "cmd": "open", "url": url, "to": to })).await,

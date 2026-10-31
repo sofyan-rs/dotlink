@@ -189,6 +189,13 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
             };
             w.write_all(reply(msg).as_bytes()).await?;
         }
+        // A phone's player: `action` play | pause | toggle | next | prev | seek (`value` ms) |
+        // volume (`value` 0–100).
+        "media_cmd" => {
+            let cmd = req["action"].as_str().unwrap_or("");
+            let msg = result(crate::media::command_to_phone(&app, req["id"].as_str().unwrap_or(""), cmd, req["value"].as_u64()).map(|name| format!("{cmd} on {name}")));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
         "answer_incoming" => {
             let (id, accept) = (req["id"].as_str().unwrap_or(""), req["accept"].as_bool().unwrap_or(false));
             let msg = if app.answer_incoming(id, accept) {

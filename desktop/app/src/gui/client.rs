@@ -76,6 +76,27 @@ pub struct DeviceInfo {
     /// Android 15+ shows Dotlink the text of notifications holding codes.
     #[serde(default)]
     pub sensitive_notifications: Option<bool>,
+    /// What plays on the phone.
+    #[serde(default)]
+    pub media: Option<PhoneMedia>,
+}
+
+/// A phone's player (`media.rs`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PhoneMedia {
+    #[serde(default)]
+    pub player: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub artist: String,
+    #[serde(default)]
+    pub playing: bool,
+    #[serde(default)]
+    pub position_ms: u64,
+    #[serde(default)]
+    pub duration_ms: u64,
+    pub art: Option<PathBuf>,
 }
 
 impl DeviceInfo {
@@ -182,6 +203,11 @@ impl Client {
         req["op"] = json!(op);
         req["id"] = json!(id);
         self.call(req)
+    }
+
+    /// Controls a phone's player: `action` play | pause | toggle | next | prev | seek | volume.
+    pub fn phone_media(&self, id: &str, action: &str, value: Option<u64>) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "media_cmd", "id": id, "action": action, "value": value })))
     }
 
     /// "notifications" or "copy_codes" on or off for a phone.

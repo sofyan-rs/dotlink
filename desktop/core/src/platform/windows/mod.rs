@@ -5,6 +5,7 @@ pub mod autostart;
 pub(crate) mod camera;
 mod input;
 mod media;
+mod player;
 pub mod setup;
 pub mod share_menu;
 
@@ -12,6 +13,7 @@ pub(crate) use super::polling_clipboard as clipboard;
 pub use camera::{CameraHub, find_camera};
 pub use input::Input;
 pub use media::MicSink;
+pub use player::{media_command, now_playing};
 
 use super::Features;
 use anyhow::Result;

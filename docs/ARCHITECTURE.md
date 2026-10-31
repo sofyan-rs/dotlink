@@ -152,6 +152,9 @@ Control messages (`{"t": …}`):
 | PC → phone | `fs_list`, `fs_get`, `fs_rm`, `fs_mv`, `fs_mkdir` | `req`, `path` (+ `to`): Browse from PC; `/` is the phone's internal storage |
 | phone → PC | `fs_list`, `fs_ok` | `req`, `entries` (`name`, `dir`, `size`, `mtime`), or `error`. `fs_get`'s file comes as `POST /upload?req=…`, saved where the PC asked |
 | PC → phone | `file` + `dir` | an upload into a phone folder (Browse from PC): saved there, without asking |
+| phone ↔ PC | `media_state` | `player` (null: nothing plays), `title`, `artist`, `album`, `playing`, `position`, `duration` (ms), `volume` (PC, 0–100), `art` (base64, only when the track changes) |
+| phone ↔ PC | `media_cmd` | `cmd`: `play`, `pause`, `toggle`, `next`, `prev`, `seek` (+ `ms`), `volume` (+ `level` 0–100) |
+| phone → PC | `call` | `state`: `ringing`, `offhook`, `idle` (Pause PC media during calls) |
 | PC → phone | `notif_dismiss` | `key`: Dismiss on the PC |
 | phone → PC | `ring` | `on: bool`: it started or stopped ringing (Stop on either end, or the minute ran out) |
 | phone → PC | `battery` | `level` (percent), `charging`; on connect and when either changes. The sidebar and the phone's page show it while it's connected |
@@ -244,7 +247,7 @@ Windows the named pipe
 `\\.\pipe\dotlink-<user SID>` with an ACL that only lets that user in. One JSON
 request line in, one or more reply lines out.
 
-`pair` (also returns the code) · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `nearby` · `join_code` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` · `open` · `ring` · `notif_dismiss` · `device_option` · `allow_codes` · `fs` (`op`: list, get, put, rm, mv, mkdir) ·
+`pair` (also returns the code) · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `nearby` · `join_code` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` · `open` · `ring` · `notif_dismiss` · `device_option` · `allow_codes` · `fs` (`op`: list, get, put, rm, mv, mkdir) · `media_cmd` (a phone's player) ·
 `cast_pair` · `clear_transfers` (Activity → Clear: the finished and failed ones) · `watch` (event stream, see `events.rs`) · `show` · `quit`
 
 ## Features, briefly
@@ -315,6 +318,15 @@ request line in, one or more reply lines out.
   and `Android/obb` stay hidden, and only the PC link reaches it. Downloads are an upload from
   the phone that `PhoneFiles::take_get` matches by `req` and saves in the folder asked
   (SHA-256 checked); uploads are the usual offer with a `dir`.
+- **Media.** `media.rs` reads this PC's player every 2 s while a phone is connected
+  (`platform::now_playing`: `playerctl` on Linux, the System Media Transport Controls on
+  Windows, AppleScript for Spotify and Music on macOS, where MediaRemote only answers Apple's
+  apps since 15.4) and sends `media_state` when it changes, the artwork (file, URL or bytes)
+  only with a new track. `platform::media_command` plays, pauses, skips, seeks and sets the
+  output volume (`wpctl`, IAudioEndpointVolume, `set volume`). The phone (`MediaBridge`) follows
+  its active media sessions, which needs Notification access, and sends them the same way;
+  their artwork is saved under `media/` for the device page. A `call` ringing or answered
+  pauses this PC's player if it plays; `idle` resumes it, only if a call paused it.
 - **Ring.** `Ringer` on the phone plays the default ringtone (the alarm sound as fallback) with
   `USAGE_ALARM`, looping, the alarm volume at its maximum and put back after; a full-screen
   notification (`RingActivity`, over the lock screen) has Stop. It reports `ring` on and off, so

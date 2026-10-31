@@ -19,6 +19,7 @@ are supported, and so is macOS (the webcam goes through OBS).
 | **Links** | Share a link → Dotlink: it opens in the PC's browser | *Open copied link* (tray or the phone's page), or `dotlink open <url>` |
 | **Notifications** | The phone's notifications show on the PC with Dismiss; a verification code in one goes to the PC's clipboard (turn on **Show notifications on PC** in the phone's Settings) | |
 | **Browse files** | | The phone's storage on its page → **Files**: browse, download, drop files into a folder, rename, delete (turn on **Browse from PC** in the phone's Settings), or `dotlink ls` / `dotlink get` |
+| **Media** | The PC's player on the phone's home (title, artwork, play/pause, next, previous, volume); a call on the phone pauses it (**Pause PC media during calls** in the phone's Settings) | The phone's player on its page → **Now playing**, or `dotlink media <phone> toggle` |
 | **Ring** | | **Ring** in the phone's ⋯ menu, or `dotlink ring`: full volume, even on silent |
 | **Battery** | The phone's level on its page and in the sidebar | A laptop's level under its name in the phone app |
 

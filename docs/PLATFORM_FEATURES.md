@@ -41,6 +41,8 @@ isn't supported. macOS: 13 Ventura or newer.
 | Presenter mode (Remote) | 🟡 | 🟡 | 🟡 |
 | Phone notifications on the PC, codes copied | 🔧 | 🔧 | 🟡 |
 | Browse the phone's files | 🔧 | 🔧 | 🟡 |
+| Media control, both ways | 🔧 | 🔧 | 🟡 (Spotify, Music) |
+| Pause the PC's media on calls | 🔧 | 🔧 | 🟡 |
 | The laptop's battery on the phone | 🔧 | 🔧 | 🟡 |
 | Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | ✅ universal .dmg (x86_64 + arm64) from the release workflow, signed ad hoc |
 

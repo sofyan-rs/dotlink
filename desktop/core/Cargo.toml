@@ -57,9 +57,15 @@ dotlink-camera = { path = "../camera" }
 windows = { version = "0.62.2", features = [
     "Data_Xml_Dom",
     "Foundation",
+    "Media_Control",
+    "Storage_Streams",
     "UI_Notifications",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
     "Win32_Media_MediaFoundation",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
 ] }
 # The named pipe's security descriptor (SDDL as UTF-16).
 widestring = "1.2.1"

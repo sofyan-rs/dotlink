@@ -78,6 +78,9 @@ class DotlinkApp : Application() {
          */
         val inForeground: Boolean get() = instance.started > 0
 
+        /** The application, for helpers that outlive any screen. */
+        val instanceContext: android.content.Context get() = instance
+
         /** The one connection to the paired PC. */
         lateinit var link: Link
             private set

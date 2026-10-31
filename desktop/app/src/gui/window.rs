@@ -477,6 +477,67 @@ impl MainView {
         )
     }
 
+    /// Device page → Now playing: the phone's player, with its artwork and controls.
+    fn now_playing(&self, p: &Palette, d: &DeviceInfo, cx: &mut Context<Self>) -> Option<Div> {
+        let m = d.media.as_ref()?;
+        let control = |id: &'static str, icon: IconName, action: &'static str, cx: &mut Context<Self>| {
+            let device = d.id.clone();
+            div()
+                .id(id)
+                .size(px(CONTROL))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .cursor_pointer()
+                .hover(|s| s.bg(p.ink.opacity(0.06)))
+                .child(Icon::new(icon).size(px(18.)).text_color(p.ink))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    let device = device.clone();
+                    this.model.update(cx, |m, cx| m.phone_media(device, action, cx))
+                }))
+        };
+        let art: AnyElement = match &m.art {
+            Some(path) => gpui::img(path.clone()).size(px(56.)).rounded(px(8.)).into_any_element(),
+            None => div()
+                .size(px(56.))
+                .rounded(px(8.))
+                .bg(p.ink.opacity(0.06))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(Icon::new(IconName::Music).size(px(22.)).text_color(p.ink_muted))
+                .into_any_element(),
+        };
+        let time = |ms: u64| format!("{}:{:02}", ms / 60_000, ms / 1000 % 60);
+        let detail = if m.duration_ms > 0 {
+            format!("{} · {} / {}", m.player.to_uppercase(), time(m.position_ms), time(m.duration_ms))
+        } else {
+            m.player.to_uppercase()
+        };
+        Some(
+            group(p).child(
+                row(p)
+                    .gap(px(14.))
+                    .child(art)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(div().truncate().child(m.title.clone()))
+                            .child(div().truncate().text_size(px(13.)).text_color(p.ink_muted).child(m.artist.clone()))
+                            .child(div().font_family(MONO).text_size(px(11.)).text_color(p.ink_muted).child(detail)),
+                    )
+                    .child(control("media-prev", IconName::SkipBack, "prev", cx))
+                    .child(control("media-toggle", if m.playing { IconName::Pause } else { IconName::Play }, "toggle", cx))
+                    .child(control("media-next", IconName::SkipForward, "next", cx)),
+            ),
+        )
+    }
+
     /// Device page → Files (a connected phone): its storage, folders first. Click opens a
     /// folder, double-click downloads and opens a file, ⋯ has Download, Rename and Delete;
     /// files dropped on the list go into the open folder.
@@ -1046,6 +1107,7 @@ impl MainView {
             .gap(px(24.))
             .child(div().flex().flex_col().gap(px(20.)).child(self.device_header(p, &d, cx)).child(send))
             .children(streams.map(|g| section(p, "Screen, camera & mic", g)))
+            .children(self.now_playing(p, &d, cx).map(|g| section(p, "Now playing", g)))
             .children((d.is_phone() && d.online).then(|| section(p, "Files", self.files_section(p, &d, cx))))
             .child(section(p, "Sync", sync))
             .children(recent)

@@ -4,6 +4,7 @@ pub mod autostart;
 pub mod clipboard;
 mod input;
 mod media;
+mod player;
 pub mod setup;
 
 /// TODO(linux): Nautilus scripts / Dolphin service menus / Thunar custom actions.
@@ -13,6 +14,7 @@ pub mod share_menu {
 
 pub use input::Input;
 pub use media::{CameraHub, MicSink, find_camera};
+pub use player::{media_command, now_playing};
 
 use super::Features;
 use std::path::Path;

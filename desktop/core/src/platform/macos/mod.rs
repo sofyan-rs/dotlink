@@ -11,10 +11,12 @@ pub mod autostart;
 mod camera;
 mod input;
 mod media;
+mod player;
 pub mod share_menu;
 pub use camera::{CameraHub, camera_url, find_camera};
 pub use input::Input;
 pub use media::MicSink;
+pub use player::{media_command, now_playing};
 
 use super::{Check, Features};
 use std::path::Path;

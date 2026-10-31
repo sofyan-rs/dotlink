@@ -4,6 +4,26 @@
 package com.dotlink.ui.home
 
 import android.Manifest
+import android.os.SystemClock
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.dotlink.link.MediaBridge
+import com.dotlink.link.PcMedia
+import kotlinx.coroutines.delay
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -66,6 +86,7 @@ fun LinkScreen(
     val online = state is LinkState.Online
     // Only while connected, and only a PC with a battery sends it.
     val pcBattery by link.pcBattery.collectAsStateWithLifecycle()
+    val pcMedia by link.pcMedia.collectAsStateWithLifecycle()
     var pcSheet by remember { mutableStateOf(false) }
 
     val pickFiles =
@@ -144,6 +165,10 @@ fun LinkScreen(
                 ),
             modifier = Modifier.padding(start = Dotline.space.s4, end = Dotline.space.s4, top = Dotline.space.s5),
         )
+
+        pcMedia?.let { m ->
+            Section("Playing on ${link.prefs.serverName}") { PcMediaCard(m) }
+        }
 
         Section("Phone as") {
             val prefs = link.prefs
@@ -257,4 +282,85 @@ internal fun TransferRow(t: Transfer) {
             }
         },
     )
+}
+
+/** The PC's player: artwork, title, the position moving on while it plays, and its controls. */
+@Composable
+private fun PcMediaCard(m: PcMedia) {
+    val colors = Dotline.colors
+    // Ticks once a second while it plays, to move the position on.
+    var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(m) {
+        while (m.playing) {
+            delay(1_000)
+            now = SystemClock.elapsedRealtime()
+        }
+    }
+    val position = (m.positionMs + if (m.playing) now - m.at else 0).coerceIn(0, if (m.durationMs > 0) m.durationMs else Long.MAX_VALUE)
+    fun time(ms: Long) = "%d:%02d".format(ms / 60_000, ms / 1000 % 60)
+    ListGroup {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Dotline.space.s3),
+            modifier = Modifier.fillMaxWidth().padding(Dotline.space.s3),
+        ) {
+            val art = m.art
+            if (art != null) {
+                Image(
+                    bitmap = art.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(56.dp).clip(Dotline.radius.s),
+                )
+            } else {
+                Box(Modifier.size(56.dp).clip(Dotline.radius.s).background(colors.surfaceRaised))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(m.title, style = Dotline.type.headline, color = colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (m.artist.isNotEmpty()) Text(m.artist, style = Dotline.type.bodyS, color = colors.inkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    m.player.uppercase() + if (m.durationMs > 0) " · ${time(position)} / ${time(m.durationMs)}" else "",
+                    style = Dotline.type.data,
+                    color = colors.inkFaint,
+                    maxLines = 1,
+                )
+            }
+        }
+        if (m.durationMs > 0) {
+            val lit = (position * 20 / m.durationMs).toInt()
+            DotMeter(count = 20, lit = lit, contentDescription = "Position", modifier = Modifier.padding(horizontal = Dotline.space.s3))
+        }
+        Row(
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(vertical = Dotline.space.s2),
+        ) {
+            m.volume?.let { v -> MediaButton("VOL−") { MediaBridge.toPc("volume", v - 10) } }
+            MediaButton("⏮") { MediaBridge.toPc("prev") }
+            MediaButton(if (m.playing) "⏸" else "▶") { MediaBridge.toPc("toggle") }
+            MediaButton("⏭") { MediaBridge.toPc("next") }
+            m.volume?.let { v -> MediaButton("VOL+") { MediaBridge.toPc("volume", v + 10) } }
+        }
+    }
+}
+
+@Composable
+private fun MediaButton(
+    label: String,
+    onClick: () -> Unit,
+) {
+    val haptic = LocalHapticFeedback.current
+    Box(
+        modifier =
+            Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .clickable {
+                    haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
+                    onClick()
+                },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = Dotline.type.label, color = Dotline.colors.ink)
+    }
 }

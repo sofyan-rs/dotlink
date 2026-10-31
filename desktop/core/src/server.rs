@@ -73,6 +73,8 @@ pub struct PhoneInfo {
     pub ringing: bool,
     /// Android's API level (`Build.VERSION.SDK_INT`), from `info`; 0 from older apps.
     pub sdk: u32,
+    /// What plays on it (`media_state`).
+    pub media: Option<crate::media::PhoneMedia>,
     /// Android 15+ shows it the text of notifications holding codes (the
     /// RECEIVE_SENSITIVE_NOTIFICATIONS app op, see `cast::allow_sensitive_notifications`).
     pub sensitive_notifications: bool,
@@ -172,6 +174,8 @@ pub struct App {
     pub adb_ports: broadcast::Sender<(String, String, u16)>,
     /// Casting the phone screen with scrcpy.
     pub cast: crate::cast::Cast,
+    /// This PC's player, as told to the phones (`media.rs`).
+    pub media: crate::media::MediaState,
     /// Browsing a phone's storage (`files.rs`).
     pub files: crate::files::PhoneFiles,
     /// Links to the PCs this one joined.
@@ -221,6 +225,7 @@ impl App {
             phones: Mutex::new(HashMap::new()),
             cast: crate::cast::Cast::default(),
             files: Default::default(),
+            media: Default::default(),
             peers: crate::peer::Peers::default(),
             notifs: Mutex::new(HashMap::new()),
             battery: Mutex::new(platform::battery()),
@@ -326,6 +331,7 @@ impl App {
                     "copy_codes": d.copies_codes(),
                     "sdk": phones.get(&d.id).map(|p| p.sdk),
                     "sensitive_notifications": phones.get(&d.id).map(|p| p.sensitive_notifications),
+                    "media": phones.get(&d.id).and_then(|p| p.media.clone()).filter(|_| online.get(&d.id).copied().unwrap_or(0) > 0),
                 })
             })
             .chain(state.peers.iter().map(|p| {
@@ -846,6 +852,29 @@ impl App {
         let _ = self.control_tx.send((device.map(str::to_string), msg.to_string()));
     }
 
+    /// The phones connected right now (not PCs).
+    fn online_phones(&self) -> Vec<String> {
+        let online = self.online.lock().unwrap();
+        let state = self.state.lock().unwrap();
+        state
+            .devices
+            .iter()
+            .filter(|d| d.kind == DeviceKind::Phone && online.get(&d.id).copied().unwrap_or(0) > 0)
+            .map(|d| d.id.clone())
+            .collect()
+    }
+
+    pub fn any_phone_online(&self) -> bool {
+        !self.online_phones().is_empty()
+    }
+
+    /// `msg` to every connected phone, not to the PCs connected to this one.
+    pub fn send_control_to_phones(&self, msg: Value) {
+        for id in self.online_phones() {
+            self.send_control_to(Some(&id), msg.clone());
+        }
+    }
+
     /// Device ids of the phones connected right now.
     pub fn online_ids(&self) -> Vec<String> {
         self.online.lock().unwrap().iter().filter(|(_, n)| **n > 0).map(|(id, _)| id.clone()).collect()
@@ -1356,6 +1385,11 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
     if let Some(battery) = app.battery_msg() {
         let _ = tx.send(Message::Text(battery.to_string().into())).await;
     }
+    if dev.kind == DeviceKind::Phone
+        && let Some(media) = app.media.last()
+    {
+        let _ = tx.send(Message::Text(media.to_string().into())).await;
+    }
     loop {
         tokio::select! {
             id = revoked.recv() => match id {
@@ -1413,6 +1447,17 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                         app.phones.lock().unwrap().entry(dev.id.clone()).or_default().ringing = on;
                         app.emit(Event::Devices);
                     }
+                    if v["t"] == "media_state" {
+                        crate::media::state_from_phone(&app, &dev.id, &v);
+                    }
+                    if v["t"] == "media_cmd" {
+                        crate::media::command_from_phone(&app, &v).await;
+                    }
+                    if v["t"] == "call"
+                        && let Some(state) = v["state"].as_str()
+                    {
+                        crate::media::call(&app, state).await;
+                    }
                     if v["t"] == "fs_list" || v["t"] == "fs_ok" {
                         app.files.answer(v.clone());
                     }
@@ -1457,6 +1502,7 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
     // It stops by itself after a minute; offline, its Stop would reach nothing.
     if gone && let Some(phone) = app.phones.lock().unwrap().get_mut(&dev.id) {
         phone.ringing = false;
+        phone.media = None;
     }
     if usb && let Some(phone) = app.phones.lock().unwrap().get_mut(&dev.id) {
         phone.usb = phone.usb.saturating_sub(1);
