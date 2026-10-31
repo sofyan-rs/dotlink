@@ -169,10 +169,9 @@ cargo run -p dotlink
 
 ## Windows and macOS
 
-`core/src/platform/windows` is complete for Windows 11 and tested with a phone (see
-[PLATFORM_FEATURES.md](PLATFORM_FEATURES.md)). macOS builds and runs, with the Remote, the menu
-bar and notifications; [MACOS_PLAN.md](MACOS_PLAN.md) is its plan and status, [PORTING.md](PORTING.md)
-the APIs to use for each platform item, packaging and signing.
+`core/src/platform/windows` is complete for Windows 11 and `core/src/platform/macos` for macOS
+13 and newer, both tested with a phone; [PLATFORM_FEATURES.md](PLATFORM_FEATURES.md) has their
+status and what's left.
 
 On macOS, `cargo run -p dotlink` needs only the Xcode Command Line Tools. Some things only work
 from an app bundle: notifications, the Local Network prompt (from Terminal the app gets

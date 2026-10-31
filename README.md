@@ -262,8 +262,8 @@ Forget a phone in **Phones** (or `dotlink unpair`) to cut it off right away.
 | Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (not signed yet) | ✅ .dmg (no Developer ID) |
 
 How each feature is built per OS and what has been tested:
-[docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEATURES.md). Plan for the rest:
-[docs/PORTING.md](docs/PORTING.md), and for macOS [docs/MACOS_PLAN.md](docs/MACOS_PLAN.md).
+[docs/PLATFORM_FEATURES.md](docs/PLATFORM_FEATURES.md). Ideas for new features:
+[docs/FEATURE_IDEAS.md](docs/FEATURE_IDEAS.md).
 
 ## Development
 

@@ -8,7 +8,7 @@
 //! across restarts (OBS keeps the source) and other users and programs on the Mac can't guess
 //! it. Only the newest frame matters: a reader that falls behind skips to it.
 //!
-//! TODO(macos): a Camera Extension of our own once there's a Developer ID (MACOS_PLAN.md).
+//! TODO(macos): a Camera Extension of our own once there's a Developer ID (PLATFORM_FEATURES.md).
 
 use anyhow::Result;
 use axum::body::Bytes;

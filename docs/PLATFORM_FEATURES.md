@@ -1,15 +1,14 @@
 # Platform features
 
 What the desktop app does on each OS, how, and how far it has been tested. Linux is the
-reference implementation; [PORTING.md](PORTING.md) is the plan for the rest. Everything
+reference implementation; what's left is under [Still to do](#still-to-do). Everything
 OS-specific lives in `desktop/core/src/platform/{linux,windows,macos}/` (plus the tray in
 `desktop/app/src/gui/tray.rs` and the camera DLL in `desktop/camera/`).
 
 Status as of 2026-10-28. Tested with an iQOO I2218 and a realme RMX5085 (both Android 16)
 against Fedora 44 (GNOME, KDE Plasma, Hyprland), Windows 11 Pro 26H2 (build 26300) and, with
 the iQOO, macOS 15.8 (MacBook Air M1). Windows means Windows 11 only: Windows 10
-isn't supported. macOS: 13 Ventura or newer; [MACOS_PLAN.md](MACOS_PLAN.md) has its plan and
-what's left.
+isn't supported. macOS: 13 Ventura or newer.
 
 | Mark | Meaning |
 |---|---|
@@ -283,10 +282,23 @@ an iQOO I2218 and a realme RMX5085 after the Windows work changed shared code:
   `hyprland.lua` hook, tray in quickshell.
 - [ ] `scripts/install.sh` on a clean user.
 
-**macOS** (details in [MACOS_PLAN.md](MACOS_PLAN.md))
+**macOS**
 - Run `desktop.yml` (it runs on the PR); test an update from a release's .dmg.
 - Test: start at login across a logout.
-- Developer ID signing and notarization, then a Camera Extension of our own instead of OBS.
+- Test the Remote: TextEdit (`é ß 😀 日本`), Safari scrolling, drag in Finder, ⌘Tab, ⌘Space,
+  double click to open.
+- Clipboard: compare `NSPasteboard.changeCount` before reading, and skip items carrying
+  `org.nspasteboard.ConcealedType` / `TransientType` (password managers), as Linux does. Check
+  that Universal Clipboard (Handoff) doesn't bounce text back past the echo check.
+- Dev notes in CONTRIBUTION.md: from Terminal the app inherits Terminal's Local Network and
+  firewall answers; sign debug builds with a stable identity
+  (`codesign -s "Apple Development: …" target/debug/dotlink`) or TCC forgets Accessibility on
+  every rebuild.
+- With an Apple Developer ID: hardened runtime, signing and notarization in CI
+  (`notarytool`, `stapler staple`), so no Gatekeeper prompt and Accessibility kept across
+  updates. Then a CoreMediaIO Camera Extension "Dotlink Camera" (needs the
+  `system-extension.install` entitlement) instead of OBS.
+- Later: an AudioServerPlugIn "Dotlink Mic" instead of BlackHole.
 
 **Phone app**
 - Hide the Webcam and Mic switches when the PC reports it can't do them.

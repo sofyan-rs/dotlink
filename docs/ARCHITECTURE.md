@@ -311,9 +311,8 @@ request line in, one or more reply lines out.
 `core/src/platform/mod.rs` lists the items every platform module provides. Linux is the
 reference. `windows/` is complete for Windows 11, and `macos/` for macOS 13 and newer, with
 the webcam through OBS and the mic through BlackHole until there's a Developer ID.
-Search for `TODO(windows)` and `TODO(macos)`; [PORTING.md](PORTING.md) is the plan, step by
-step, [MACOS_PLAN.md](MACOS_PLAN.md) the macOS one, and [PLATFORM_FEATURES.md](PLATFORM_FEATURES.md)
-what each OS does today.
+Search for `TODO(windows)` and `TODO(macos)`; [PLATFORM_FEATURES.md](PLATFORM_FEATURES.md) is
+what each OS does today and what's left.
 
 Window decorations: GPUI asks for server-side decorations; where the compositor leaves them to
 the app (GNOME), the window draws its own title bar (`gui/title_bar.rs`: libadwaita's look, the
