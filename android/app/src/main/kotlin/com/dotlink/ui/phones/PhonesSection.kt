@@ -147,7 +147,7 @@ private fun PhoneSheet(
             },
             modifier = Modifier.fillMaxWidth(),
         )
-        SecondaryButton(text = "Forget", icon = DotlineIcons.Trash, onClick = { forgetting = true }, modifier = Modifier.fillMaxWidth())
+        DestructiveButton(text = "Forget", icon = DotlineIcons.Trash, onClick = { forgetting = true }, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(Dotline.space.s2))
     }
     if (forgetting) {
