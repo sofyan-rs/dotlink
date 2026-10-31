@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -87,6 +88,9 @@ data class Transfer(
     val done: Long = 0,
     val status: Status = Status.Running,
     val error: String? = null,
+    /** Where a received file was saved, and its type, once it's done (see [Link.openReceived]). */
+    val uri: Uri? = null,
+    val mime: String? = null,
 ) {
     enum class Status { Running, Done, Failed }
 }
@@ -911,8 +915,10 @@ class Link(
                 if (t.size >= 0 && got != t.size) error("cut off after ${got} of ${t.size} bytes")
             }
             resolver.update(item, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
-            finish(t.id, null)
-            notifyReceived(from, name, item, mime)
+            // A type no app here opens (an unknown extension) gets no Open.
+            val openable = canOpen(item, mime)
+            finish(t.id, null, item.takeIf { openable }, mime)
+            notifyReceived(from, name, item, mime, openable)
         } catch (e: Exception) {
             resolver.delete(item, null, null)
             finish(t.id, e.message ?: e.javaClass.simpleName)
@@ -943,13 +949,15 @@ class Link(
     fun finish(
         id: Long,
         error: String?,
+        uri: Uri? = null,
+        mime: String? = null,
     ) {
         transfers.update { list ->
             list.map {
                 if (it.id != id) {
                     it
                 } else if (error == null) {
-                    it.copy(done = it.size.coerceAtLeast(it.done), status = Transfer.Status.Done)
+                    it.copy(done = it.size.coerceAtLeast(it.done), status = Transfer.Status.Done, uri = uri, mime = mime)
                 } else {
                     it.copy(status = Transfer.Status.Failed, error = error)
                 }
@@ -963,22 +971,63 @@ class Link(
         name: String,
         uri: Uri,
         mime: String,
+        openable: Boolean,
     ) {
         val nm = app.getSystemService(NotificationManager::class.java)
         if (!nm.areNotificationsEnabled()) return
-        val open =
-            Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        val pi = PendingIntent.getActivity(app, uri.hashCode(), open, PendingIntent.FLAG_IMMUTABLE)
-        val n =
+        val builder =
             NotificationCompat
                 .Builder(app, DotlinkApp.CHANNEL_FILES)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Received from $from")
                 .setContentText(name)
-                .setContentIntent(pi)
                 .setAutoCancel(true)
-                .build()
-        nm.notify(uri.hashCode(), n)
+        // Nothing here opens it: the notification just says it arrived.
+        if (openable) {
+            val pi = PendingIntent.getActivity(app, uri.hashCode(), viewIntent(uri, mime), PendingIntent.FLAG_IMMUTABLE)
+            val chooser = PendingIntent.getActivity(app, uri.hashCode() + 1, chooserIntent(uri, mime), PendingIntent.FLAG_IMMUTABLE)
+            builder.setContentIntent(pi).addAction(0, "Open with…", chooser)
+        }
+        nm.notify(uri.hashCode(), builder.build())
+    }
+
+    /** Some app here opens files of this type (see `<queries>` in the manifest). */
+    private fun canOpen(
+        uri: Uri,
+        mime: String,
+    ) = mime != "application/octet-stream" && app.packageManager.queryIntentActivities(viewIntent(uri, mime), 0).isNotEmpty()
+
+    private fun viewIntent(
+        uri: Uri,
+        mime: String,
+    ) = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    /** Always asks which app, even when the type has a default. */
+    private fun chooserIntent(
+        uri: Uri,
+        mime: String,
+    ) = Intent.createChooser(viewIntent(uri, mime), "Open with").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    /**
+     * Opens a received file in the app for its type (an APK in the package installer), or asks
+     * which app when [choose].
+     */
+    fun openReceived(
+        t: Transfer,
+        choose: Boolean,
+    ) {
+        val uri = t.uri ?: return
+        val mime = t.mime ?: return
+        val exists = runCatching { app.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { it.count > 0 } }.getOrNull() == true
+        if (!exists) {
+            notices.tryEmit("${t.name} was moved or deleted")
+            return
+        }
+        try {
+            app.startActivity(if (choose) chooserIntent(uri, mime) else viewIntent(uri, mime))
+        } catch (_: ActivityNotFoundException) {
+            notices.tryEmit("No app can open ${t.name}")
+        }
     }
 
     fun queryName(uri: Uri): Pair<String, Long> {

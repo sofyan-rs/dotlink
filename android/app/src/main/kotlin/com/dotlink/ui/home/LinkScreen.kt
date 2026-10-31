@@ -222,6 +222,9 @@ internal fun TransferRow(t: Transfer) {
         subtitleIsData = true,
         leadingIcon = if (t.incoming) DotlineIcons.Download else DotlineIcons.Upload,
         destructive = t.status == Transfer.Status.Failed,
+        // A received file: tap opens it, long-press asks which app.
+        onClick = t.uri?.let { { DotlinkApp.link.openReceived(t, choose = false) } },
+        onLongClick = t.uri?.let { { DotlinkApp.link.openReceived(t, choose = true) } },
         trailing = {
             when (t.status) {
                 Transfer.Status.Running -> {
