@@ -6,6 +6,7 @@
 //! | `notify_file(from, name, path)` | "file received" notification with Open / Show in folder |
 //! | `notify_incoming(app, incoming)`, `dismiss_incoming(id)` | "X wants to send …" with Accept / Decline (`App::answer_incoming`), and taking it away once answered |
 //! | `open_path(path)` | open a file or folder with the default app |
+//! | `open_url(url)` | open a web link in the default browser |
 //! | `clipboard::{watch, get, set}` | clipboard text, and pushing changes to the phone |
 //! | `Input` | virtual mouse and keyboard for the Remote screen |
 //! | `CameraHub`, `find_camera` | phone camera as a webcam |

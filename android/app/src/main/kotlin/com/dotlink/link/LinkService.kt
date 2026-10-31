@@ -109,6 +109,7 @@ class LinkService : LifecycleService() {
                 }
             ACTION_MIC_ON -> startMic()
             ACTION_MIC_OFF -> mic?.stop()
+            ACTION_RING_STOP -> link.ringer.stop()
             ACTION_ANSWER -> {
                 val id = intent.getStringExtra(EXTRA_ASK)
                 if (id != null) link.answerIncoming(id, intent.getBooleanExtra(EXTRA_ACCEPT, false))
@@ -335,6 +336,9 @@ class LinkService : LifecycleService() {
         const val ACTION_ANSWER = "answer"
         const val EXTRA_ASK = "ask"
         const val EXTRA_ACCEPT = "accept"
+
+        /** Stop on the "Ringing from …" notification. */
+        const val ACTION_RING_STOP = "ring_stop"
 
         /** Reconnect to the PC in [EXTRA_PC], or to the active PC again (after pairing or unpairing one). */
         const val ACTION_SWITCH = "switch"

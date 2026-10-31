@@ -602,7 +602,7 @@ impl MainView {
             return self.no_devices(p, cx).into_any_element();
         };
         // Sending: a drop area with its two buttons, right under the header.
-        let (files_id, clip_id, drop_id) = (d.id.clone(), d.id.clone(), d.id.clone());
+        let (files_id, clip_id, link_id, drop_id) = (d.id.clone(), d.id.clone(), d.id.clone(), d.id.clone());
         let (online, name) = (d.online, d.name.clone());
         let tint = p.ink.opacity(0.04);
         let strong = p.ink_muted;
@@ -645,6 +645,15 @@ impl MainView {
                     b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         let id = clip_id.clone();
                         this.model.update(cx, |m, cx| m.send_clipboard_to(id, cx))
+                    }))
+                },
+            ))
+            .child(enabled(pill_icon(p, "send-link", IconName::ExternalLink, "Open copied link", Kind::Secondary), online).when(
+                online,
+                |b| {
+                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        let id = link_id.clone();
+                        this.model.update(cx, |m, cx| m.send_link_to(id, cx))
                     }))
                 },
             )));
@@ -774,6 +783,8 @@ impl MainView {
                 .child(div().text_color(colour).child(format!("{}%{}", b.level, if b.charging { " · CHARGING" } else { "" })))
         });
         let (view, id, name, phone) = (cx.entity().downgrade(), d.id.clone(), d.name.clone(), d.is_phone());
+        let can_ring = phone && d.online && !d.ringing;
+        let (ringing, stop_id) = (d.online && d.ringing, d.id.clone());
         let red = p.accent_text;
         let more = Button::new("device-more")
             .outline()
@@ -783,6 +794,15 @@ impl MainView {
             .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu, _, _| {
                 let (rename_view, forget_view, id, name) = (view.clone(), view.clone(), id.clone(), name.clone());
                 let (forget_id, forget_name) = (id.clone(), name.clone());
+                let (ring_view, ring_id) = (view.clone(), id.clone());
+                let menu = if can_ring {
+                    menu.item(PopupMenuItem::new("Ring").on_click(move |_, _, cx| {
+                        let id = ring_id.clone();
+                        ring_view.update(cx, |this, cx| this.model.update(cx, |m, cx| m.ring(id, true, cx))).ok();
+                    }))
+                } else {
+                    menu
+                };
                 menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
                     let (id, name) = (id.clone(), name.clone());
                     rename_view.update(cx, |this, cx| this.start_rename(id, name, window, cx)).ok();
@@ -829,9 +849,16 @@ impl MainView {
                                     .child(status_dot(if d.online { p.positive } else { p.ink_faint }))
                                     .child(connection),
                             )
-                            .children(battery),
+                            .children(battery)
+                            .when(ringing, |c| c.child(div().text_color(red).child("RINGING"))),
                     )),
             )
+            .when(!renaming && ringing, |d| {
+                d.child(pill(p, "stop-ring", "Stop", Kind::Secondary).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    let id = stop_id.clone();
+                    this.model.update(cx, |m, cx| m.ring(id, false, cx))
+                })))
+            })
             .when(!renaming, |d| d.child(more))
     }
 

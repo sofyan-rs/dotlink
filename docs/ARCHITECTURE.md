@@ -140,11 +140,14 @@ Control messages (`{"t": …}`):
 | PC → phone | `file` | a file offer: id, name, size; the phone downloads it |
 | PC → phone | `camera`, `mic` | `on: bool`, from Start/Stop on the PC |
 | PC → phone | `adb_wifi` | Cast needs Wireless debugging: show the notification |
-| PC ↔ PC | `battery` | `level`, `charging`: a linked laptop's battery, on connect and when it changes |
+| PC → phone, PC ↔ PC | `battery` | `level`, `charging`: a laptop's battery, on connect and when it changes; a PC without one sends nothing |
+| PC → phone | `ring` | `on: bool`: ring at full volume (an alarm, so silent mode doesn't mute it) until stopped or a minute passed |
+| phone ↔ PC, PC ↔ PC | `url` | `url`: open it in the default browser; only `http`/`https` are opened |
 | phone → PC | `clip` | phone clipboard text |
 | phone → PC | `info` | phone name, model, Wireless debugging on, Developer options on (for Cast) |
 | phone → PC | `decline` | `id`: the file offer it won't take ("Ask before receiving files"); the PC lists it as declined |
 | phone → PC | `media` | `state: needs_tap`: starting camera/mic waits for a tap |
+| phone → PC | `ring` | `on: bool`: it started or stopped ringing (Stop on either end, or the minute ran out) |
 | phone → PC | `battery` | `level` (percent), `charging`; on connect and when either changes. The sidebar and the phone's page show it while it's connected |
 
 ### Wi-Fi or USB
@@ -235,7 +238,7 @@ Windows the named pipe
 `\\.\pipe\dotlink-<user SID>` with an ACL that only lets that user in. One JSON
 request line in, one or more reply lines out.
 
-`pair` (also returns the code) · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `nearby` · `join_code` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` ·
+`pair` (also returns the code) · `pair_usb` (opens the pairing link on the phones on the cable, `usb.rs`) · `join` · `nearby` · `join_code` · `send` · `clip` · `clipboard_auto` · `devices` · `status` · `unpair` · `set_config` · `media` · `cast` · `open` · `ring` ·
 `cast_pair` · `clear_transfers` (Activity → Clear: the finished and failed ones) · `watch` (event stream, see `events.rs`) · `show` · `quit`
 
 ## Features, briefly
@@ -256,6 +259,10 @@ request line in, one or more reply lines out.
 - **Remote.** uinput virtual mouse + keyboard (Linux); SendInput, with Unicode text in any
   layout (Windows); CGEvent at the HID level, Unicode text and media keys, behind the
   Accessibility permission (macOS).
+- **Presenter.** A Remote mode on the phone only (`Presenter.kt`): `→` / `←` over
+  `/ws/input`, End `Esc`, Black `B`. No Start: the key differs per app, and F5 reloads a
+  browser tab (Google Slides, Canva), so the slideshow is started on the PC. MainActivity hands the volume keys to it while it's open
+  (`VolumeKeys`), and the screen stays on.
 - **Shell.** One PTY per tab per phone (ConPTY and pwsh on Windows), scrollback replayed on
   reconnect. The phone draws it with xterm.js (WebGL): Geist Mono, then "Dotlink Symbols Mono"
   (a JuliaMono subset of the symbol blocks) and Symbols Nerd Font Mono scaled to one cell.
@@ -272,10 +279,21 @@ request line in, one or more reply lines out.
   The phone offers 30 or 60 fps, only what the lens in use lists; the Windows camera offers
   both rates and paces by the one the app picks.
 - **Battery.** The phone reports its level and charging state (`battery`); the sidebar and
-  the phone's page show it while it's connected. Linked PCs send each other the same message when they have
+  the phone's page show it while it's connected. A PC sends the same message to its phones
+  (shown under its name on the phone's home) and linked PCs when it has
   a battery (`platform::battery()`: `GetSystemPowerStatus` on Windows, `/sys/class/power_supply`
   on Linux, `pmset -g batt` on macOS), on connect and when it changes (read once a minute).
   "Charging" means on power, as on the phone.
+- **Links.** `url` opens a link in the default browser: `xdg-open` (Linux), `ShellExecuteW`
+  (Windows; `cmd /c start` would take `&` in a query string as its own), `open` (macOS), after
+  `weblink::parse` let only `http`/`https` through; a notification "Opened <host> from <device>"
+  makes a stray link noticed. The phone sends a link shared to Dotlink as `url` instead of
+  `clip`; a link it receives opens right away when the app is on screen, else as a notification
+  with Open (Android 10+ doesn't let a background app start an activity).
+- **Ring.** `Ringer` on the phone plays the default ringtone (the alarm sound as fallback) with
+  `USAGE_ALARM`, looping, the alarm volume at its maximum and put back after; a full-screen
+  notification (`RingActivity`, over the lock screen) has Stop. It reports `ring` on and off, so
+  the PC's header shows RINGING with Stop.
 - **Tray.** The logo's dots in one colour (`tray.rs`, `glyph`): a symbolic SVG the panel
   recolours on Linux, white or black with the taskbar's mode on Windows, a template image the
   menu bar draws in its own colour on macOS. Started before the bar at login (Hyprland), it

@@ -134,6 +134,12 @@ class Link(
     /** The PC asked to turn the camera ("camera") or mic ("mic") on or off; LinkService acts on it. */
     val streamRequests = MutableSharedFlow<Pair<String, Boolean>>(extraBufferCapacity = 8)
 
+    /** "Ring" from the PC; tells the PC when it starts and stops ringing. */
+    val ringer = Ringer(app) { on -> control?.send(JSONObject().put("t", "ring").put("on", on).toString()) }
+
+    /** The PC's battery from its `battery` message: (percent, charging). Null on a desktop PC or offline. */
+    val pcBattery = MutableStateFlow<Pair<Int, Boolean>?>(null)
+
     /** One-off messages for the UI (errors, "Clipboard sent"). */
     val notices = MutableSharedFlow<String>(extraBufferCapacity = 16)
 
@@ -513,6 +519,7 @@ class Link(
                     upgrade?.cancel()
                     ws.cancel()
                     control = null
+                    pcBattery.value = null
                     currentHost = null
                 }
             }
@@ -590,6 +597,9 @@ class Link(
                     control?.send(JSONObject().put("t", "adb_port").put("service", service).put("port", port).toString())
                 }
             "clip" -> setPhoneClipboard(msg.optString("text"))
+            "url" -> openUrl(msg.optString("url"), prefs.serverName)
+            "battery" -> pcBattery.value = msg.optInt("level", -1).takeIf { it >= 0 }?.let { it.coerceAtMost(100) to msg.optBoolean("charging") }
+            "ring" -> if (msg.optBoolean("on")) ringer.start(prefs.serverName) else ringer.stop()
             "camera", "mic" -> streamRequests.tryEmit(msg.optString("t") to msg.optBoolean("on"))
             "file" ->
                 scope.launch {
@@ -620,6 +630,55 @@ class Link(
             val cm = app.getSystemService(ClipboardManager::class.java)
             cm.setPrimaryClip(ClipData.newPlainText("Dotlink", text))
         }
+    }
+
+    // ---------- links ----------
+
+    /** Opens [url] in the PC's browser. False when not connected or it isn't a web link. */
+    fun sendUrl(url: String): Boolean {
+        val link = webLink(url) ?: return false
+        val ws = control ?: return false
+        return ws.send(JSONObject().put("t", "url").put("url", link).toString())
+    }
+
+    /**
+     * A link from [from] (`url`): opens it in the browser. Android 10+ doesn't let an app in
+     * the background start an activity, so off screen it posts a notification with Open.
+     */
+    @SuppressLint("MissingPermission") // Checked by NotificationManager.areNotificationsEnabled.
+    fun openUrl(
+        url: String,
+        from: String,
+    ) {
+        val link = webLink(url) ?: return
+        val uri = Uri.parse(link)
+        val view = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (DotlinkApp.inForeground) {
+            try {
+                app.startActivity(view)
+                return
+            } catch (_: ActivityNotFoundException) {
+                notices.tryEmit("No browser to open the link")
+                return
+            }
+        }
+        val nm = app.getSystemService(NotificationManager::class.java)
+        if (!nm.areNotificationsEnabled()) return
+        val id = link.hashCode()
+        val open = PendingIntent.getActivity(app, id, view, PendingIntent.FLAG_IMMUTABLE)
+        val n =
+            NotificationCompat
+                .Builder(app, DotlinkApp.CHANNEL_REQUESTS)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("Link from $from")
+                .setContentText(uri.host ?: link)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(link))
+                .setContentIntent(open)
+                .addAction(0, "Open", open)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build()
+        nm.notify(id, n)
     }
 
     /** Tells the PC that starting [kind] ("camera" | "mic") waits for a tap on our notification. */
@@ -1166,6 +1225,18 @@ class Link(
 }
 
 fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+/**
+ * [text] when it is one `http(s)` link and nothing else, trimmed; else null. Only those are
+ * opened, so a paired device can't make the browser load `file:` or an app's own scheme.
+ */
+fun webLink(text: String?): String? {
+    val link = text?.trim().orEmpty()
+    if (link.isEmpty() || link.length > 8192 || link.any { it.isWhitespace() || it.isISOControl() }) return null
+    val uri = Uri.parse(link)
+    val scheme = uri.scheme?.lowercase()
+    return link.takeIf { (scheme == "http" || scheme == "https") && !uri.host.isNullOrEmpty() }
+}
 
 /**
  * Sockets with TCP_NODELAY. Remote moves, Shell keystrokes and control messages are tiny;

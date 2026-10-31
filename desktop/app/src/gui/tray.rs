@@ -22,6 +22,7 @@ pub enum TrayAction {
     Pair,
     SendFiles,
     SendClipboard,
+    SendLink,
     Cast,
     Quit,
 }
@@ -146,6 +147,7 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
         ("open", "Open Dotlink", TrayAction::Open),
         ("send_files", "Send files…", TrayAction::SendFiles),
         ("send_clipboard", "Send clipboard", TrayAction::SendClipboard),
+        ("send_link", "Open copied link", TrayAction::SendLink),
         ("cast", "Cast screen", TrayAction::Cast),
         ("pair", "Pair…", TrayAction::Pair),
         ("quit", quit, TrayAction::Quit),
@@ -160,8 +162,9 @@ pub async fn start(actions: UnboundedSender<TrayAction>) -> bool {
         &item(2),
         &item(3),
         &item(4),
-        &PredefinedMenuItem::separator(),
         &item(5),
+        &PredefinedMenuItem::separator(),
+        &item(6),
     ]);
     if let Err(e) = built {
         tracing::warn!("no tray icon: {e}");
@@ -336,6 +339,7 @@ impl ksni::Tray for DotlinkTray {
             ksni::MenuItem::Separator,
             Self::item("Send files…", TrayAction::SendFiles),
             Self::item("Send clipboard", TrayAction::SendClipboard),
+            Self::item("Open copied link", TrayAction::SendLink),
             Self::item("Cast screen", TrayAction::Cast),
             Self::item("Pair…", TrayAction::Pair),
             ksni::MenuItem::Separator,

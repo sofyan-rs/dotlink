@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -29,7 +30,7 @@ import com.dotlink.ui.theme.DotlinkTheme
 private const val UNLIT_ALPHA = 0.5f
 
 /**
- * A row of [count] dots with the first [lit] ones lit.
+ * A row of [count] dots with the first [lit] ones lit, in [litColor].
  *
  * @param contentDescription what the meter measures, e.g. "Password strength". TalkBack reads
  *   it together with the level.
@@ -40,8 +41,8 @@ fun DotMeter(
     lit: Int,
     contentDescription: String,
     modifier: Modifier = Modifier,
+    litColor: Color = Dotline.colors.ink,
 ) {
-    val litColor = Dotline.colors.ink
     val unlitColor = Dotline.colors.lineStrong.copy(alpha = UNLIT_ALPHA)
     val dot = Dotline.size.dot
     val gap = Dotline.space.s1

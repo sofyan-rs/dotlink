@@ -295,6 +295,23 @@ pub fn open_path(path: &Path) {
     let _ = Command::new("explorer").arg(path).spawn();
 }
 
+/// Opens a web link in the default browser. ShellExecuteW, not `explorer <url>` or `cmd /c
+/// start`: those take `&` and `^` in a query string as their own syntax.
+pub fn open_url(url: &str) {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let (verb, url) = (wide("open"), wide(url));
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    let r = unsafe {
+        ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), url.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL)
+    };
+    // Above 32 is success.
+    if r as isize <= 32 {
+        tracing::warn!("could not open the link ({})", r as isize);
+    }
+}
+
 /// Opens the folder holding `path` with `path` selected.
 pub fn show_in_folder(path: &Path) {
     // explorer wants "/select," and the path as one argument, unquoted.

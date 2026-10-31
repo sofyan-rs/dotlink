@@ -5,6 +5,7 @@ use crate::events::{Event, Incoming, Transfer, TransferState, UiRequest};
 use crate::input::InputMsg;
 use crate::platform::{self, clipboard, find_camera, notify, CameraHub, Input, MicSink};
 use crate::term::Session;
+use crate::weblink;
 use anyhow::{anyhow, bail, Result};
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -68,6 +69,8 @@ pub struct PhoneInfo {
     pub usb: usize,
     /// Battery percent and whether it's charging, from its `battery` message (newer apps).
     pub battery: Option<(u8, bool)>,
+    /// Ringing after "Ring" (`ring` messages from the phone).
+    pub ringing: bool,
 }
 
 /// Where a file or clipboard goes: one phone, or every connected phone.
@@ -307,6 +310,7 @@ impl App {
                         .filter(|_| online.get(&d.id).copied().unwrap_or(0) > 0)
                         .map(|(level, charging)| json!({ "level": level, "charging": charging })),
                     "clipboard_auto": d.sends_clipboard(),
+                    "ringing": phones.get(&d.id).is_some_and(|p| p.ringing),
                 })
             })
             .chain(state.peers.iter().map(|p| {
@@ -549,6 +553,23 @@ impl App {
         Ok(name.clone())
     }
 
+    /// Makes a phone ring at full volume, even on silent, until it's stopped (`on` false) or a
+    /// minute passed. Starting needs one phone (`to`: its name or id), unless only one is
+    /// connected; stopping without `to` goes to every phone. Returns the phones asked.
+    pub fn ring(&self, to: Option<&str>, on: bool) -> Result<String> {
+        let target = self.target_of(to, true)?;
+        let msg = json!({ "t": "ring", "on": on });
+        if !on || target.id.is_some() {
+            self.send_control_to(target.id.as_deref(), msg);
+            return Ok(target.names);
+        }
+        let [(id, name)] = &target.phones[..] else {
+            bail!("several phones are connected ({}), choose one", target.names);
+        };
+        self.send_control_to(Some(id), msg);
+        Ok(name.clone())
+    }
+
     /// Sends the current PC clipboard now, whatever the sync setting says.
     /// `to`: a device name or id, or None for every connected phone.
     pub async fn send_clipboard(&self, to: Option<&str>) -> Result<()> {
@@ -567,6 +588,42 @@ impl App {
         }
         self.emit(Event::Clipboard { to_phone: true, device: target.names, chars });
         Ok(())
+    }
+
+    /// Opens `url` (this PC's clipboard when None) in the browser of `to`: a device name or id,
+    /// or every connected device. Returns their names.
+    pub async fn send_url(&self, url: Option<&str>, to: Option<&str>) -> Result<String> {
+        let target = self.target(to)?;
+        let url = match url {
+            Some(url) => weblink::parse(url).ok_or_else(|| anyhow!("not a web link (http or https)"))?,
+            None => clipboard::get()
+                .await
+                .as_deref()
+                .and_then(weblink::parse)
+                .ok_or_else(|| anyhow!("the clipboard holds no web link"))?,
+        };
+        let msg = json!({ "t": "url", "url": url });
+        if !target.phones.is_empty() {
+            self.send_control_to(target.id.as_deref(), msg.clone());
+        }
+        for (id, _) in &target.peers {
+            self.peers.send(id, &msg);
+        }
+        tracing::info!("link to {}", target.names);
+        Ok(target.names)
+    }
+
+    /// A link from a phone or PC (`url` message): opens it in the browser, and says so in a
+    /// notification, so a link nobody here sent for is noticed. Only `http` and `https`.
+    pub fn open_url_from(&self, from: &str, url: &str) {
+        let Some(url) = weblink::parse(url) else {
+            tracing::warn!("{from} sent a link that isn't http(s): not opened");
+            return;
+        };
+        let host = weblink::host(&url).unwrap_or_default().to_string();
+        tracing::info!("opening a link from {from} ({host})");
+        platform::open_url(&url);
+        notify(&format!("Opened {host} from {from}"), &url);
     }
 
     /// Resolves `to` (a device name or id) to an online device, or every online device for None.
@@ -637,14 +694,13 @@ impl App {
         }
     }
 
-    /// This PC's `battery` message for the PCs linked to it; None without a battery.
+    /// This PC's `battery` message for the phones and PCs linked to it; None without a battery.
     pub fn battery_msg(&self) -> Option<Value> {
         let (level, charging) = (*self.battery.lock().unwrap())?;
         Some(json!({ "t": "battery", "level": level, "charging": charging }))
     }
 
-    /// Reads the battery once a minute and tells the linked PCs when it changed. Phones don't
-    /// show the PC's battery.
+    /// Reads the battery once a minute and tells the phones and linked PCs when it changed.
     pub async fn watch_battery(self: Arc<Self>) {
         let mut every = tokio::time::interval(Duration::from_secs(60));
         loop {
@@ -658,16 +714,9 @@ impl App {
                 *last = now;
             }
             let Some(msg) = self.battery_msg() else { continue };
-            let (pcs, peers): (Vec<String>, Vec<String>) = {
-                let state = self.state.lock().unwrap();
-                (
-                    state.devices.iter().filter(|d| d.kind == DeviceKind::Pc).map(|d| d.id.clone()).collect(),
-                    state.peers.iter().map(|p| p.id.clone()).collect(),
-                )
-            };
-            for id in pcs {
-                self.send_control_to(Some(&id), msg.clone());
-            }
+            let peers: Vec<String> = self.state.lock().unwrap().peers.iter().map(|p| p.id.clone()).collect();
+            // Every phone and PC connected to this one.
+            self.send_control(msg.clone());
             for id in peers {
                 self.peers.send(&id, &msg);
             }
@@ -1183,9 +1232,7 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
     let mut revoked = app.revoked_tx.subscribe();
     let hello = app.hello();
     let _ = tx.send(Message::Text(hello.to_string().into())).await;
-    if dev.kind == DeviceKind::Pc
-        && let Some(battery) = app.battery_msg()
-    {
+    if let Some(battery) = app.battery_msg() {
         let _ = tx.send(Message::Text(battery.to_string().into())).await;
     }
     loop {
@@ -1238,6 +1285,16 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                     {
                         app.offer_declined(offer, &dev.id, &dev.name);
                     }
+                    if v["t"] == "ring" {
+                        let on = v["on"].as_bool().unwrap_or(false);
+                        app.phones.lock().unwrap().entry(dev.id.clone()).or_default().ringing = on;
+                        app.emit(Event::Devices);
+                    }
+                    if v["t"] == "url"
+                        && let Some(url) = v["url"].as_str()
+                    {
+                        app.open_url_from(&dev.name, url);
+                    }
                     if v["t"] == "media" && v["state"] == "needs_tap" {
                         let kind = v["kind"].as_str().unwrap_or("camera").to_string();
                         app.emit(Event::MediaPrompt { device: dev.name.clone(), kind });
@@ -1259,8 +1316,13 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
             }
         }
     }
-    if let Some(n) = app.online.lock().unwrap().get_mut(&dev.id) {
+    let gone = app.online.lock().unwrap().get_mut(&dev.id).is_some_and(|n| {
         *n = n.saturating_sub(1);
+        *n == 0
+    });
+    // It stops by itself after a minute; offline, its Stop would reach nothing.
+    if gone && let Some(phone) = app.phones.lock().unwrap().get_mut(&dev.id) {
+        phone.ringing = false;
     }
     if usb && let Some(phone) = app.phones.lock().unwrap().get_mut(&dev.id) {
         phone.usb = phone.usb.saturating_sub(1);

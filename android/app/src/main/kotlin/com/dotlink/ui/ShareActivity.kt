@@ -1,6 +1,7 @@
 /**
  * "Share → Dotlink": files go to the PC's download folder (or a paired phone's Download/Dotlink),
- * text goes to its clipboard. With phones paired, the sheet first asks where.
+ * text goes to its clipboard, and a link opens in the PC's browser. With phones paired, the
+ * sheet first asks where.
  * It stays open as a small sheet until the upload is done, because Android only lends us
  * read access to shared files while this activity lives.
  */
@@ -23,6 +24,7 @@ import com.dotlink.DotlinkApp
 import com.dotlink.link.LinkService
 import com.dotlink.link.LinkState
 import com.dotlink.link.Transfer
+import com.dotlink.link.webLink
 import com.dotlink.ui.dotline.DotMeter
 import com.dotlink.ui.dotline.DotlineIcons
 import com.dotlink.ui.dotline.ListDivider
@@ -144,6 +146,12 @@ class ShareActivity : ComponentActivity() {
             val online = withTimeoutOrNull(8_000) { link.state.first { it is LinkState.Online } } != null
             if (!online) {
                 toastAndFinish("${link.prefs.serverName} is not reachable")
+                return@launch
+            }
+            // A link opens in the PC's browser; other text goes to its clipboard.
+            if (uris.isEmpty() && webLink(text) != null) {
+                val sent = link.sendUrl(text!!)
+                toastAndFinish(if (sent) "Opened on ${link.prefs.serverName}" else "Couldn't reach ${link.prefs.serverName}")
                 return@launch
             }
             if (uris.isEmpty()) {

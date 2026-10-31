@@ -17,6 +17,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- Updates: installs the APK of a newer GitHub release (Updater). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Ring from the PC: its notification fills the screen over the lock screen (Ringer). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
@@ -89,6 +91,16 @@
             android:noHistory="true"
             android:taskAffinity=""
             android:theme="@style/Theme.Dotlink.Translucent" />
+
+        <!-- Full screen while the PC rings this phone, over the lock screen. -->
+        <activity
+            android:name=".ui.RingActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:turnScreenOn="true" />
 
         <!-- Exported so `adb shell am broadcast` from the PC reaches it; it acts only on a link
              carrying the nonce of this phone's own request (UsbPairReceiver). -->

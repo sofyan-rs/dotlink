@@ -456,6 +456,24 @@ impl Model {
         self.report_all(vec![call], cx);
     }
 
+    /// Opens the link on this PC's clipboard on one device.
+    pub fn send_link_to(&mut self, id: String, cx: &mut Context<Self>) {
+        let call = self.client.send_link(Some(id));
+        self.report_all(vec![call], cx);
+    }
+
+    /// The tray's Send link: the clipboard's link, on every connected device.
+    pub fn send_link(&mut self, cx: &mut Context<Self>) {
+        let call = self.client.send_link(None);
+        self.report_all(vec![call], cx);
+    }
+
+    /// Rings a phone, or stops it; the header shows RINGING once the phone says it rings.
+    pub fn ring(&mut self, id: String, on: bool, cx: &mut Context<Self>) {
+        let call = self.client.ring(&id, on);
+        self.report_all(vec![call], cx);
+    }
+
     /// One toast for several sends: the errors if any, else what was done.
     fn report_all(
         &mut self,

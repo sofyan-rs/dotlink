@@ -101,6 +101,11 @@ pub fn open_path(path: &Path) {
     let _ = std::process::Command::new("open").arg(path).spawn();
 }
 
+/// Opens a web link in the default browser.
+pub fn open_url(url: &str) {
+    let _ = std::process::Command::new("open").arg(url).spawn();
+}
+
 pub fn show_in_folder(path: &Path) {
     let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
 }

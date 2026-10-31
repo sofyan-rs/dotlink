@@ -8,6 +8,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -57,6 +58,7 @@ import com.dotlink.ui.pair.ChoosePcScreen
 import com.dotlink.ui.pair.PairScreen
 import com.dotlink.ui.remote.RemoteScreen
 import com.dotlink.ui.settings.SettingsScreen
+import com.dotlink.ui.remote.VolumeKeys
 import com.dotlink.ui.shell.ShellScreen
 import com.dotlink.ui.theme.Dotline
 import com.dotlink.ui.theme.DotlinkTheme
@@ -117,6 +119,27 @@ class MainActivity : ComponentActivity() {
             // No PC (or not now), but paired phones: keep receiving from them.
             LinkService.send(this)
         }
+    }
+
+    // The Remote's Presenter turns slides with the volume keys while it's open.
+    override fun onKeyDown(
+        keyCode: Int,
+        event: KeyEvent,
+    ): Boolean {
+        val handler = VolumeKeys.handler
+        if (handler != null && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            if (event.repeatCount == 0) handler(keyCode == KeyEvent.KEYCODE_VOLUME_UP)
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(
+        keyCode: Int,
+        event: KeyEvent,
+    ): Boolean {
+        if (VolumeKeys.handler != null && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) return true
+        return super.onKeyUp(keyCode, event)
     }
 
     // Android only lets the focused app read the clipboard, so we send it when we gain focus.

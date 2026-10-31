@@ -134,6 +134,18 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
             let msg = result(app.send_clipboard(req["to"].as_str()).await.map(|()| "clipboard sent".into()));
             w.write_all(reply(msg).as_bytes()).await?;
         }
+        "open" => {
+            let msg = result(app.send_url(req["url"].as_str(), req["to"].as_str()).await.map(|names| format!("opened on {names}")));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
+        "ring" => {
+            let on = req["on"].as_bool().unwrap_or(true);
+            let msg = result(
+                app.ring(req["to"].as_str(), on)
+                    .map(|names| if on { format!("ringing {names}") } else { format!("stopped ringing {names}") }),
+            );
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
         "answer_incoming" => {
             let (id, accept) = (req["id"].as_str().unwrap_or(""), req["accept"].as_bool().unwrap_or(false));
             let msg = if app.answer_incoming(id, accept) {

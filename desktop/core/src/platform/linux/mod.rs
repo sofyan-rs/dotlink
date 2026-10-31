@@ -89,6 +89,11 @@ pub fn open_path(path: &Path) {
     let _ = std::process::Command::new("xdg-open").arg(path).spawn();
 }
 
+/// Opens a web link in the default browser.
+pub fn open_url(url: &str) {
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+}
+
 /// Opens the folder holding `path`.
 pub fn show_in_folder(path: &Path) {
     open_path(path.parent().unwrap_or(path));

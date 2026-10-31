@@ -489,6 +489,11 @@ async fn handle(app: &Arc<App>, peer: &Peer, addr: SocketAddr, v: Value) {
                 Err(e) => tracing::warn!("clipboard: {e}"),
             }
         }
+        Some("url") => {
+            if let Some(url) = v["url"].as_str() {
+                app.open_url_from(&peer.name, url);
+            }
+        }
         Some("file") => {
             let (Some(id), Some(name)) = (v["id"].as_str(), v["name"].as_str()) else { return };
             let (app, peer, id, name, size) = (app.clone(), peer.clone(), id.to_string(), name.to_string(), v["size"].as_u64());

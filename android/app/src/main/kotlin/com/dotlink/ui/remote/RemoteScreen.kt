@@ -2,7 +2,7 @@
  * The REMOTE tab: the phone as touchpad and keyboard for the PC.
  *
  * Touchpad: one finger moves, tap = left click, two-finger tap = right click, three-finger
- * tap = middle click, two fingers scroll, hold then move = drag.
+ * tap = middle click, two fingers scroll, hold then move = drag. Presenter: see Presenter.kt.
  */
 package com.dotlink.ui.remote
 
@@ -42,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +69,8 @@ import com.dotlink.link.Link
 import com.dotlink.link.LinkState
 import com.dotlink.ui.dotline.DotlineIcons
 import com.dotlink.ui.dotline.ScreenTitle
+import com.dotlink.ui.dotline.SegmentOption
+import com.dotlink.ui.dotline.SegmentedControl
 import com.dotlink.ui.dotline.bottomNavHeight
 import com.dotlink.ui.theme.Dotline
 import okhttp3.Response
@@ -183,6 +186,8 @@ fun RemoteScreen() {
         }
     }
 
+    // Touchpad, or Presenter (slides).
+    var presenter by rememberSaveable { mutableStateOf(false) }
     val imeVisible = WindowInsets.isImeVisible
     Column(
         Modifier
@@ -193,9 +198,27 @@ fun RemoteScreen() {
     ) {
         ScreenTitle(
             title = "Remote",
-            subline = if (state is LinkState.Online) "Tap: click · two fingers: scroll · hold: drag" else "Not connected",
+            subline =
+                when {
+                    state !is LinkState.Online -> "Not connected"
+                    presenter -> "Start the slideshow on the PC · volume keys: next, previous"
+                    else -> "Tap: click · two fingers: scroll · hold: drag"
+                },
         )
-        Spacer(Modifier.height(Dotline.space.s4))
+        SegmentedControl(
+            options = listOf(SegmentOption("Touchpad"), SegmentOption("Presenter")),
+            selectedIndex = if (presenter) 1 else 0,
+            onSelect = { presenter = it == 1 },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Dotline.space.s4, vertical = Dotline.space.s3),
+        )
+        if (presenter) {
+            Presenter(
+                onKey = input::key,
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = Dotline.space.s4),
+            )
+            Spacer(Modifier.height(bottomNavHeight()))
+            return@Column
+        }
         Touchpad(
             input = input,
             speed = link.prefs.pointerSpeed,

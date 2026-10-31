@@ -11,11 +11,14 @@ are supported, and so is macOS (the webcam goes through OBS).
 |---|---|---|
 | **Files** | Share → Dotlink, or **Send** in the app | Drop files on the window, the tray's *Send files…*, right-click → *Share with Dotlink* (Windows) or *Quick Actions → Dotlink: …* (macOS), or `dotlink send` |
 | **Clipboard** | When you open the app, or the notification's *Send clipboard* | Automatic (turn it off per phone: **Clipboard sync** on its page) |
-| **Remote** | The phone as touchpad and keyboard | |
+| **Remote** | The phone as touchpad and keyboard, or a slide clicker (**Presenter**: Next / Previous, the volume keys too, End, Black, a timer) | |
 | **Shell** | A terminal on the PC; the session survives reconnects | |
 | **Webcam** | The phone camera as **Dotlink Camera** in any app (calls, browsers, OBS) | |
 | **Microphone** | The phone mic as a microphone on the PC | |
 | **Cast** | | The phone's screen in a window, with mouse and keyboard ([scrcpy](https://github.com/Genymobile/scrcpy)) |
+| **Links** | Share a link → Dotlink: it opens in the PC's browser | *Open copied link* (tray or the phone's page), or `dotlink open <url>` |
+| **Ring** | | **Ring** in the phone's ⋯ menu, or `dotlink ring`: full volume, even on silent |
+| **Battery** | The phone's level on its page and in the sidebar | A laptop's level under its name in the phone app |
 
 Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on the phone. Turn on
 **Ask before receiving files** in Settings (PC or phone) to Accept or Decline each one first.

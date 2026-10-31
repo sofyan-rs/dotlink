@@ -7,14 +7,18 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -60,6 +64,8 @@ fun LinkScreen(
     val cameraOn by link.cameraOn.collectAsStateWithLifecycle()
     val micOn by link.micOn.collectAsStateWithLifecycle()
     val online = state is LinkState.Online
+    // Only while connected, and only a PC with a battery sends it.
+    val pcBattery by link.pcBattery.collectAsStateWithLifecycle()
     var pcSheet by remember { mutableStateOf(false) }
 
     val pickFiles =
@@ -108,6 +114,21 @@ fun LinkScreen(
                 ScreenTitleAction(DotlineIcons.Sync, contentDescription = "Reconnect", onClick = { LinkService.send(context) })
             },
         )
+        pcBattery?.let { (level, charging) ->
+            val color = if (charging) Dotline.colors.positive else if (level <= 15) Dotline.colors.accentText else Dotline.colors.inkMuted
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Dotline.space.s2),
+                modifier = Modifier.padding(horizontal = Dotline.space.s4),
+            ) {
+                DotMeter(count = 10, lit = (level + 9) / 10, contentDescription = "PC battery", litColor = color)
+                Text(
+                    "$level%" + if (charging) " · CHARGING" else "",
+                    style = Dotline.type.data,
+                    color = color,
+                )
+            }
+        }
         QuickActionRow(
             actions =
                 listOf(

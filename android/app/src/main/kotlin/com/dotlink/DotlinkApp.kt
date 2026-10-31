@@ -23,6 +23,10 @@ class DotlinkApp : Application() {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_REQUESTS, "Requests", NotificationManager.IMPORTANCE_HIGH),
         )
+        // Silent: the ringer plays the sound itself, as an alarm.
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_RING, "Ring from PC", NotificationManager.IMPORTANCE_HIGH).apply { setSound(null, null) },
+        )
         registerActivityLifecycleCallbacks(
             object : ActivityLifecycleCallbacks {
                 override fun onActivityStarted(activity: Activity) {
@@ -62,6 +66,9 @@ class DotlinkApp : Application() {
 
         /** "Start the webcam?" when the PC asks while the app is in the background. */
         const val CHANNEL_REQUESTS = "requests"
+
+        /** "Ringing from …" (Ringer), full screen. */
+        const val CHANNEL_RING = "ring"
 
         private lateinit var instance: DotlinkApp
 

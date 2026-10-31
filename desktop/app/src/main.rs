@@ -55,6 +55,22 @@ enum Cmd {
         #[arg(long)]
         to: Option<String>,
     },
+    /// Open a web link in the browser of the connected phones and linked PCs.
+    Open {
+        /// An http(s) link; this PC's clipboard without it.
+        url: Option<String>,
+        /// Only on this device (name or id).
+        #[arg(long)]
+        to: Option<String>,
+    },
+    /// Make a phone ring at full volume, even on silent, to find it.
+    Ring {
+        /// The phone (name or id); needed when several are connected.
+        phone: Option<String>,
+        /// Stop it ringing.
+        #[arg(long)]
+        stop: bool,
+    },
     /// Link this PC to another one: paste the link its `dotlink pair` (or Pair page) shows, or
     /// give its name from `dotlink nearby` and the 6-digit code it shows. The two PCs then share
     /// files and the clipboard.
@@ -233,6 +249,8 @@ async fn command(cmd: Cmd) -> Result<()> {
             result
         }
         Cmd::Clip { to } => simple(json!({ "cmd": "clip", "to": to })).await,
+        Cmd::Ring { phone, stop } => simple(json!({ "cmd": "ring", "to": phone, "on": !stop })).await,
+        Cmd::Open { url, to } => simple(json!({ "cmd": "open", "url": url, "to": to })).await,
         Cmd::Join { target, code: None } if target.starts_with("dotlink://") => {
             simple(json!({ "cmd": "join", "uri": target })).await
         }

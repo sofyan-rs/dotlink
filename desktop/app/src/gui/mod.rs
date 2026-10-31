@@ -291,6 +291,7 @@ fn listen_tray(mut rx: futures::channel::mpsc::UnboundedReceiver<TrayAction>, cx
                         .detach();
                     }
                     TrayAction::SendClipboard => model.update(cx, |m, cx| m.send_clipboard(cx)),
+                    TrayAction::SendLink => model.update(cx, |m, cx| m.send_link(cx)),
                     // With several phones online, pick one in the window. Needing pairing
                     // shows there too.
                     TrayAction::Cast => {

@@ -61,6 +61,9 @@ pub struct DeviceInfo {
     /// While connected, from phone apps that report it.
     #[serde(default)]
     pub battery: Option<Battery>,
+    /// A phone ringing after Ring.
+    #[serde(default)]
+    pub ringing: bool,
 }
 
 impl DeviceInfo {
@@ -154,6 +157,16 @@ impl Client {
 
     pub fn send_clipboard(&self, to: Option<String>) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "clip", "to": to })))
+    }
+
+    /// Opens the link on this PC's clipboard on `to` (a device id, or every connected one).
+    pub fn send_link(&self, to: Option<String>) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "open", "to": to })))
+    }
+
+    /// Makes a phone (by device id) ring, or stops it.
+    pub fn ring(&self, id: &str, on: bool) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "ring", "to": id, "on": on })))
     }
 
     /// Asks the phone to start or stop the camera ("camera") or mic ("mic").
