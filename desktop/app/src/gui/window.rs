@@ -261,6 +261,23 @@ impl MainView {
         .detach();
     }
 
+    /// Picks files and uploads them into the phone folder open on the Files page.
+    fn pick_and_upload(&mut self, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Upload".into()),
+        });
+        let model = self.model.clone();
+        cx.spawn(async move |_, cx| {
+            if let Ok(Ok(Some(paths))) = picked.await {
+                model.update(cx, |m, cx| m.upload_to_folder(paths, cx));
+            }
+        })
+        .detach();
+    }
+
     /// Copies the service's config into the form the first time it is known.
     fn load_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.form.loaded {
@@ -572,8 +589,8 @@ impl MainView {
     }
 
     /// Files: the current phone's storage, folders first. Click opens a folder, double-click
-    /// downloads and opens a file, ⋯ has Download, Rename and Delete; files dropped on the list
-    /// go into the open folder.
+    /// downloads and opens a file, ⋯ has Download, Rename and Delete; Upload, or files dropped on
+    /// the list, go into the open folder.
     fn files_page(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let m = self.model.read(cx);
         let d = m.current_device().cloned();
@@ -609,6 +626,7 @@ impl MainView {
             } else {
                 folder.path.clone()
             }))
+            .child(icon_button("files-upload", IconName::Upload).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.pick_and_upload(cx))))
             .child(icon_button("files-new", IconName::FolderPlus).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                 this.start_file_edit(FileEdit::NewFolder, window, cx)
             })))
