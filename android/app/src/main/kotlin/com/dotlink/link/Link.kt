@@ -91,6 +91,8 @@ data class Transfer(
     /** Where a received file was saved, and its type, once it's done (see [Link.openReceived]). */
     val uri: Uri? = null,
     val mime: String? = null,
+    /** The folder a received file went into when it isn't Download/Dotlink (Browse from PC). */
+    val folder: String? = null,
 ) {
     enum class Status { Running, Done, Failed }
 }
@@ -622,7 +624,7 @@ class Link(
                     if (dir != null) {
                         val folder = runCatching { FileBrowser.resolve(dir) }.getOrNull()
                         if (folder != null && FileBrowser.allowed(app) && folder.isDirectory) {
-                            downloadInto(id, name, size, folder)
+                            downloadInto(id, name, size, folder, dir.trim('/').ifEmpty { "Internal storage" })
                         } else {
                             control?.send(JSONObject().put("t", "decline").put("id", id).toString())
                         }
@@ -833,8 +835,9 @@ class Link(
         name: String,
         size: Long,
         folder: java.io.File,
+        label: String,
     ) {
-        val t = newTransfer(name, incoming = true, size = size)
+        val t = newTransfer(name, incoming = true, size = size, folder = label)
         val safe = name.substringAfterLast('/').substringAfterLast('\\').takeIf { it.isNotBlank() && it != "." && it != ".." } ?: "file"
         // "a.jpg", then "a (1).jpg", "a (2).jpg"… when it's taken.
         val (stem, ext) = if ('.' in safe.drop(1)) safe.substringBeforeLast('.') to "." + safe.substringAfterLast('.') else safe to ""
@@ -1048,8 +1051,9 @@ class Link(
         incoming: Boolean,
         size: Long,
         phone: String? = null,
+        folder: String? = null,
     ): Transfer {
-        val t = Transfer(transferIds.getAndIncrement(), name, incoming = incoming, size = size, phone = phone)
+        val t = Transfer(transferIds.getAndIncrement(), name, incoming = incoming, size = size, phone = phone, folder = folder)
         transfers.update { listOf(t) + it.take(30) }
         return t
     }

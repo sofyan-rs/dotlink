@@ -257,7 +257,7 @@ internal fun TransferRow(t: Transfer) {
             Transfer.Status.Done ->
                 when {
                     t.phone != null -> "$arrow ${if (t.incoming) "from" else "to"} ${t.phone} · ${formatSize(t.size)}"
-                    t.incoming -> "$arrow Download/Dotlink · ${formatSize(t.size)}"
+                    t.incoming -> "$arrow ${t.folder ?: "Download/Dotlink"} · ${formatSize(t.size)}"
                     else -> "$arrow Sent · ${formatSize(t.size)}"
                 }
             Transfer.Status.Failed -> "$arrow ${t.error ?: "Failed"}"
