@@ -216,6 +216,7 @@ impl Client {
     }
 
     /// Dismiss on a phone's notification shown here.
+    #[cfg(target_os = "macos")]
     pub fn dismiss_phone_notification(&self, tag: &str) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "notif_dismiss", "tag": tag })))
     }

@@ -634,6 +634,7 @@ impl Model {
     }
 
     /// Dismiss on a phone's notification (macOS: from Notification Center).
+    #[cfg(target_os = "macos")]
     pub fn dismiss_phone_notification(&mut self, tag: String, cx: &mut Context<Self>) {
         let call = self.client.dismiss_phone_notification(&tag);
         cx.spawn(async move |_, _| {
