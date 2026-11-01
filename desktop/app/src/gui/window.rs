@@ -353,6 +353,7 @@ impl Render for MainView {
         let page = self.model.read(cx).page;
         let content = match page {
             Page::Device => self.device_page(&p, cx),
+            Page::Files => self.files_page(&p, cx),
             Page::Pair => self.pair(&p, cx).into_any_element(),
             Page::Activity => self.activity(&p, cx).into_any_element(),
             Page::Setup => self.setup(&p, cx).into_any_element(),
@@ -377,6 +378,8 @@ impl Render for MainView {
                         .flex()
                         .flex_col()
                         .gap(px(24.))
+                        // Files fills the window and scrolls its list, so the toolbar stays put.
+                        .when(page == Page::Files, |d| d.h_full())
                         .children(self.incoming_banner(&p, cx))
                         .child(content),
                 ));
@@ -538,14 +541,11 @@ impl MainView {
         )
     }
 
-    /// Device page → Files (a connected phone): its storage, folders first. Click opens a
-    /// folder, double-click downloads and opens a file, ⋯ has Download, Rename and Delete;
-    /// files dropped on the list go into the open folder.
+    /// Device page → Files (a connected phone): Browse opens its storage on the Files page,
+    /// back in the folder left open there.
     fn files_section(&self, p: &Palette, d: &DeviceInfo, cx: &mut Context<Self>) -> Div {
-        let folder = self.model.read(cx).folder.as_ref().filter(|f| f.device == d.id);
-        let Some(folder) = folder else {
-            let id = d.id.clone();
-            return group(p).child(
+        let id = d.id.clone();
+        group(p).child(
                 row(p)
                     .child(
                         div()
@@ -559,10 +559,27 @@ impl MainView {
                     .child(pill_icon(p, "files-open", IconName::FolderOpen, "Browse", Kind::Secondary).on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             let id = id.clone();
-                            this.model.update(cx, |m, cx| m.open_folder(id, "/".into(), cx))
+                            this.model.update(cx, |m, cx| {
+                                if !m.folder.as_ref().is_some_and(|f| f.device == id) {
+                                    m.open_folder(id, "/".into(), cx);
+                                }
+                                m.page = Page::Files;
+                                cx.notify();
+                            })
                         },
                     ))),
-            );
+        )
+    }
+
+    /// Files: the current phone's storage, folders first. Click opens a folder, double-click
+    /// downloads and opens a file, ⋯ has Download, Rename and Delete; files dropped on the list
+    /// go into the open folder.
+    fn files_page(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let m = self.model.read(cx);
+        let d = m.current_device().cloned();
+        let folder = m.folder.as_ref().filter(|f| d.as_ref().is_some_and(|d| d.id == f.device));
+        let (Some(d), Some(folder)) = (d, folder) else {
+            return page(p, "Files", Some("No phone's storage is open. Open it from the phone's page.")).into_any_element();
         };
         let (id, parent) = (d.id.clone(), folder.parent());
         let icon_button = |id: &'static str, icon: IconName| {
@@ -635,6 +652,7 @@ impl MainView {
             let click_name = name.clone();
             let menu_view = view.clone();
             let menu_name = name.clone();
+            let red = p.accent_text;
             row(p)
                 .id(("phone-file", i))
                 .border_t_1()
@@ -669,16 +687,17 @@ impl MainView {
                             let menu = if dir {
                                 menu
                             } else {
-                                menu.item(PopupMenuItem::new("Download").on_click(move |_, _, cx| {
+                                menu.item(PopupMenuItem::new("Download").icon(IconName::Download).on_click(move |_, _, cx| {
                                     let name = dl_name.clone();
                                     dl_view.update(cx, |this, cx| this.model.update(cx, |m, cx| m.download_phone_file(name, false, cx))).ok();
                                 }))
                             };
-                            menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
+                            menu.item(PopupMenuItem::new("Rename").icon(IconName::Pencil).on_click(move |_, window, cx| {
                                 let name = rn_name.clone();
                                 rn_view.update(cx, |this, cx| this.start_file_edit(FileEdit::Rename(name), window, cx)).ok();
                             }))
-                            .item(PopupMenuItem::new("Delete").on_click(move |_, _, cx| {
+                            // Red, and asks first.
+                            .item(PopupMenuItem::element(move |_, _| div().text_color(red).child("Delete")).icon(Icon::new(IconName::Trash).text_color(red)).on_click(move |_, _, cx| {
                                 let name = rm_name.clone();
                                 rm_view
                                     .update(cx, |this, cx| {
@@ -695,7 +714,8 @@ impl MainView {
         let tint = p.ink.opacity(0.04);
         let list = div()
             .id("phone-files")
-            .max_h(px(440.))
+            .flex_1()
+            .min_h(px(0.))
             .overflow_y_scroll()
             .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
@@ -704,7 +724,11 @@ impl MainView {
             }))
             .children(empty)
             .children(rows);
-        group(p).child(toolbar).children(edit).children(error).child(list)
+        page(p, &format!("{}'s storage", d.name), None)
+            .flex_1()
+            .min_h(px(0.))
+            .child(group(p).flex_1().min_h(px(0.)).child(toolbar).children(edit).children(error).child(list))
+            .into_any_element()
     }
 
     /// "Forget <name>?" over the window, like the phone app's dialog: the backdrop or Esc
@@ -834,7 +858,7 @@ impl MainView {
         let connected = model.connected;
         let hostname = model.status.as_ref().map(|s| s.name.clone()).unwrap_or_default();
         let (phones, pcs) = model.online_counts();
-        let current = model.current_device().filter(|_| page == Page::Device).map(|d| d.id.clone());
+        let current = model.current_device().filter(|_| matches!(page, Page::Device | Page::Files)).map(|d| d.id.clone());
         let devices: Vec<DeviceInfo> = model.devices().into_iter().cloned().collect();
         let mut list = div().flex().flex_col().gap(px(4.));
         for d in devices {
@@ -1188,19 +1212,19 @@ impl MainView {
                 let (forget_id, forget_name) = (id.clone(), name.clone());
                 let (ring_view, ring_id) = (view.clone(), id.clone());
                 let menu = if can_ring {
-                    menu.item(PopupMenuItem::new("Ring").on_click(move |_, _, cx| {
+                    menu.item(PopupMenuItem::new("Ring").icon(IconName::BellRing).on_click(move |_, _, cx| {
                         let id = ring_id.clone();
                         ring_view.update(cx, |this, cx| this.model.update(cx, |m, cx| m.ring(id, true, cx))).ok();
                     }))
                 } else {
                     menu
                 };
-                menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
+                menu.item(PopupMenuItem::new("Rename").icon(IconName::Pencil).on_click(move |_, window, cx| {
                     let (id, name) = (id.clone(), name.clone());
                     rename_view.update(cx, |this, cx| this.start_rename(id, name, window, cx)).ok();
                 }))
                 // Red, and asks first: it can't be undone from here.
-                .item(PopupMenuItem::element(move |_, _| div().text_color(red).child("Forget")).on_click(move |_, _, cx| {
+                .item(PopupMenuItem::element(move |_, _| div().text_color(red).child("Forget")).icon(Icon::new(IconName::Unlink).text_color(red)).on_click(move |_, _, cx| {
                     let target = (forget_id.clone(), forget_name.clone(), phone);
                     forget_view
                         .update(cx, |this, cx| {

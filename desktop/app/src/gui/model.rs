@@ -18,6 +18,8 @@ use std::time::Instant;
 pub enum Page {
     /// One phone or PC ([Model::current_device]): its actions, settings and recent transfers.
     Device,
+    /// The current phone's storage ([Model::folder]), opened from its page's Files.
+    Files,
     Pair,
     Activity,
     Setup,
@@ -506,7 +508,7 @@ impl Model {
         .detach();
     }
 
-    /// Opens `path` on phone `id` in its page's Files.
+    /// Opens `path` on phone `id` on the Files page.
     pub fn open_folder(&mut self, id: String, path: String, cx: &mut Context<Self>) {
         let kept = self.folder.as_ref().filter(|f| f.device == id && f.path == path).map(|f| f.entries.clone());
         self.folder = Some(PhoneFolder { device: id.clone(), path: path.clone(), entries: kept.unwrap_or_default(), loading: true, error: None });
@@ -531,6 +533,9 @@ impl Model {
 
     pub fn close_folder(&mut self, cx: &mut Context<Self>) {
         self.folder = None;
+        if self.page == Page::Files {
+            self.page = Page::Device;
+        }
         cx.notify();
     }
 
