@@ -114,11 +114,13 @@ impl MainView {
                 let note = Notification::new().content(move |_, _, _| {
                     div()
                         .flex()
-                        .items_center()
+                        .items_start()
                         .gap_2()
                         .text_sm()
-                        .child(Icon::new(icon.clone()).flex_none().text_color(color))
-                        .child(text.clone())
+                        // Line height, so the icon stays centred on the first line.
+                        .child(div().h(px(20.)).flex().items_center().flex_none().child(Icon::new(icon.clone()).text_color(color)))
+                        // Long names wrap instead of running under the close button.
+                        .child(div().flex_1().min_w_0().pr(px(16.)).child(text.clone()))
                         .into_any_element()
                 });
                 window.push_notification(note, cx);
