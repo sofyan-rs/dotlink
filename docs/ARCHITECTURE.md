@@ -59,8 +59,9 @@ android/                 Kotlin + Jetpack Compose app
   peer/                  phone ↔ phone: PhoneTls (Keystore key + certificate), PhoneServer
                          (a minimal HTTPS server), Phones (pairing, sending, NSD)
   ui/                    screens (pair/ also picks a PC; home/PcSheet switches PCs; phones/;
-                         Remote and Shell open from the PC tab); ui/dotline is the Dotline
-                         design system
+                         Remote and Shell open from the PC tab, with Back); ui/dotline is the
+                         Dotline design system (the tab bar and segmented controls also
+                         switch by dragging along them: SlideToSelect.kt)
 scripts/install.sh       build + install for the current user (Linux)
 scripts/make-windows-icon.py  draws desktop/app/assets/dotlink.ico
 scripts/make-macos-icon.py    draws desktop/app/assets/dotlink.icns
@@ -267,7 +268,11 @@ request line in, one or more reply lines out.
   Windows and macOS poll the clipboard through arboard every 500 ms.
 - **Remote.** uinput virtual mouse + keyboard (Linux); SendInput, with Unicode text in any
   layout (Windows); CGEvent at the HID level, Unicode text and media keys, behind the
-  Accessibility permission (macOS).
+  Accessibility permission (macOS). The phone sends relative moves in PC pixels: finger travel
+  in dp (the same on any screen density) times the speed setting and an acceleration from the
+  finger's smoothed speed, 1× while slow up to 2.5× for a flick (`accel()` in
+  `RemoteScreen.kt`). The PC carries sub-pixel remainders to the next move. In landscape the
+  Remote takes the whole screen, without the tab rail.
 - **Presenter.** A Remote mode on the phone only (`Presenter.kt`): `→` / `←` over
   `/ws/input`, End `Esc`, Black `B`. No Start: the key differs per app, and F5 reloads a
   browser tab (Google Slides, Canva), so the slideshow is started on the PC. MainActivity hands the volume keys to it while it's open
@@ -321,9 +326,12 @@ request line in, one or more reply lines out.
 - **Media.** `media.rs` reads this PC's player every 2 s while a phone is connected
   (`platform::now_playing`: `playerctl` on Linux, the System Media Transport Controls on
   Windows, AppleScript for Spotify and Music on macOS, where MediaRemote only answers Apple's
-  apps since 15.4) and sends `media_state` when it changes, the artwork (file, URL or bytes)
+  apps since 15.4) and sends `media_state` when it changes (Windows names the player from the
+  session's app id, without the profile hash Chromium browsers add), the artwork (file, URL or bytes)
   only with a new track. `platform::media_command` plays, pauses, skips, seeks and sets the
-  output volume (`wpctl`, IAudioEndpointVolume, `set volume`). The phone (`MediaBridge`) follows
+  output volume (`wpctl`, IAudioEndpointVolume, `set volume`); the phone's card seeks from its
+  progress bar and sets the volume from its slider, and its Mute is volume 0 (the phone
+  remembers the level to go back to). The phone (`MediaBridge`) follows
   its active media sessions, which needs Notification access, and sends them the same way;
   their artwork is saved under `media/` for the device page. A `call` ringing or answered
   pauses this PC's player if it plays; `idle` resumes it, only if a call paused it.

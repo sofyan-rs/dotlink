@@ -152,7 +152,8 @@ cargo run -p dotlink
   the desktop uses 8 px corners on controls and 12 px on cards (`RADIUS`, `CARD_RADIUS` in
   `gui/window.rs`), with dots and badges round. Colors live
   in `android/…/ui/theme/Color.kt` and `desktop/app/src/gui/theme.rs`; keep them in sync.
-  Icons are Lucide (Android: `DotlineIcons.kt`; desktop: `gui/assets.rs`).
+  Icons are Lucide (Android: `DotlineIcons.kt`; desktop: `gui/assets.rs`): use one for a
+  control rather than a text glyph such as ▶ or ⏮, which renders differently per font.
 
 ## Where things go
 

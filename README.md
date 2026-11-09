@@ -11,7 +11,7 @@ are supported, and so is macOS (the webcam goes through OBS).
 |---|---|---|
 | **Files** | Share → Dotlink, or **Send** in the app | Drop files on the window, the tray's *Send files…*, right-click → *Share with Dotlink* (Windows) or *Quick Actions → Dotlink: …* (macOS), or `dotlink send` |
 | **Clipboard** | When you open the app, or the notification's *Send clipboard* | Automatic (turn it off per phone: **Clipboard sync** on its page) |
-| **Remote** | The phone as touchpad and keyboard, or a slide clicker (**Presenter**: Next / Previous, the volume keys too, End, Black, a timer) | |
+| **Remote** | The phone as touchpad and keyboard (pointer speed in the phone's Settings; full screen in landscape), or a slide clicker (**Presenter**: Next / Previous, the volume keys too, End, Black, a timer) | |
 | **Shell** | A terminal on the PC; the session survives reconnects | |
 | **Webcam** | The phone camera as **Dotlink Camera** in any app (calls, browsers, OBS) | |
 | **Microphone** | The phone mic as a microphone on the PC | |
@@ -19,7 +19,7 @@ are supported, and so is macOS (the webcam goes through OBS).
 | **Links** | Share a link → Dotlink: it opens in the PC's browser | *Open copied link* (tray or the phone's page), or `dotlink open <url>` |
 | **Notifications** | The phone's notifications show on the PC with Dismiss; a verification code in one goes to the PC's clipboard (turn on **Show notifications on PC** in the phone's Settings) | |
 | **Browse files** | | The phone's storage on its page → **Files**: browse, download, drop files into a folder, rename, delete (turn on **Browse from PC** in the phone's Settings), or `dotlink ls` / `dotlink get` |
-| **Media** | The PC's player on the phone's home (title, artwork, play/pause, next, previous, volume); a call on the phone pauses it (**Pause PC media during calls** in the phone's Settings) | The phone's player on its page → **Now playing**, or `dotlink media <phone> toggle` |
+| **Media** | The PC's player on the phone's home (title, artwork, play/pause, next, previous; tap or drag the bar to seek; volume with a slider and mute); a call on the phone pauses it (**Pause PC media during calls** in the phone's Settings) | The phone's player on its page → **Now playing**, or `dotlink media <phone> toggle` |
 | **Ring** | | **Ring** in the phone's ⋯ menu, or `dotlink ring`: full volume, even on silent |
 | **Battery** | The phone's level on its page and in the sidebar | A laptop's level under its name in the phone app |
 
@@ -252,6 +252,8 @@ Forget a phone from its page, **⋯ → Forget** (or `dotlink unpair`), to cut i
 - Remote typing uses a US keyboard layout on Linux; on Windows and macOS any layout works (on
   macOS, letters in shortcuts such as ⌘C are the US keys' positions).
 - One phone at a time streams the webcam (or the mic).
+- macOS: the phone shows the Mac's player only for Spotify and Music. Since macOS 15.4 the
+  system's Now Playing doesn't answer other apps, so a browser playing YouTube isn't seen.
 - Windows: Windows 11 only; the mic needs VB-CABLE.
 - macOS: the webcam goes through OBS, which has to be running, and the mic through BlackHole
   (see Install). The app isn't signed with an Apple Developer ID, so macOS asks once before
