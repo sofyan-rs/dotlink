@@ -226,4 +226,9 @@ object MediaBridge {
         level?.let { msg.put("level", it.coerceIn(0, 100)) }
         DotlinkApp.link.sendControl(msg)
     }
+
+    /** Moves the PC's player to [ms] from the start. */
+    fun seekPc(ms: Long) {
+        DotlinkApp.link.sendControl(JSONObject().put("t", "media_cmd").put("cmd", "seek").put("ms", ms.coerceAtLeast(0)))
+    }
 }

@@ -31,7 +31,22 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Icon
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import kotlin.math.roundToInt
 import androidx.compose.material3.Text
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -327,27 +342,31 @@ private fun PcMediaCard(m: PcMedia) {
             }
         }
         if (m.durationMs > 0) {
+            // Where a finger on the bar points, kept after release until the PC's next state
+            // (new m) shows the seek, so the bar doesn't jump back meanwhile.
+            var seeking by remember(m) { mutableStateOf<Float?>(null) }
+            val shown = seeking?.let { (it * m.durationMs).toLong() } ?: position
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Dotline.space.s2),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = Dotline.space.s3),
             ) {
-                Text(time(position), style = Dotline.type.data, color = colors.inkMuted)
-                DotMeter(
-                    count = 20,
-                    lit = (position * 20 / m.durationMs).toInt(),
-                    contentDescription = "Position",
+                Text(time(shown), style = Dotline.type.data, color = if (seeking != null) colors.ink else colors.inkMuted)
+                WideDots(
+                    fraction = shown.toFloat() / m.durationMs,
+                    description = "Position",
                     modifier = Modifier.weight(1f),
+                    onPreview = { seeking = it },
+                    onSet = { MediaBridge.seekPc((it * m.durationMs).toLong()) },
                 )
                 Text(time(m.durationMs), style = Dotline.type.data, color = colors.inkMuted)
             }
         }
         Row(
-            horizontalArrangement = Arrangement.SpaceEvenly,
+            horizontalArrangement = Arrangement.spacedBy(Dotline.space.s5, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().padding(vertical = Dotline.space.s2),
         ) {
-            m.volume?.let { v -> MediaButton(DotlineIcons.VolumeDown, "Volume down") { MediaBridge.toPc("volume", v - 10) } }
             MediaButton(DotlineIcons.SkipBack, "Previous") { MediaBridge.toPc("prev") }
             MediaButton(
                 if (m.playing) DotlineIcons.Pause else DotlineIcons.Play,
@@ -355,7 +374,121 @@ private fun PcMediaCard(m: PcMedia) {
                 primary = true,
             ) { MediaBridge.toPc("toggle") }
             MediaButton(DotlineIcons.SkipForward, "Next") { MediaBridge.toPc("next") }
-            m.volume?.let { v -> MediaButton(DotlineIcons.VolumeUp, "Volume up") { MediaBridge.toPc("volume", v + 10) } }
+        }
+        m.volume?.let { v -> VolumeRow(v) }
+    }
+}
+
+/**
+ * The PC's volume: mute, down, the level, up. Mute sets 0 and remembers the level to go back to
+ * (the PC only has a level, no mute of its own); unmuting a PC already at 0 goes to 50.
+ */
+@Composable
+private fun VolumeRow(volume: Int) {
+    var before by rememberSaveable { mutableIntStateOf(0) }
+    val muted = volume == 0
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Dotline.space.s1),
+        modifier = Modifier.fillMaxWidth().padding(start = Dotline.space.s1, end = Dotline.space.s1, bottom = Dotline.space.s2),
+    ) {
+        MediaButton(if (muted) DotlineIcons.VolumeMute else DotlineIcons.Volume, if (muted) "Unmute" else "Mute", active = muted) {
+            if (muted) {
+                MediaBridge.toPc("volume", if (before > 0) before else 50)
+            } else {
+                before = volume
+                MediaBridge.toPc("volume", 0)
+            }
+        }
+        MediaButton(DotlineIcons.VolumeDown, "Volume down") { MediaBridge.toPc("volume", volume - 10) }
+        var setting by remember(volume) { mutableStateOf<Float?>(null) }
+        WideDots(
+            fraction = setting ?: (volume / 100f),
+            description = "Volume",
+            modifier = Modifier.weight(1f),
+            onPreview = { setting = it },
+            onSet = { MediaBridge.toPc("volume", (it * 100).roundToInt()) },
+        )
+        MediaButton(DotlineIcons.VolumeUp, "Volume up") { MediaBridge.toPc("volume", volume + 10) }
+    }
+}
+
+/**
+ * A level as dots across the whole width (DotMeter has a fixed count, so a fixed width). With
+ * [onSet] it is a slider: tap a spot, or drag along it, and [onSet] gets the level on release.
+ * [onPreview] follows the finger meanwhile (the caller shows it as [fraction]).
+ */
+@Composable
+private fun WideDots(
+    fraction: Float,
+    description: String,
+    modifier: Modifier,
+    onPreview: (Float?) -> Unit = {},
+    onSet: ((Float) -> Unit)? = null,
+) {
+    val lit = Dotline.colors.ink
+    // As DotMeter's unlit dots.
+    val unlit = Dotline.colors.lineStrong.copy(alpha = 0.5f)
+    val dot = Dotline.size.dot
+    val gap = Dotline.space.s1
+    val haptic = LocalHapticFeedback.current
+    val preview by rememberUpdatedState(onPreview)
+    val set by rememberUpdatedState(onSet)
+    val value = fraction.coerceIn(0f, 1f)
+    val input =
+        if (onSet == null) {
+            Modifier
+        } else {
+            Modifier
+                .pointerInput(Unit) {
+                    detectTapGestures { o ->
+                        val f = (o.x / size.width).coerceIn(0f, 1f)
+                        haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
+                        preview(f)
+                        set?.invoke(f)
+                    }
+                }.pointerInput(Unit) {
+                    var f = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { o ->
+                            f = (o.x / size.width).coerceIn(0f, 1f)
+                            preview(f)
+                        },
+                        onDragEnd = {
+                            haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
+                            set?.invoke(f)
+                        },
+                        onDragCancel = { preview(null) },
+                    ) { change, dx ->
+                        change.consume()
+                        f = (f + dx / size.width).coerceIn(0f, 1f)
+                        preview(f)
+                    }
+                }
+        }
+    Canvas(
+        modifier
+            // Taller than the dots when it's a slider, so they're easy to hit.
+            .height(if (onSet != null) 32.dp else dot)
+            .then(input)
+            .semantics {
+                contentDescription = description
+                progressBarRangeInfo = ProgressBarRangeInfo(value, 0f..1f)
+                if (onSet != null) {
+                    setProgress { target ->
+                        set?.invoke(target.coerceIn(0f, 1f))
+                        true
+                    }
+                }
+            },
+    ) {
+        val d = dot.toPx()
+        val count = ((size.width + gap.toPx()) / (d + gap.toPx())).toInt().coerceAtLeast(2)
+        // Spread so the last dot ends at the right edge.
+        val step = (size.width - d) / (count - 1)
+        val litCount = (value * count).roundToInt()
+        repeat(count) { i ->
+            drawCircle(if (i < litCount) lit else unlit, radius = d / 2, center = Offset(d / 2 + i * step, size.height / 2))
         }
     }
 }
@@ -366,6 +499,7 @@ private fun MediaButton(
     icon: ImageVector,
     contentDescription: String,
     primary: Boolean = false,
+    active: Boolean = false,
     onClick: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -375,7 +509,13 @@ private fun MediaButton(
             Modifier
                 .size(if (primary) 56.dp else 48.dp)
                 .clip(CircleShape)
-                .background(if (primary) colors.ink else Color.Transparent)
+                .background(
+                    when {
+                        primary -> colors.ink
+                        active -> colors.surfaceRaised
+                        else -> Color.Transparent
+                    },
+                )
                 .clickable(onClickLabel = contentDescription, role = Role.Button) {
                     haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
                     onClick()
@@ -385,7 +525,12 @@ private fun MediaButton(
         Icon(
             icon,
             contentDescription = contentDescription,
-            tint = if (primary) colors.onInk else colors.ink,
+            tint =
+                when {
+                    primary -> colors.onInk
+                    active -> colors.accentText
+                    else -> colors.ink
+                },
             modifier = Modifier.size(if (primary) 24.dp else 22.dp),
         )
     }

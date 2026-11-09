@@ -33,15 +33,17 @@ object DotlineIcons {
     /** Next track. Lucide: skip-forward. */
     val SkipForward: ImageVector by lazy { lineIcon("SkipForward", "M5 4l10 8-10 8V4zM19 5v14") }
 
-    /** Volume down. Lucide: volume-1. */
-    val VolumeDown: ImageVector by lazy {
-        lineIcon("VolumeDown", "M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6")
-    }
+    /** Sound on (tap to mute). Lucide: volume-2. */
+    val Volume: ImageVector by lazy { lineIcon("Volume", "$SPEAKER M16 9a5 5 0 0 1 0 6M19.364 18.364a9 9 0 0 0 0-12.728") }
 
-    /** Volume up. Lucide: volume-2. */
-    val VolumeUp: ImageVector by lazy {
-        lineIcon("VolumeUp", "M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6M19.364 18.364a9 9 0 0 0 0-12.728")
-    }
+    /** Muted. Lucide: volume-x. */
+    val VolumeMute: ImageVector by lazy { lineIcon("VolumeMute", "$SPEAKER M22 9l-6 6M16 9l6 6") }
+
+    /** Volume down. Lucide: volume, with a minus. */
+    val VolumeDown: ImageVector by lazy { lineIcon("VolumeDown", "$SPEAKER M15 12h6") }
+
+    /** Volume up. Lucide: volume, with a plus. */
+    val VolumeUp: ImageVector by lazy { lineIcon("VolumeUp", "$SPEAKER M15 12h6M18 9v6") }
 
     /** Back (top bars). Lucide: chevron-left. */
     val Back: ImageVector by lazy { lineIcon("Back", "M15 18l-6-6 6-6") }
@@ -349,6 +351,10 @@ object DotlineIcons {
  * Builds a stroked 24×24 icon from SVG path data. The stroke is black here; `Icon` tints it
  * with the colour you pass. `by lazy` above means each icon is built once, on first use.
  */
+/** Lucide volume's speaker, shared by the volume icons. */
+private const val SPEAKER =
+    "M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"
+
 private fun lineIcon(
     name: String,
     pathData: String,
