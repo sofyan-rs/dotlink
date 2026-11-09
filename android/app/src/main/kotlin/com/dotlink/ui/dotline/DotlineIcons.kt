@@ -19,6 +19,30 @@ import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
 
 object DotlineIcons {
+    /** Media play. Lucide: play. */
+    val Play: ImageVector by lazy { lineIcon("Play", "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z") }
+
+    /** Media pause. Lucide: pause. */
+    val Pause: ImageVector by lazy {
+        lineIcon("Pause", "M15 3h3a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM6 3h3a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z")
+    }
+
+    /** Previous track. Lucide: skip-back. */
+    val SkipBack: ImageVector by lazy { lineIcon("SkipBack", "M19 20L9 12l10-8v16zM5 19V5") }
+
+    /** Next track. Lucide: skip-forward. */
+    val SkipForward: ImageVector by lazy { lineIcon("SkipForward", "M5 4l10 8-10 8V4zM19 5v14") }
+
+    /** Volume down. Lucide: volume-1. */
+    val VolumeDown: ImageVector by lazy {
+        lineIcon("VolumeDown", "M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6")
+    }
+
+    /** Volume up. Lucide: volume-2. */
+    val VolumeUp: ImageVector by lazy {
+        lineIcon("VolumeUp", "M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6M19.364 18.364a9 9 0 0 0 0-12.728")
+    }
+
     /** Back (top bars). Lucide: chevron-left. */
     val Back: ImageVector by lazy { lineIcon("Back", "M15 18l-6-6 6-6") }
 

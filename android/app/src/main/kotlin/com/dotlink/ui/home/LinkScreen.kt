@@ -31,7 +31,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -318,49 +321,72 @@ private fun PcMediaCard(m: PcMedia) {
             Column(Modifier.weight(1f)) {
                 Text(m.title, style = Dotline.type.headline, color = colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (m.artist.isNotEmpty()) Text(m.artist, style = Dotline.type.bodyS, color = colors.inkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    m.player.uppercase() + if (m.durationMs > 0) " · ${time(position)} / ${time(m.durationMs)}" else "",
-                    style = Dotline.type.data,
-                    color = colors.inkFaint,
-                    maxLines = 1,
-                )
+                if (m.player.isNotEmpty()) {
+                    Text(m.player.uppercase(), style = Dotline.type.data, color = colors.inkFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         if (m.durationMs > 0) {
-            val lit = (position * 20 / m.durationMs).toInt()
-            DotMeter(count = 20, lit = lit, contentDescription = "Position", modifier = Modifier.padding(horizontal = Dotline.space.s3))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Dotline.space.s2),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Dotline.space.s3),
+            ) {
+                Text(time(position), style = Dotline.type.data, color = colors.inkMuted)
+                DotMeter(
+                    count = 20,
+                    lit = (position * 20 / m.durationMs).toInt(),
+                    contentDescription = "Position",
+                    modifier = Modifier.weight(1f),
+                )
+                Text(time(m.durationMs), style = Dotline.type.data, color = colors.inkMuted)
+            }
         }
         Row(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().padding(vertical = Dotline.space.s2),
         ) {
-            m.volume?.let { v -> MediaButton("VOL−") { MediaBridge.toPc("volume", v - 10) } }
-            MediaButton("⏮") { MediaBridge.toPc("prev") }
-            MediaButton(if (m.playing) "⏸" else "▶") { MediaBridge.toPc("toggle") }
-            MediaButton("⏭") { MediaBridge.toPc("next") }
-            m.volume?.let { v -> MediaButton("VOL+") { MediaBridge.toPc("volume", v + 10) } }
+            m.volume?.let { v -> MediaButton(DotlineIcons.VolumeDown, "Volume down") { MediaBridge.toPc("volume", v - 10) } }
+            MediaButton(DotlineIcons.SkipBack, "Previous") { MediaBridge.toPc("prev") }
+            MediaButton(
+                if (m.playing) DotlineIcons.Pause else DotlineIcons.Play,
+                if (m.playing) "Pause" else "Play",
+                primary = true,
+            ) { MediaBridge.toPc("toggle") }
+            MediaButton(DotlineIcons.SkipForward, "Next") { MediaBridge.toPc("next") }
+            m.volume?.let { v -> MediaButton(DotlineIcons.VolumeUp, "Volume up") { MediaBridge.toPc("volume", v + 10) } }
         }
     }
 }
 
+/** A round player control; the primary one (play/pause) is bigger and filled. */
 @Composable
 private fun MediaButton(
-    label: String,
+    icon: ImageVector,
+    contentDescription: String,
+    primary: Boolean = false,
     onClick: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
+    val colors = Dotline.colors
     Box(
         modifier =
             Modifier
-                .size(48.dp)
+                .size(if (primary) 56.dp else 48.dp)
                 .clip(CircleShape)
-                .clickable {
+                .background(if (primary) colors.ink else Color.Transparent)
+                .clickable(onClickLabel = contentDescription, role = Role.Button) {
                     haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
                     onClick()
                 },
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, style = Dotline.type.label, color = Dotline.colors.ink)
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = if (primary) colors.onInk else colors.ink,
+            modifier = Modifier.size(if (primary) 24.dp else 22.dp),
+        )
     }
 }
