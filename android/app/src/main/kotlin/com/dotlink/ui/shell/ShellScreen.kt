@@ -318,7 +318,7 @@ class TermController(
 @OptIn(ExperimentalLayoutApi::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun ShellScreen() {
+fun ShellScreen(onBack: (() -> Unit)? = null) {
     val link = DotlinkApp.link
     val state by link.state.collectAsStateWithLifecycle()
     val controller = remember { TermController(link) }
@@ -349,6 +349,7 @@ fun ShellScreen() {
     ) {
         ScreenTitle(
             title = "Shell",
+            onBack = onBack,
             subline = controller.status,
             sublineError = controller.statusError,
             actions = {

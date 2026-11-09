@@ -232,18 +232,21 @@ private fun DotlinkRoot(
                 val navTabs = tabs - PC_SCREENS
                 val navTab = if (tab in PC_SCREENS) MainTab.Link else tab
                 BackHandler(enabled = tab in PC_SCREENS) { chosen = MainTab.Link }
+                // Remote in landscape takes the whole screen (no rail): the touchpad needs the
+                // room. Its own Back button, or the system Back, returns to the PC tab.
+                val immersive = tab == MainTab.Remote && maxWidth > maxHeight
                 val screen: @Composable () -> Unit = {
                     when (tab) {
                         MainTab.Link -> LinkScreen(onOpenTab = { chosen = it }, onAddPc = { addingPc = true })
                         MainTab.Phones ->
                             PhonesScreen(onPairPhone = { pairingPhone = true }, onPairPc = if (pcPaired) null else ({ addingPc = true }))
-                        MainTab.Remote -> RemoteScreen()
-                        MainTab.Shell -> ShellScreen()
+                        MainTab.Remote -> RemoteScreen(landscape = immersive, onBack = { chosen = MainTab.Link })
+                        MainTab.Shell -> ShellScreen(onBack = { chosen = MainTab.Link })
                         MainTab.Camera -> CameraScreen()
                         MainTab.Settings -> SettingsScreen()
                     }
                 }
-                if (rail) {
+                if (rail && !immersive) {
                     // The rail stays with the keyboard open: it takes width, not height.
                     Row(Modifier.fillMaxSize()) {
                         NavRail(tabs = navTabs, selectedTab = navTab, onTabClick = { chosen = it })

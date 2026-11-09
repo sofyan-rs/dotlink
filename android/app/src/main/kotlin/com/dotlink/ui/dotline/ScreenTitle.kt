@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -55,6 +56,8 @@ private val TitleChevronSize = 20.dp
  * @param sublineError shows the subline in red (it is an error, e.g. "wrong terminal PIN").
  * @param status positive status after the subline with a dot in front, e.g. "Synced 2 min ago".
  * @param actions trailing icon buttons, usually [ScreenTitleAction]s.
+ * @param onBack shows a Back button before the title, when not `null`: for a screen opened
+ *   from another one (Remote and Shell, from the PC tab).
  */
 @Composable
 fun ScreenTitle(
@@ -66,6 +69,7 @@ fun ScreenTitle(
     sublineError: Boolean = false,
     status: String? = null,
     actions: @Composable RowScope.() -> Unit = {},
+    onBack: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier.fillMaxWidth().padding(horizontal = Dotline.space.s4),
@@ -76,13 +80,23 @@ fun ScreenTitle(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TitleText(
-                title = title,
-                onClick = onTitleClick,
-                clickLabel = titleClickLabel,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Dotline.space.s1),
                 // weight(1f, fill = false): take the space the actions leave, but no more.
                 modifier = Modifier.weight(1f, fill = false),
-            )
+            ) {
+                if (onBack != null) {
+                    // Pulled left so the arrow lines up with the screen margin, not its touch area.
+                    ScreenTitleAction(DotlineIcons.Back, contentDescription = "Back", onClick = onBack, modifier = Modifier.offset(x = -Dotline.space.s3))
+                }
+                TitleText(
+                    title = title,
+                    onClick = onTitleClick,
+                    clickLabel = titleClickLabel,
+                    modifier = if (onBack != null) Modifier.offset(x = -Dotline.space.s3) else Modifier,
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(Dotline.space.s1), content = actions)
         }
         if (subline != null || status != null) {

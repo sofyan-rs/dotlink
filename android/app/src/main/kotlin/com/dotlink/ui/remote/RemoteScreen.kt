@@ -28,6 +28,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.union
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -69,6 +76,7 @@ import com.dotlink.link.Link
 import com.dotlink.link.LinkState
 import com.dotlink.ui.dotline.DotlineIcons
 import com.dotlink.ui.dotline.ScreenTitle
+import com.dotlink.ui.dotline.ScreenTitleAction
 import com.dotlink.ui.dotline.SegmentOption
 import com.dotlink.ui.dotline.SegmentedControl
 import com.dotlink.ui.dotline.bottomNavHeight
@@ -153,9 +161,17 @@ private const val RESET_MS = 400L
 private const val TAP_MS = 250L
 private const val HOLD_MS = 450L
 
+/**
+ * @param landscape the whole screen in landscape, no tabs: a one-line header (Back, the mode,
+ *   the hint) instead of the title, so the touchpad gets the height.
+ * @param onBack back to the PC tab, from the header's Back button.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun RemoteScreen() {
+fun RemoteScreen(
+    landscape: Boolean = false,
+    onBack: () -> Unit = {},
+) {
     val link = DotlinkApp.link
     val state by link.state.collectAsStateWithLifecycle()
     val input = remember { InputChannel(link) }
@@ -189,34 +205,60 @@ fun RemoteScreen() {
     // Touchpad, or Presenter (slides).
     var presenter by rememberSaveable { mutableStateOf(false) }
     val imeVisible = WindowInsets.isImeVisible
+    val hint =
+        when {
+            state !is LinkState.Online -> "Not connected"
+            presenter -> "Start the slideshow on the PC · volume keys: next, previous"
+            else -> "Tap: click · two fingers: scroll · hold: drag"
+        }
+    val modes = listOf(SegmentOption("Touchpad"), SegmentOption("Presenter"))
+    // With no tabs under it in landscape, only the system bar's room is kept at the bottom.
+    val bottomRoom = if (landscape) Dotline.space.s2 else bottomNavHeight()
     Column(
         Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.statusBars)
-            .imePadding()
-            .padding(top = Dotline.space.s3),
-    ) {
-        ScreenTitle(
-            title = "Remote",
-            subline =
-                when {
-                    state !is LinkState.Online -> "Not connected"
-                    presenter -> "Start the slideshow on the PC · volume keys: next, previous"
-                    else -> "Tap: click · two fingers: scroll · hold: drag"
+            .then(
+                if (landscape) {
+                    Modifier.windowInsetsPadding(
+                        WindowInsets.navigationBars.union(WindowInsets.displayCutout).only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom),
+                    )
+                } else {
+                    Modifier
                 },
-        )
-        SegmentedControl(
-            options = listOf(SegmentOption("Touchpad"), SegmentOption("Presenter")),
-            selectedIndex = if (presenter) 1 else 0,
-            onSelect = { presenter = it == 1 },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = Dotline.space.s4, vertical = Dotline.space.s3),
-        )
+            ).imePadding()
+            .padding(top = if (landscape) Dotline.space.s1 else Dotline.space.s3),
+    ) {
+        if (landscape) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Dotline.space.s3),
+                modifier = Modifier.fillMaxWidth().padding(start = Dotline.space.s2, end = Dotline.space.s4, bottom = Dotline.space.s2),
+            ) {
+                ScreenTitleAction(DotlineIcons.Back, contentDescription = "Back", onClick = onBack)
+                SegmentedControl(
+                    options = modes,
+                    selectedIndex = if (presenter) 1 else 0,
+                    onSelect = { presenter = it == 1 },
+                    modifier = Modifier.width(320.dp),
+                )
+                Text(hint, style = Dotline.type.data, color = Dotline.colors.inkMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            }
+        } else {
+            ScreenTitle(title = "Remote", subline = hint, onBack = onBack)
+            SegmentedControl(
+                options = modes,
+                selectedIndex = if (presenter) 1 else 0,
+                onSelect = { presenter = it == 1 },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Dotline.space.s4, vertical = Dotline.space.s3),
+            )
+        }
         if (presenter) {
             Presenter(
                 onKey = input::key,
                 modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = Dotline.space.s4),
             )
-            Spacer(Modifier.height(bottomNavHeight()))
+            Spacer(Modifier.height(bottomRoom))
             return@Column
         }
         Touchpad(
@@ -246,8 +288,21 @@ fun RemoteScreen() {
             onKey = ::sendKey,
             keyboardField = { KeyboardToggle(onTyped = ::sendTyped, onKey = ::sendKey) },
         )
-        Spacer(Modifier.height(if (imeVisible) Dotline.space.s2 else bottomNavHeight()))
+        Spacer(Modifier.height(if (imeVisible) Dotline.space.s2 else bottomRoom))
     }
+}
+
+/** PC pixels per dp of finger travel, at speed 1 and no acceleration. */
+private const val POINTER_PX_PER_DP = 2.5f
+
+/**
+ * Pointer acceleration from the finger's speed (dp/ms): 1× while slow, for precise aiming,
+ * easing up to 2.5× for a fast flick across the screen. Smooth (a smoothstep), so the pointer
+ * never jumps when the speed crosses a threshold.
+ */
+private fun accel(v: Float): Float {
+    val t = ((v - 0.05f) / (1.5f - 0.05f)).coerceIn(0f, 1f)
+    return 1f + 1.5f * t * t * (3f - 2f * t)
 }
 
 @Composable
@@ -270,6 +325,7 @@ private fun Touchpad(
                         var maxPointers = 1
                         var travelled = 0f
                         var dragging = false
+                        var velocity = 0f
                         while (true) {
                             // Wake up at the hold deadline even if the finger doesn't move.
                             val wait = if (!dragging && maxPointers == 1 && travelled < slop) HOLD_MS - (System.currentTimeMillis() - start).coerceAtLeast(0) else Long.MAX_VALUE
@@ -290,9 +346,18 @@ private fun Touchpad(
                             delta /= pressed.size.toFloat()
                             travelled += hypot(delta.x, delta.y)
                             if (pressed.size == 1 && maxPointers == 1) {
-                                // Faster swipes move further (simple pointer acceleration).
-                                val accel = 1f + (abs(delta.x) + abs(delta.y)).coerceAtMost(40f) / 25f
-                                if (delta != Offset.Zero) input.move(delta.x * speed * accel, delta.y * speed * accel)
+                                val c = pressed[0]
+                                val dt = (c.uptimeMillis - c.previousUptimeMillis).coerceAtLeast(1L)
+                                // In dp, so the same swipe moves as far on any screen density.
+                                val dp = delta / density
+                                // Finger speed in dp/ms, smoothed: one event's distance swings
+                                // with the touch sampling, which made the gain (and the
+                                // pointer) jumpy.
+                                velocity = velocity * 0.6f + hypot(dp.x, dp.y) / dt * 0.4f
+                                if (delta != Offset.Zero) {
+                                    val gain = POINTER_PX_PER_DP * speed * accel(velocity)
+                                    input.move(dp.x * gain, dp.y * gain)
+                                }
                             } else if (pressed.size == 2 && delta != Offset.Zero) {
                                 // Natural scrolling, like a laptop touchpad.
                                 input.scroll(-delta.x * 2f, -delta.y * 2f)
