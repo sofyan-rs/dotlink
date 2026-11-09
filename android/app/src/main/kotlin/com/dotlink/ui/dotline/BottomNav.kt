@@ -4,7 +4,8 @@
  *
  * 5 tabs: LINK, REMOTE, SHELL, CAMERA, SETTINGS ([MainTab]). Styled after Nothing OS 5.0: a floating
  * pill (`navBar`) with icons only, floating over the screen. The active tab sits in a circle
- * (`navSelected`) that slides between tabs, and is `ink`; inactive tabs are `inkFaint`. The
+ * (`navSelected`) that slides between tabs (tap one, or drag along the pill), and is `ink`;
+ * inactive tabs are `inkFaint`. The
  * tab names are read out by TalkBack, not shown.
  *
  * Seen in: Main (2.1), Empty-Vault (1.3), Vaults (6.2), Git-Sync (7.1).
@@ -15,9 +16,6 @@
 package com.dotlink.ui.dotline
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -67,6 +65,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
+import kotlin.math.roundToInt
 import com.dotlink.ui.theme.Dotline
 import com.dotlink.ui.theme.DotlinkTheme
 
@@ -117,22 +117,22 @@ fun <T : BottomNavTab> BottomNav(
                 .padding(vertical = Dotline.space.s3),
         contentAlignment = Alignment.Center,
     ) {
-        // The active circle slides to the tapped tab (a spring, so it settles softly).
+        // The active circle slides to the tapped tab (a spring, so it settles softly), or follows
+        // a finger dragged along the pill and settles on the nearest tab.
         val selectedIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
-        val circleOffset by animateDpAsState(
-            targetValue = (ItemSize + ItemGap) * selectedIndex,
-            animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
-            label = "tabCircleOffset",
-        )
+        val step = with(LocalDensity.current) { (ItemSize + ItemGap).toPx() }
+        val slide = rememberSlideSelection(selectedIndex, step)
+        val highlighted = slide.highlighted(selectedIndex, step)
         Box(
             Modifier
                 .height(Dotline.size.tabBarHeight)
                 .background(Dotline.colors.navBar, Dotline.radius.pill)
+                .slideToSelect(slide, tabs.size, step, selectedIndex, onSelect = { onTabClick(tabs[it]) })
                 .padding(PillPadding),
         ) {
             Box(
                 Modifier
-                    .offset { IntOffset(circleOffset.roundToPx(), 0) }
+                    .offset { IntOffset(slide.offset.value.roundToInt(), 0) }
                     .size(ItemSize)
                     .background(Dotline.colors.navSelected, CircleShape),
             )
@@ -141,10 +141,11 @@ fun <T : BottomNavTab> BottomNav(
                 modifier = Modifier.selectableGroup(),
                 horizontalArrangement = Arrangement.spacedBy(ItemGap),
             ) {
-                tabs.forEach { tab ->
+                tabs.forEachIndexed { i, tab ->
                     BottomNavItem(
                         tab = tab,
                         selected = tab == selectedTab,
+                        lit = i == highlighted,
                         onClick = { onTabClick(tab) },
                     )
                 }
@@ -221,20 +222,19 @@ private fun <T : BottomNavTab> RailPill(
     onTabClick: (T) -> Unit,
 ) {
     val selectedIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
-    val circleOffset by animateDpAsState(
-        targetValue = (ItemSize + ItemGap) * selectedIndex,
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
-        label = "railCircleOffset",
-    )
+    val step = with(LocalDensity.current) { (ItemSize + ItemGap).toPx() }
+    val slide = rememberSlideSelection(selectedIndex, step)
+    val highlighted = slide.highlighted(selectedIndex, step)
     Box(
         Modifier
             .width(Dotline.size.tabBarHeight)
             .background(Dotline.colors.navBar, Dotline.radius.pill)
+            .slideToSelect(slide, tabs.size, step, selectedIndex, onSelect = { onTabClick(tabs[it]) }, vertical = true)
             .padding(PillPadding),
     ) {
         Box(
             Modifier
-                .offset { IntOffset(0, circleOffset.roundToPx()) }
+                .offset { IntOffset(0, slide.offset.value.roundToInt()) }
                 .size(ItemSize)
                 .background(Dotline.colors.navSelected, CircleShape),
         )
@@ -242,10 +242,11 @@ private fun <T : BottomNavTab> RailPill(
             modifier = Modifier.selectableGroup(),
             verticalArrangement = Arrangement.spacedBy(ItemGap),
         ) {
-            tabs.forEach { tab ->
+            tabs.forEachIndexed { i, tab ->
                 BottomNavItem(
                     tab = tab,
                     selected = tab == selectedTab,
+                    lit = i == highlighted,
                     onClick = { onTabClick(tab) },
                 )
             }
@@ -267,12 +268,14 @@ private val ItemGap = Dotline.space.s3
 private fun BottomNavItem(
     tab: BottomNavTab,
     selected: Boolean,
+    lit: Boolean,
     onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    // The icon colour fades while the circle slides under it.
+    // The icon colour fades while the circle slides under it (lit: the circle is on it, which
+    // while dragging may not be the selected tab yet).
     val iconColor by animateColorAsState(
-        targetValue = if (selected) Dotline.colors.ink else Dotline.colors.inkFaint,
+        targetValue = if (lit) Dotline.colors.ink else Dotline.colors.inkFaint,
         animationSpec = tween(DOTLINE_MOTION_MILLIS * 2),
         label = "tabIcon",
     )

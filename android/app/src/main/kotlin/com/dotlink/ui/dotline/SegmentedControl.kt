@@ -7,14 +7,11 @@
  * From the mockups: well = `surfaceRaised` pill with 4 dp padding and 4 dp between segments;
  * each segment is 40 dp tall (so the whole control is a 48 dp touch target), `label` text with
  * an optional 16 dp icon 6 dp before it. Selected = `ink` pill + `onInk` text, others
- * `inkMuted`. The pill slides to a newly selected segment.
+ * `inkMuted`. The pill slides to a newly selected segment, tapped or dragged to.
  */
 package com.dotlink.ui.dotline
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -50,6 +47,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
+import kotlin.math.roundToInt
 import com.dotlink.ui.theme.Dotline
 import com.dotlink.ui.theme.DotlinkTheme
 
@@ -100,33 +99,35 @@ fun SegmentedControl(
     ) {
         val count = options.size.coerceAtLeast(1)
         val segmentWidth = (maxWidth - WellPadding * (count - 1)) / count
-        // One `ink` pill slides under the selected segment (a spring, so it settles softly).
-        val pillOffset by animateDpAsState(
-            targetValue = (segmentWidth + WellPadding) * selectedIndex,
-            animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
-            label = "segmentPill",
-        )
-        Box(
-            Modifier
-                .offset { IntOffset(pillOffset.roundToPx(), 0) }
-                .width(segmentWidth)
-                .height(SegmentHeight)
-                .background(Dotline.colors.ink, Dotline.radius.pill),
-        )
-        Row(
-            modifier =
+        // One `ink` pill slides under the selected segment (a spring, so it settles softly), or
+        // follows a finger dragged along the well and settles on the nearest segment.
+        val step = with(LocalDensity.current) { (segmentWidth + WellPadding).toPx() }
+        val slide = rememberSlideSelection(selectedIndex, step)
+        val highlighted = slide.highlighted(selectedIndex, step)
+        Box(Modifier.fillMaxWidth().slideToSelect(slide, options.size, step, selectedIndex, onSelect)) {
+            Box(
                 Modifier
-                    .fillMaxWidth()
-                    // Tells accessibility services that these segments belong together (one choice).
-                    .selectableGroup(),
-            horizontalArrangement = Arrangement.spacedBy(WellPadding),
-        ) {
-            options.forEachIndexed { index, option ->
-                Segment(
-                    option = option,
-                    selected = index == selectedIndex,
-                    onClick = { onSelect(index) },
-                )
+                    .offset { IntOffset(slide.offset.value.roundToInt(), 0) }
+                    .width(segmentWidth)
+                    .height(SegmentHeight)
+                    .background(Dotline.colors.ink, Dotline.radius.pill),
+            )
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        // Tells accessibility services that these segments belong together (one choice).
+                        .selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(WellPadding),
+            ) {
+                options.forEachIndexed { index, option ->
+                    Segment(
+                        option = option,
+                        selected = index == selectedIndex,
+                        lit = index == highlighted,
+                        onClick = { onSelect(index) },
+                    )
+                }
             }
         }
     }
@@ -137,14 +138,16 @@ fun SegmentedControl(
 private fun RowScope.Segment(
     option: SegmentOption,
     selected: Boolean,
+    lit: Boolean,
     onClick: () -> Unit,
 ) {
     val colors = Dotline.colors
     val shape = Dotline.radius.pill
     val interactionSource = remember { MutableInteractionSource() }
-    // animate*AsState smoothly moves to the new colour while the pill slides under the segment.
+    // animate*AsState smoothly moves to the new colour while the pill slides under the segment
+    // (lit: the pill is on it, which while dragging may not be the selected one yet).
     val content by animateColorAsState(
-        targetValue = if (selected) colors.onInk else colors.inkMuted,
+        targetValue = if (lit) colors.onInk else colors.inkMuted,
         animationSpec = tween(DOTLINE_MOTION_MILLIS * 2),
         label = "segmentContent",
     )
