@@ -13,6 +13,17 @@ fn session() -> windows::core::Result<Session> {
     Manager::RequestAsync()?.join()?.GetCurrentSession()
 }
 
+/// A readable name from the app's id: "Spotify.exe" is "Spotify", a packaged app keeps what
+/// follows its '!', and Chromium browsers drop their per-profile hash ("Brave.D2CTQWOE…" is "Brave").
+fn player_name(app: &str) -> String {
+    let name = app.trim_end_matches(".exe").rsplit(['!', '\\']).next().unwrap_or(app);
+    match name.split_once('.') {
+        Some((head, hash)) if hash.len() >= 16 && hash.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) => head,
+        _ => name,
+    }
+    .to_string()
+}
+
 /// TimeSpan counts 100 ns ticks.
 fn ms(ticks: i64) -> u64 {
     (ticks.max(0) / 10_000) as u64
@@ -32,9 +43,8 @@ pub fn now_playing() -> Option<NowPlaying> {
     }
     // "Spotify.exe", or a long id for packaged apps ("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic").
     let app = s.SourceAppUserModelId().map(|id| id.to_string()).unwrap_or_default();
-    let player = app.trim_end_matches(".exe").rsplit(['!', '\\']).next().unwrap_or(&app).to_string();
     Some(NowPlaying {
-        player,
+        player: player_name(&app),
         title,
         artist: props.Artist().map(|a| a.to_string()).unwrap_or_default(),
         album: props.AlbumTitle().map(|a| a.to_string()).unwrap_or_default(),
@@ -93,4 +103,17 @@ pub fn media_command(cmd: &MediaCmd) -> Result<()> {
         bail!("the player didn't take it");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::player_name;
+
+    #[test]
+    fn names() {
+        assert_eq!(player_name("Spotify.exe"), "Spotify");
+        assert_eq!(player_name("Brave.D2CTQWOECYNWZMLLP2W6JUKFYE"), "Brave");
+        assert_eq!(player_name("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic"), "Microsoft.ZuneMusic");
+        assert_eq!(player_name("Chrome"), "Chrome");
+    }
 }
