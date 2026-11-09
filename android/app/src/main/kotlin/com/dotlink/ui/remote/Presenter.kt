@@ -20,7 +20,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import com.dotlink.ui.dotline.DotlineIcons
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -76,8 +81,8 @@ internal fun Presenter(
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(Dotline.space.s2)) {
         Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Dotline.space.s2)) {
-            Zone("◀\nPREVIOUS", Modifier.weight(1f), onClick = prev)
-            Zone("NEXT\n▶", Modifier.weight(2f), primary = true, onClick = next)
+            Zone("Previous", DotlineIcons.Back, Modifier.weight(1f), onClick = prev)
+            Zone("Next", DotlineIcons.ChevronRight, Modifier.weight(2f), primary = true, onClick = next)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Dotline.space.s2)) {
             Chip("END", Modifier.weight(1f), onClick = { onKey("ESC") })
@@ -91,20 +96,24 @@ internal fun Presenter(
 @Composable
 private fun Zone(
     label: String,
+    icon: ImageVector,
     modifier: Modifier,
     primary: Boolean = false,
     onClick: () -> Unit,
 ) {
     val colors = Dotline.colors
-    Box(
+    val tint = if (primary) colors.ink else colors.inkMuted
+    Column(
         modifier
             .fillMaxHeight()
             .clip(Dotline.radius.l)
             .background(if (primary) colors.surfaceRaised else colors.surface)
-            .combinedClickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+            .combinedClickable(onClickLabel = label, role = Role.Button, onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(Dotline.space.s2, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(label, style = Dotline.type.label, color = if (primary) colors.ink else colors.inkMuted, textAlign = TextAlign.Center)
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(if (primary) 48.dp else 36.dp))
+        Text(label.uppercase(), style = Dotline.type.label, color = tint, textAlign = TextAlign.Center)
     }
 }
 
