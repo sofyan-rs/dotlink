@@ -293,11 +293,17 @@ pub fn paste_pressed(app: &Arc<App>) {
             return;
         }
         i.paste = true;
-        if i.state == Fetch::Running {
+        // Waiting for a big copy says so: a paste that does nothing for a while looks broken.
+        if i.state != Fetch::Done {
             let keys = if cfg!(target_os = "macos") { "⌘V" } else { "Ctrl+V" };
             platform::notify(
                 "Pasting soon",
-                &format!("Getting the files copied on {}… {keys} again pastes without waiting.", i.from_name),
+                &format!(
+                    "Getting {} ({}) from {}; it pastes when it's here. {keys} again pastes without waiting.",
+                    describe(&i.items),
+                    megabytes(i.total),
+                    i.from_name
+                ),
             );
         }
         i.state
@@ -396,6 +402,20 @@ async fn fetch_one(app: &Arc<App>, from: &str, item: &Item, name: &str, dir: &Pa
         Ok(Err(_)) => anyhow::bail!("cancelled"),
         Err(_) => anyhow::bail!("{} didn't send {name}", pc_name(app, from)),
     }
+}
+
+/// "photo.jpg", or "3 files" / "Photos and 2 more".
+fn describe(items: &[Item]) -> String {
+    let top: Vec<&str> = items.iter().map(|i| i.path.as_str()).filter(|p| !p.contains('/')).collect();
+    match top.as_slice() {
+        [one] => one.to_string(),
+        [first, rest @ ..] => format!("{first} and {} more", rest.len()),
+        [] => "the files".into(),
+    }
+}
+
+fn megabytes(bytes: u64) -> String {
+    if bytes < 1 << 20 { format!("{} KB", bytes.div_ceil(1 << 10)) } else { format!("{:.0} MB", bytes as f64 / (1 << 20) as f64) }
 }
 
 /// `a/b/c` with each part a plain name; None for `..`, absolute paths and the like. Characters
