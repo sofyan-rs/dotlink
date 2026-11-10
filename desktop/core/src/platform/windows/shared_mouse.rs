@@ -101,13 +101,14 @@ fn run(out: UnboundedSender<Out>, rx: std_mpsc::Receiver<Cmd>, ready: std_mpsc::
         // The hooks are called from inside GetMessageW.
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             if msg.message == WM_WAKE {
-                while let Ok(cmd) = rx.try_recv() {
-                    STATE.with(|s| {
-                        if let Some(state) = s.borrow_mut().as_mut() {
+                let cmds = merge(rx.try_iter().collect());
+                STATE.with(|s| {
+                    if let Some(state) = s.borrow_mut().as_mut() {
+                        for cmd in cmds {
                             state.command(cmd);
                         }
-                    });
-                }
+                    }
+                });
             }
         }
         STATE.with(|s| {
@@ -119,6 +120,29 @@ fn run(out: UnboundedSender<Out>, rx: std_mpsc::Receiver<Cmd>, ready: std_mpsc::
         UnhookWindowsHookEx(mouse);
         UnhookWindowsHookEx(keys);
     }
+}
+
+/// Motion and scrolling that piled up (the hooks kept the thread busy) go as one move and one
+/// scroll: each SendInput is a redraw in the app under the pointer.
+fn merge(cmds: Vec<Cmd>) -> Vec<Cmd> {
+    let mut out: Vec<Cmd> = Vec::with_capacity(cmds.len());
+    for cmd in cmds {
+        if let (Some(Cmd::Input { from: last_from, msg: last }), Cmd::Input { from, msg }) = (out.last_mut(), &cmd)
+            && last_from == from
+        {
+            match (last, msg) {
+                (MouseMsg::Move { x, y }, MouseMsg::Move { x: dx, y: dy })
+                | (MouseMsg::Wheel { x, y }, MouseMsg::Wheel { x: dx, y: dy }) => {
+                    *x += dx;
+                    *y += dy;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        out.push(cmd);
+    }
+    out
 }
 
 unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -653,5 +677,44 @@ fn key(sc: u16, down: bool) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: 0, wScan: sc & 0xff, dwFlags: flags, time: 0, dwExtraInfo: 0 } },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(from: &str, msg: MouseMsg) -> Cmd {
+        Cmd::Input { from: from.into(), msg }
+    }
+
+    #[test]
+    fn piled_up_motion_and_scrolling_merge() {
+        let merged = merge(vec![
+            input("a", MouseMsg::Move { x: 1, y: 2 }),
+            input("a", MouseMsg::Move { x: 3, y: -1 }),
+            input("a", MouseMsg::Wheel { x: 0, y: 6 }),
+            input("a", MouseMsg::Wheel { x: 0, y: 9 }),
+            input("a", MouseMsg::Btn { b: 0, down: true }),
+            input("a", MouseMsg::Move { x: 1, y: 0 }),
+            input("b", MouseMsg::Move { x: 5, y: 5 }),
+        ]);
+        let msgs: Vec<(String, MouseMsg)> = merged
+            .into_iter()
+            .map(|c| match c {
+                Cmd::Input { from, msg } => (from, msg),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(
+            msgs,
+            [
+                ("a".into(), MouseMsg::Move { x: 4, y: 1 }),
+                ("a".into(), MouseMsg::Wheel { x: 0, y: 15 }),
+                ("a".into(), MouseMsg::Btn { b: 0, down: true }),
+                ("a".into(), MouseMsg::Move { x: 1, y: 0 }),
+                ("b".into(), MouseMsg::Move { x: 5, y: 5 }),
+            ]
+        );
     }
 }

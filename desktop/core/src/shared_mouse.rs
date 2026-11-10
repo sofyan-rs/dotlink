@@ -53,6 +53,9 @@ pub enum MouseMsg {
     Stop,
 }
 
+/// How long scroll steps are gathered into one ([forward]).
+const WHEEL_BATCH: std::time::Duration = std::time::Duration::from_millis(12);
+
 /// What the platform part tells.
 #[derive(Debug)]
 pub enum Out {
@@ -169,6 +172,26 @@ async fn forward(app: Arc<App>, mut rx: mpsc::UnboundedReceiver<Out>) {
                 continue;
             }
         };
+        // A trackpad scrolls in many tiny steps, momentum included (about 120 a second from a
+        // Mac's). Each one played as a wheel event of its own starts its own smooth-scroll
+        // animation in Windows apps, and together they lag: the steps of a few milliseconds go
+        // as one.
+        if let MouseMsg::Wheel { x, y } = &mut msg {
+            let until = tokio::time::Instant::now() + WHEEL_BATCH;
+            loop {
+                match tokio::time::timeout_at(until, rx.recv()).await {
+                    Ok(Some(Out::Mouse(other, MouseMsg::Wheel { x: dx, y: dy }))) if other == id => {
+                        *x += dx;
+                        *y += dy;
+                    }
+                    Ok(Some(out)) => {
+                        next = Some(out);
+                        break;
+                    }
+                    Ok(None) | Err(_) => break,
+                }
+            }
+        }
         if let MouseMsg::Move { x, y } = &mut msg {
             while let Ok(out) = rx.try_recv() {
                 match out {
