@@ -33,6 +33,8 @@ use tokio::sync::oneshot;
 const EAGER_LIMIT: u64 = 64 << 20;
 /// Copies up to this size come when the pointer comes over; bigger ones wait for a paste.
 const ARRIVAL_LIMIT: u64 = 2 << 30;
+/// Copies bigger than this say when they start coming and when they're here.
+const NOTIFY_LIMIT: u64 = 16 << 20;
 /// No copy lists more than this many files and folders (a folder like node_modules).
 const MAX_ITEMS: usize = 10_000;
 /// How long one file may take.
@@ -317,11 +319,18 @@ pub fn paste_pressed(app: &Arc<App>) {
 
 /// Gets the files copied on another PC into a temporary folder and puts them on the clipboard.
 fn fetch(app: &Arc<App>) {
-    let (set, from, from_name, items) = {
+    let (set, from, from_name, items, total) = {
         let mut incoming = app.clip_files.incoming.lock().unwrap();
         let Some(i) = incoming.as_mut().filter(|i| i.state == Fetch::Waiting) else { return };
         i.state = Fetch::Running;
-        (i.set.clone(), i.from.clone(), i.from_name.clone(), i.items.clone())
+        // A big copy takes a while: say it's coming (a paste waiting for it says so itself).
+        if i.total > NOTIFY_LIMIT && !i.paste {
+            platform::notify(
+                &format!("Copying from {}", i.from_name),
+                &format!("{} ({}): it can be pasted once it's here. Progress in Dotlink → Activity.", describe(&i.items), megabytes(i.total)),
+            );
+        }
+        (i.set.clone(), i.from.clone(), i.from_name.clone(), i.items.clone(), i.total)
     };
     // A paste from now on waits for them.
     app.mouse.arm_paste(true);
@@ -339,6 +348,9 @@ fn fetch(app: &Arc<App>) {
                 app.mouse.arm_paste(false);
                 if paste {
                     app.mouse.paste();
+                } else if total > NOTIFY_LIMIT {
+                    let keys = if cfg!(target_os = "macos") { "⌘V" } else { "Ctrl+V" };
+                    platform::notify("Ready to paste", &format!("{} from {from_name}: {keys} pastes it.", describe(&items)));
                 }
             }
             Err(e) => {
