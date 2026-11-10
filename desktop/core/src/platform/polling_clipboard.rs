@@ -149,7 +149,7 @@ fn run(cmds: mpsc::Receiver<Cmd>) {
             Ok(Cmd::SetFiles(paths, reply)) => {
                 let result = cb.set().file_list(&paths).map_err(anyhow::Error::from);
                 if result.is_ok() {
-                    last_files = Some(paths);
+                    last_files = Some(canonical(&paths));
                 }
                 drop(reply.send(result));
             }
@@ -164,8 +164,10 @@ fn run(cmds: mpsc::Receiver<Cmd>) {
                     Err(_) => continue,
                 };
                 let first = last_files.is_none();
-                if last_files.as_ref() != Some(&files) {
-                    last_files = Some(files.clone());
+                // As written, not as read back: macOS reads /var/folders/… back as
+                // /private/var/folders/…, which would make our own write look like a copy.
+                if last_files.as_ref() != Some(&files) && last_files.as_ref() != Some(&canonical(&files)) {
+                    last_files = Some(canonical(&files));
                     if !first && !files.is_empty() && let Some(me) = SHARED.get() {
                         me.file_subscribers.lock().unwrap().retain(|s| s.send(files.clone()).is_ok());
                     }
@@ -188,6 +190,11 @@ fn run(cmds: mpsc::Receiver<Cmd>) {
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
+}
+
+/// The paths with links resolved, each as it is when it can't be.
+fn canonical(paths: &[PathBuf]) -> Vec<PathBuf> {
+    paths.iter().map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone())).collect()
 }
 
 /// Clipboard owner changes from the X server (XWayland on GNOME follows the Wayland clipboard).

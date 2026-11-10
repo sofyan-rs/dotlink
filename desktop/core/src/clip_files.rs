@@ -7,6 +7,7 @@
 //! - small copies (up to [EAGER_LIMIT]) come right away, so any paste works, menus included;
 //! - bigger ones when the shared mouse brings the pointer to this PC (up to [ARRIVAL_LIMIT]);
 //! - otherwise on paste: the shared mouse holds Ctrl+V / ⌘V while they come, then pastes.
+//!   Pressed again while waiting, it pastes what's on the clipboard right away.
 //!
 //! They land in a temporary folder and go on this PC's clipboard as files, so Explorer or
 //! Finder copies them from there. Without the shared mouse (Linux, or no permission) they
@@ -134,6 +135,12 @@ fn targets(app: &App) -> Vec<(String, String)> {
 /// Tells the linked PCs about files copied here.
 async fn offer(app: &Arc<App>, paths: Vec<PathBuf>) {
     tracing::debug!("copied files: {paths:?}");
+    // Files that came from another PC (just put on the clipboard, or copied again from where
+    // they wait): never offered back, else two PCs would pass them back and forth.
+    let root = std::fs::canonicalize(temp_root()).unwrap_or_else(|_| temp_root());
+    if paths.iter().all(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()).starts_with(&root)) {
+        return;
+    }
     let targets = targets(app);
     if targets.is_empty() {
         *app.clip_files.outgoing.lock().unwrap() = Outgoing::default();
@@ -277,9 +284,21 @@ pub fn paste_pressed(app: &Arc<App>) {
             app.mouse.paste();
             return;
         };
+        // Pressed again while waiting: no more waiting, it pastes what's there.
+        if i.paste && i.state == Fetch::Running {
+            i.paste = false;
+            drop(incoming);
+            app.mouse.arm_paste(false);
+            app.mouse.paste();
+            return;
+        }
         i.paste = true;
         if i.state == Fetch::Running {
-            platform::notify("Pasting soon", &format!("Getting the files copied on {}…", i.from_name));
+            let keys = if cfg!(target_os = "macos") { "⌘V" } else { "Ctrl+V" };
+            platform::notify(
+                "Pasting soon",
+                &format!("Getting the files copied on {}… {keys} again pastes without waiting.", i.from_name),
+            );
         }
         i.state
     };
