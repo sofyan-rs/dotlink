@@ -177,6 +177,17 @@ Two PCs can send each other files and the clipboard. On the first PC, open **Pai
 to it only with **Clipboard sync** on for that PC (`dotlink clip-auto <pc> on`); **Send clipboard**
 works either way. A laptop's battery shows there too.
 
+**Shared mouse** (Windows and macOS): one mouse and keyboard for both. On the PC's page, under
+**Mouse & keyboard**, pick where its screen is (left, right, above or below this one); the other
+PC is set to the opposite side by itself (`dotlink screen <pc> right`, `off` to stop). Push the
+pointer past that edge and it goes over, with the keyboard; push it back to return. Whichever
+PC's own mouse moves takes the pointer, so it works with the mouse plugged into either one.
+Keys go by their place on the keyboard, so each PC's own layout applies. Between a PC and a Mac,
+Ctrl and ⌘ trade places: Ctrl+C on the PC is ⌘C on the Mac and the other way round, and the
+Mac's Ctrl is the PC's Windows key. **Ctrl+Alt+Esc** (Ctrl+⌥+Esc on a Mac) brings a stuck
+pointer back. A Mac needs Dotlink allowed under **Accessibility** (as for the Remote), then a
+restart of Dotlink. Like the Remote, it can't reach administrator windows or the sign-in screen.
+
 ## Wi-Fi or USB
 
 Everything works over both:

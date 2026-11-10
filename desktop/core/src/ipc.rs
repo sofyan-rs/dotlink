@@ -222,6 +222,19 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
             let msg = result(crate::peer::join(&app, req["uri"].as_str().unwrap_or("")).await.map(|name| format!("linked to {name}")));
             w.write_all(reply(msg).as_bytes()).await?;
         }
+        "screen" => {
+            let side = req["side"].as_str().and_then(crate::config::ScreenSide::parse);
+            let msg = result(crate::shared_mouse::set_screen(&app, req["id"].as_str().unwrap_or(""), side).map(|name| match side {
+                Some(side) => format!("{name} is {} this PC's screen", match side {
+                    crate::config::ScreenSide::Left => "left of",
+                    crate::config::ScreenSide::Right => "right of",
+                    crate::config::ScreenSide::Above => "above",
+                    crate::config::ScreenSide::Below => "below",
+                }),
+                None => format!("the mouse is no longer shared with {name}"),
+            }));
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
         "clipboard_auto" => {
             let on = req["on"].as_bool().unwrap_or(false);
             let msg = result(app.set_clipboard_auto(req["id"].as_str().unwrap_or(""), on).map(|name| {

@@ -53,6 +53,13 @@ pub struct DeviceInfo {
     /// A PC: gets this PC's clipboard changes as they happen.
     #[serde(default)]
     pub clipboard_auto: bool,
+    /// A PC: where its screen is next to this one's for the shared mouse ("left", "right",
+    /// "above", "below"); None: not shared.
+    #[serde(default)]
+    pub screen: Option<String>,
+    /// A PC: its Dotlink takes part in the shared mouse (as it said when it last connected).
+    #[serde(default)]
+    pub shared_mouse: bool,
     pub online: bool,
     pub paired_at: u64,
     /// Connected through the USB cable rather than Wi-Fi.
@@ -271,6 +278,12 @@ impl Client {
     /// Names the device `id` on this PC.
     pub fn rename(&self, id: &str, name: &str) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "rename", "id": id, "name": name })))
+    }
+
+    /// Places a linked PC's screen next to this one's for the shared mouse (`side`: "left",
+    /// "right", "above", "below"), or stops sharing it (None).
+    pub fn screen(&self, id: &str, side: Option<&str>) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "screen", "id": id, "side": side })))
     }
 
     /// Sends this PC's clipboard changes to a linked PC as they happen, or stops.

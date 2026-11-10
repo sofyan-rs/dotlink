@@ -876,6 +876,22 @@ impl Model {
         .detach();
     }
 
+    /// Shared mouse: where a linked PC's screen is (None: not shared).
+    pub fn set_screen(&mut self, id: String, side: Option<&'static str>, cx: &mut Context<Self>) {
+        let call = self.client.screen(&id, side);
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| {
+                if let Err(e) = result {
+                    this.notice(capitalize(&format!("{e:#}")), true, cx);
+                }
+                this.refresh(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     pub fn set_clipboard_auto(&mut self, id: String, on: bool, cx: &mut Context<Self>) {
         let call = self.client.clipboard_auto(&id, on);
         cx.spawn(async move |this, cx| {

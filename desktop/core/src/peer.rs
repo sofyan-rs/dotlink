@@ -65,8 +65,13 @@ impl Peers {
 
     /// Sends a control message; false when not connected.
     pub fn send(&self, id: &str, msg: &Value) -> bool {
+        self.send_text(id, msg.to_string())
+    }
+
+    /// Sends a control message already in JSON; false when not connected.
+    pub fn send_text(&self, id: &str, text: String) -> bool {
         let links = self.links.lock().unwrap();
-        links.get(id).and_then(|l| l.tx.as_ref()).is_some_and(|tx| tx.send(msg.to_string()).is_ok())
+        links.get(id).and_then(|l| l.tx.as_ref()).is_some_and(|tx| tx.send(text).is_ok())
     }
 
     pub fn battery(&self, id: &str) -> Option<(u8, bool)> {
@@ -222,6 +227,7 @@ fn save_peer(app: &Arc<App>, id: &str, name: &str, fingerprint: &str, addr: Sock
             paired_at: now_secs(),
             clipboard_auto: false,
             renamed: false,
+            screen: None,
         });
         state.save()?;
     }
@@ -428,7 +434,7 @@ async fn session(app: &Arc<App>, peer: &Peer) -> Result<()> {
     app.peers.set_online(&peer.id, Some(out_tx), Some(addr));
     app.emit(Event::Devices);
     tracing::info!("linked to {} at {addr}", peer.name);
-    let info = json!({ "t": "info", "kind": "pc", "name": app.name(), "os": std::env::consts::OS });
+    let info = json!({ "t": "info", "kind": "pc", "name": app.name(), "os": std::env::consts::OS, "mouse": app.mouse.running() });
     tx.send(Message::text(info.to_string())).await?;
     if let Some(battery) = app.battery_msg() {
         tx.send(Message::text(battery.to_string())).await?;
@@ -465,8 +471,12 @@ async fn session(app: &Arc<App>, peer: &Peer) -> Result<()> {
 
 /// A control message from the other PC.
 async fn handle(app: &Arc<App>, peer: &Peer, addr: SocketAddr, v: Value) {
+    if crate::shared_mouse::handle(app, &peer.id, &v) {
+        return;
+    }
     match v["t"].as_str() {
         Some("hello") => {
+            crate::shared_mouse::set_capable(app, &peer.id, v["mouse"] == true);
             if let Some(name) = v["name"].as_str() {
                 rename(app, &peer.id, name);
             }

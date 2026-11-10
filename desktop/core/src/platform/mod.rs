@@ -11,6 +11,7 @@
 //! | `open_url(url)` | open a web link in the default browser |
 //! | `clipboard::{watch, get, set}` | clipboard text, and pushing changes to the phone |
 //! | `Input` | virtual mouse and keyboard for the Remote screen |
+//! | `shared_mouse::SharedMouse` | one mouse and keyboard across linked PCs (`crate::shared_mouse`) |
 //! | `CameraHub`, `find_camera` | phone camera as a webcam |
 //! | `MicSink` | phone mic as a microphone |
 //! | `default_shell()`, `process_name(pid)` | the Shell screen |
@@ -38,6 +39,26 @@ pub use windows::*;
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::*;
+
+/// Shared mouse: not yet on Linux (Windows and macOS: `<os>/shared_mouse.rs`).
+#[cfg(target_os = "linux")]
+pub mod shared_mouse {
+    use crate::shared_mouse::{Cmd, MouseMsg};
+    use anyhow::{Result, bail};
+    use tokio::sync::mpsc::UnboundedSender;
+
+    pub struct SharedMouse;
+
+    impl SharedMouse {
+        pub fn start(_out: UnboundedSender<(String, MouseMsg)>) -> Result<Self> {
+            bail!("not supported on this OS yet")
+        }
+
+        pub fn send(&self, _cmd: Cmd) {}
+
+        pub fn stop(&self) {}
+    }
+}
 
 /// Clipboard through `arboard`, polled. Used by Linux X11 sessions, and a starting point for
 /// Windows and macOS.

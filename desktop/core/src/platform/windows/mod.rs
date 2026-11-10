@@ -8,6 +8,7 @@ mod media;
 mod player;
 pub mod setup;
 pub mod share_menu;
+pub mod shared_mouse;
 
 pub(crate) use super::polling_clipboard as clipboard;
 pub use camera::{CameraHub, find_camera};

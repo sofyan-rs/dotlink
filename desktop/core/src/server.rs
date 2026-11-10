@@ -157,6 +157,10 @@ pub struct App {
     revoked_tx: broadcast::Sender<String>,
     /// Device id → number of open control connections.
     online: Mutex<HashMap<String, usize>>,
+    /// PCs that joined this one, while connected: their control connection's own queue. The
+    /// shared mouse can't go through `control_tx`, which drops messages when a connection
+    /// falls behind (a lost key-up would leave a key held).
+    pc_tx: Mutex<HashMap<String, mpsc::UnboundedSender<String>>>,
     offers: Mutex<HashMap<String, Offer>>,
     last_clip: Mutex<String>,
     input: Mutex<Option<Input>>,
@@ -180,6 +184,8 @@ pub struct App {
     pub files: crate::files::PhoneFiles,
     /// Links to the PCs this one joined.
     pub peers: crate::peer::Peers,
+    /// One mouse and keyboard for this PC and the linked ones (`shared_mouse.rs`).
+    pub mouse: crate::shared_mouse::SharedMouse,
     /// Phone notifications shown here, by [notification_tag]: (device id, the phone's key).
     notifs: Mutex<HashMap<String, (String, String)>>,
     /// This PC's battery as last read (laptops): (percent, on power).
@@ -214,6 +220,7 @@ impl App {
             revoked_tx: broadcast::channel(16).0,
             adb_ports: broadcast::channel(16).0,
             online: Mutex::new(HashMap::new()),
+            pc_tx: Mutex::new(HashMap::new()),
             offers: Mutex::new(HashMap::new()),
             last_clip: Mutex::new(String::new()),
             input: Mutex::new(None),
@@ -227,6 +234,7 @@ impl App {
             files: Default::default(),
             media: Default::default(),
             peers: crate::peer::Peers::default(),
+            mouse: Default::default(),
             notifs: Mutex::new(HashMap::new()),
             battery: Mutex::new(platform::battery()),
             ui: Mutex::new(None),
@@ -246,7 +254,15 @@ impl App {
 
     fn hello(&self) -> Value {
         // `os` ("linux", "windows", "macos") lets the phone label the keys (Super, Win, Cmd).
-        json!({ "t": "hello", "name": self.name(), "terminal": self.config().terminal, "os": std::env::consts::OS })
+        // `mouse`: this PC takes part in the shared mouse (a linked PC only sends it the pointer
+        // then).
+        json!({
+            "t": "hello",
+            "name": self.name(),
+            "terminal": self.config().terminal,
+            "os": std::env::consts::OS,
+            "mouse": self.mouse.running(),
+        })
     }
 
     /// Saves and applies a new config. Returns true when some of it applies only after a
@@ -332,6 +348,8 @@ impl App {
                     "sdk": phones.get(&d.id).map(|p| p.sdk),
                     "sensitive_notifications": phones.get(&d.id).map(|p| p.sensitive_notifications),
                     "media": phones.get(&d.id).and_then(|p| p.media.clone()).filter(|_| online.get(&d.id).copied().unwrap_or(0) > 0),
+                    "screen": d.screen,
+                    "shared_mouse": self.mouse.capable(&d.id),
                 })
             })
             .chain(state.peers.iter().map(|p| {
@@ -345,6 +363,8 @@ impl App {
                     // This PC joined it (rather than it joining this PC).
                     "joined": true,
                     "clipboard_auto": p.clipboard_auto,
+                    "screen": p.screen,
+                    "shared_mouse": self.mouse.capable(&p.id),
                     "battery": self.peers.battery(&p.id).map(|(level, charging)| json!({ "level": level, "charging": charging })),
                 })
             }))
@@ -852,6 +872,20 @@ impl App {
         let _ = self.control_tx.send((device.map(str::to_string), msg.to_string()));
     }
 
+    /// Sends a JSON message to a linked PC, whichever of the two joined the other. False when
+    /// it isn't connected.
+    pub fn send_to_pc(&self, id: &str, text: String) -> bool {
+        if self.peers.online(id) {
+            return self.peers.send_text(id, text);
+        }
+        self.pc_tx.lock().unwrap().get(id).is_some_and(|tx| tx.send(text).is_ok())
+    }
+
+    /// Whether a PC that joined this one is connected.
+    pub fn pc_connected(&self, id: &str) -> bool {
+        self.pc_tx.lock().unwrap().contains_key(id)
+    }
+
     /// The phones connected right now (not PCs).
     fn online_phones(&self) -> Vec<String> {
         let online = self.online.lock().unwrap();
@@ -1166,6 +1200,7 @@ fn add_device(app: &App, id: &str, name: &str, kind: DeviceKind, done: Option<on
             renamed: false,
             notifications: None,
             copy_codes: None,
+            screen: None,
             token_sha256: sha256_hex(token.as_bytes()),
             paired_at: now_secs(),
         });
@@ -1374,6 +1409,10 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
             phone.ip = Some(ip);
         }
     }
+    let (pc_tx, mut pc_rx) = mpsc::unbounded_channel::<String>();
+    if dev.kind == DeviceKind::Pc {
+        app.pc_tx.lock().unwrap().insert(dev.id.clone(), pc_tx.clone());
+    }
     *app.online.lock().unwrap().entry(dev.id.clone()).or_default() += 1;
     app.emit(Event::Devices);
     tracing::info!("{} connected{}", dev.name, if usb { " over USB" } else { "" });
@@ -1397,6 +1436,7 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                 Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(_) => break,
             },
+            Some(text) = pc_rx.recv() => if tx.send(Message::Text(text.into())).await.is_err() { break },
             ev = events.recv() => match ev {
                 Ok((Some(to), _)) if to != dev.id => continue,
                 Ok((_, text)) => if tx.send(Message::Text(text.into())).await.is_err() { break },
@@ -1406,8 +1446,14 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
             msg = rx.next() => match msg {
                 Some(Ok(Message::Text(text))) => {
                     let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
+                    if dev.kind == DeviceKind::Pc && crate::shared_mouse::handle(&app, &dev.id, &v) {
+                        continue;
+                    }
                     // The phone can't start the camera/mic from the background: it asks the
                     // user with a notification and tells us so.
+                    if v["t"] == "info" && dev.kind == DeviceKind::Pc {
+                        crate::shared_mouse::set_capable(&app, &dev.id, v["mouse"] == true);
+                    }
                     if v["t"] == "info" {
                         let mut phones = app.phones.lock().unwrap();
                         let info = phones.entry(dev.id.clone()).or_default();
@@ -1493,6 +1539,13 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
                 Some(Ok(_)) => {}
                 _ => break,
             }
+        }
+    }
+    {
+        // A newer connection of the same PC may have replaced it already.
+        let mut pcs = app.pc_tx.lock().unwrap();
+        if pcs.get(&dev.id).is_some_and(|t| t.same_channel(&pc_tx)) {
+            pcs.remove(&dev.id);
         }
     }
     let gone = app.online.lock().unwrap().get_mut(&dev.id).is_some_and(|n| {

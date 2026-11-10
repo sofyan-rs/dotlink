@@ -12,32 +12,32 @@ use anyhow::{Result, bail};
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
 
-type CGEventRef = *mut c_void;
-type CFTypeRef = *const c_void;
+pub(super) type CGEventRef = *mut c_void;
+pub(super) type CFTypeRef = *const c_void;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct CGPoint {
-    x: f64,
-    y: f64,
+pub(super) struct CGPoint {
+    pub(super) x: f64,
+    pub(super) y: f64,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct CGRect {
-    origin: CGPoint,
-    size: CGPoint,
+pub(super) struct CGRect {
+    pub(super) origin: CGPoint,
+    pub(super) size: CGPoint,
 }
 
 impl CGRect {
-    fn contains(&self, p: CGPoint) -> bool {
+    pub(super) fn contains(&self, p: CGPoint) -> bool {
         p.x >= self.origin.x
             && p.y >= self.origin.y
             && p.x < self.origin.x + self.size.x
             && p.y < self.origin.y + self.size.y
     }
 
-    fn clamp(&self, p: CGPoint) -> CGPoint {
+    pub(super) fn clamp(&self, p: CGPoint) -> CGPoint {
         CGPoint {
             x: p.x.clamp(self.origin.x, self.origin.x + self.size.x - 1.),
             y: p.y.clamp(self.origin.y, self.origin.y + self.size.y - 1.),
@@ -48,9 +48,9 @@ impl CGRect {
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGEventCreate(source: *const c_void) -> CGEventRef;
-    fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
-    fn CGEventCreateMouseEvent(source: *const c_void, kind: u32, at: CGPoint, button: u32) -> CGEventRef;
-    fn CGEventCreateScrollWheelEvent2(
+    pub(super) fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
+    pub(super) fn CGEventCreateMouseEvent(source: *const c_void, kind: u32, at: CGPoint, button: u32) -> CGEventRef;
+    pub(super) fn CGEventCreateScrollWheelEvent2(
         source: *const c_void,
         units: u32,
         wheel_count: u32,
@@ -58,23 +58,23 @@ unsafe extern "C" {
         wheel2: i32,
         wheel3: i32,
     ) -> CGEventRef;
-    fn CGEventCreateKeyboardEvent(source: *const c_void, key: u16, down: bool) -> CGEventRef;
+    pub(super) fn CGEventCreateKeyboardEvent(source: *const c_void, key: u16, down: bool) -> CGEventRef;
     fn CGEventKeyboardSetUnicodeString(event: CGEventRef, len: usize, chars: *const u16);
-    fn CGEventSetFlags(event: CGEventRef, flags: u64);
-    fn CGEventSetIntegerValueField(event: CGEventRef, field: u32, value: i64);
+    pub(super) fn CGEventSetFlags(event: CGEventRef, flags: u64);
+    pub(super) fn CGEventSetIntegerValueField(event: CGEventRef, field: u32, value: i64);
     fn CGEventPost(tap: u32, event: CGEventRef);
-    fn CGGetActiveDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
-    fn CGDisplayBounds(display: u32) -> CGRect;
+    pub(super) fn CGGetActiveDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
+    pub(super) fn CGDisplayBounds(display: u32) -> CGRect;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
-    fn CFRelease(cf: CFTypeRef);
+    pub(super) fn CFRelease(cf: CFTypeRef);
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
-    static kCFBooleanTrue: CFTypeRef;
+    pub(super) static kCFBooleanTrue: CFTypeRef;
     static kCFTypeDictionaryKeyCallBacks: c_void;
     static kCFTypeDictionaryValueCallBacks: c_void;
     fn CFDictionaryCreate(
@@ -95,32 +95,32 @@ unsafe extern "C" {
 }
 
 // CGEventType
-const LEFT_DOWN: u32 = 1;
-const LEFT_UP: u32 = 2;
-const RIGHT_DOWN: u32 = 3;
-const RIGHT_UP: u32 = 4;
-const MOVED: u32 = 5;
-const LEFT_DRAGGED: u32 = 6;
-const RIGHT_DRAGGED: u32 = 7;
-const OTHER_DOWN: u32 = 25;
-const OTHER_UP: u32 = 26;
-const OTHER_DRAGGED: u32 = 27;
+pub(super) const LEFT_DOWN: u32 = 1;
+pub(super) const LEFT_UP: u32 = 2;
+pub(super) const RIGHT_DOWN: u32 = 3;
+pub(super) const RIGHT_UP: u32 = 4;
+pub(super) const MOVED: u32 = 5;
+pub(super) const LEFT_DRAGGED: u32 = 6;
+pub(super) const RIGHT_DRAGGED: u32 = 7;
+pub(super) const OTHER_DOWN: u32 = 25;
+pub(super) const OTHER_UP: u32 = 26;
+pub(super) const OTHER_DRAGGED: u32 = 27;
 // CGEventField
-const CLICK_STATE: u32 = 1;
-const DELTA_X: u32 = 4;
-const DELTA_Y: u32 = 5;
+pub(super) const CLICK_STATE: u32 = 1;
+pub(super) const DELTA_X: u32 = 4;
+pub(super) const DELTA_Y: u32 = 5;
 const HID_TAP: u32 = 0;
-const SCROLL_PIXELS: u32 = 0;
+pub(super) const SCROLL_PIXELS: u32 = 0;
 // CGEventFlags
-const SHIFT: u64 = 1 << 17;
-const CONTROL: u64 = 1 << 18;
-const OPTION: u64 = 1 << 19;
-const COMMAND: u64 = 1 << 20;
+pub(super) const SHIFT: u64 = 1 << 17;
+pub(super) const CONTROL: u64 = 1 << 18;
+pub(super) const OPTION: u64 = 1 << 19;
+pub(super) const COMMAND: u64 = 1 << 20;
 
 /// Pixels of smooth scrolling per wheel notch: about three lines, as a mouse wheel scrolls.
-const NOTCH_PIXELS: f32 = 40.;
+pub(super) const NOTCH_PIXELS: f32 = 40.;
 /// How long between two clicks still counts as a double click (macOS' default is 0.5 s).
-const DOUBLE_CLICK: Duration = Duration::from_millis(500);
+pub(super) const DOUBLE_CLICK: Duration = Duration::from_millis(500);
 
 /// Whether macOS lets this process post input events.
 pub fn trusted() -> bool {
@@ -153,17 +153,17 @@ pub fn ask_trust() -> bool {
 }
 
 /// An event we created; released when dropped.
-struct Event(CGEventRef);
+pub(super) struct Event(pub(super) CGEventRef);
 
 impl Event {
-    fn new(event: CGEventRef) -> Result<Self> {
+    pub(super) fn new(event: CGEventRef) -> Result<Self> {
         if event.is_null() {
             bail!("macOS refused to create the input event");
         }
         Ok(Self(event))
     }
 
-    fn post(self) {
+    pub(super) fn post(self) {
         // SAFETY: a valid event; CGEventPost doesn't take ownership.
         unsafe { CGEventPost(HID_TAP, self.0) }
     }
@@ -347,7 +347,7 @@ impl Input {
 }
 
 /// Where the pointer is now, in global display coordinates (top left origin).
-fn cursor() -> Result<CGPoint> {
+pub(super) fn cursor() -> Result<CGPoint> {
     // SAFETY: an empty event only to read the location; released by Event.
     let event = Event::new(unsafe { CGEventCreate(std::ptr::null()) })?;
     // SAFETY: a valid event.

@@ -14,6 +14,7 @@ pub mod peer;
 pub mod platform;
 pub mod server;
 pub mod service;
+pub mod shared_mouse;
 pub mod term;
 pub mod tls;
 pub mod update;

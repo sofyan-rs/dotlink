@@ -1131,6 +1131,47 @@ impl MainView {
             }
         }
 
+        // A PC: one mouse and keyboard for both, across the edge where its screen is.
+        let mouse = (!d.is_phone()).then(|| {
+            const SIDES: [Option<&str>; 5] = [None, Some("left"), Some("right"), Some("above"), Some("below")];
+            let supported = cfg!(any(windows, target_os = "macos"));
+            let detail = if !supported {
+                "Windows and macOS only for now.".to_string()
+            } else if d.online && !d.shared_mouse {
+                format!("{} needs this version of Dotlink, on Windows or macOS, for the pointer to go over to it.", d.name)
+            } else {
+                format!(
+                    "Where {}'s screen is: push the pointer past that edge to use this mouse and keyboard there. Ctrl+Alt+Esc brings the pointer back.",
+                    d.name
+                )
+            };
+            let selected = SIDES.iter().position(|s| *s == d.screen.as_deref()).unwrap_or(0);
+            let (view, id) = (cx.entity().downgrade(), d.id.clone());
+            group(p).child(
+                row(p).child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(12.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child("Shared mouse")
+                                .child(div().text_size(px(13.)).text_color(p.ink_muted).child(detail)),
+                        )
+                        .when(supported, |col| {
+                            col.child(segmented(p, "screen-side", &["OFF", "LEFT", "RIGHT", "ABOVE", "BELOW"], selected, move |i, cx| {
+                                let id = id.clone();
+                                view.update(cx, |this, cx| this.model.update(cx, |m, cx| m.set_screen(id, SIDES[i], cx))).ok();
+                            }))
+                        }),
+                ),
+            )
+        });
+
         let recent: Vec<&Transfer> = status.transfers.iter().filter(|t| t.device == d.name).take(3).collect();
         let recent = (!recent.is_empty()).then(|| {
             let list = recent
@@ -1154,6 +1195,7 @@ impl MainView {
             .children(self.now_playing(p, &d, cx).map(|g| section(p, "Now playing", g)))
             .children((d.is_phone() && d.online).then(|| section(p, "Files", self.files_section(p, &d, cx))))
             .child(section(p, "Sync", sync))
+            .children(mouse.map(|g| section(p, "Mouse & keyboard", g)))
             .children(recent)
             .into_any_element()
     }
