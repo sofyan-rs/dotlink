@@ -22,6 +22,11 @@
 //!
 //! Scan codes rather than key names, so the receiver's own keyboard layout applies, like a
 //! keyboard plugged into it.
+//!
+//! More than two PCs: each PC only knows its neighbours. When the pointer a PC is driven to
+//! goes out another edge, one with a third PC beyond it, this PC relays: it sends that PC
+//! `mouse_enter` and passes on everything the driver sends, until the third PC sends
+//! `mouse_leave` (back here) or `mouse_stop`. A chain of PCs relays hop by hop.
 
 use crate::config::{DeviceKind, ScreenSide};
 use crate::events::Event;
@@ -74,6 +79,9 @@ pub enum Out {
     Paste,
     /// The pointer came to this PC: another PC brought it, or it came back.
     Arrived,
+    /// The pointer `from` drives here went out `edge` at `pos`, with PC `to` beyond it: this PC
+    /// relays to it from now on.
+    Exit { from: String, to: String, edge: ScreenSide, pos: f32 },
 }
 
 /// What the platform part is told.
@@ -87,6 +95,9 @@ pub enum Cmd {
     ArmPaste(bool),
     /// Press Ctrl+V / ⌘V: the files held back for are here.
     Paste,
+    /// The pointer relayed on ([Out::Exit]) came back, at `pos` along the edge it left by;
+    /// `from` drives it here again.
+    Resume { from: String, pos: f32 },
 }
 
 /// The platform part, once started.
@@ -98,6 +109,8 @@ pub struct SharedMouse {
     capable: Mutex<HashSet<String>>,
     /// Linked PC id → how much faster the pointer goes there than here (its Pointer speed).
     speeds: Mutex<HashMap<String, f32>>,
+    /// Relaying: the PC driving the pointer → the PC it went on to from here.
+    relays: Mutex<HashMap<String, String>>,
 }
 
 impl SharedMouse {
@@ -187,7 +200,16 @@ async fn forward(app: Arc<App>, mut rx: mpsc::UnboundedReceiver<Out>) {
                 crate::clip_files::arrived(&app);
                 continue;
             }
+            Out::Exit { from, to, edge, pos } => {
+                app.mouse.relays.lock().unwrap().insert(from, to.clone());
+                send_msg(&app, &to, &MouseMsg::Enter { edge: edge.opposite(), pos });
+                continue;
+            }
         };
+        if msg == MouseMsg::Stop {
+            // This PC's own mouse took over (or Ctrl+Alt+Esc): no more relaying either way.
+            app.mouse.relays.lock().unwrap().retain(|driver, to| *driver != id && *to != id);
+        }
         // A trackpad scrolls in many tiny steps, momentum included (about 120 a second from a
         // Mac's). Each one played as a wheel event of its own starts its own smooth-scroll
         // animation in Windows apps, and together they lag: the steps of a few milliseconds go
@@ -225,11 +247,53 @@ async fn forward(app: Arc<App>, mut rx: mpsc::UnboundedReceiver<Out>) {
             *x *= speed;
             *y *= speed;
         }
-        let Ok(text) = serde_json::to_string(&msg) else { continue };
-        if !app.send_to_pc(&id, text) {
-            tracing::debug!("shared mouse: {id} isn't connected");
+        send_msg(&app, &id, &msg);
+    }
+}
+
+fn send_msg(app: &App, id: &str, msg: &MouseMsg) {
+    let Ok(text) = serde_json::to_string(msg) else { return };
+    if !app.send_to_pc(id, text) {
+        tracing::debug!("shared mouse: {id} isn't connected");
+    }
+}
+
+/// A message from a linked PC: passed on when this PC relays it, else played here.
+fn route(app: &App, from: &str, msg: MouseMsg) {
+    let relay_to = app.mouse.relays.lock().unwrap().get(from).cloned();
+    if let Some(to) = relay_to {
+        // From the PC driving the pointer, which is past this PC now.
+        if msg == MouseMsg::Stop {
+            app.mouse.relays.lock().unwrap().remove(from);
+            send_msg(app, &to, &MouseMsg::Stop);
+            app.mouse.send(Cmd::Input { from: from.to_string(), msg });
+        } else {
+            send_msg(app, &to, &msg);
+        }
+        return;
+    }
+    let driver = app.mouse.relays.lock().unwrap().iter().find(|(_, to)| *to == from).map(|(driver, _)| driver.clone());
+    if let Some(driver) = driver {
+        // From the PC this one relays to.
+        match msg {
+            MouseMsg::Leave { pos } => {
+                app.mouse.relays.lock().unwrap().remove(&driver);
+                app.mouse.send(Cmd::Resume { from: driver, pos });
+                return;
+            }
+            MouseMsg::Stop | MouseMsg::Enter { .. } => {
+                // Its own mouse took the pointer: the driver stops, and so does this PC.
+                app.mouse.relays.lock().unwrap().remove(&driver);
+                send_msg(app, &driver, &MouseMsg::Stop);
+                app.mouse.send(Cmd::Input { from: driver, msg: MouseMsg::Stop });
+                if msg == MouseMsg::Stop {
+                    return;
+                }
+            }
+            _ => {}
         }
     }
+    app.mouse.send(Cmd::Input { from: from.to_string(), msg });
 }
 
 /// A linked PC said whether it takes part (when connecting).
@@ -282,7 +346,7 @@ pub fn handle(app: &App, from: &str, v: &Value) -> bool {
         return true;
     }
     match serde_json::from_value::<MouseMsg>(v.clone()) {
-        Ok(msg) => app.mouse.send(Cmd::Input { from: from.to_string(), msg }),
+        Ok(msg) => route(app, from, msg),
         Err(e) => tracing::debug!("shared mouse: {t}: {e}"),
     }
     true

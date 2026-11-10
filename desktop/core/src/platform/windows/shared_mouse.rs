@@ -217,11 +217,21 @@ struct State {
     layout: Vec<(String, Option<ScreenSide>)>,
     sending: Option<Sending>,
     receiving: Option<Receiving>,
+    /// Relaying: the pointer another PC drives here went on to a third PC.
+    parked: Option<Parked>,
+}
+
+/// The pointer, driven here, went on to another PC (`crate::shared_mouse`'s relaying).
+struct Parked {
+    r: Receiving,
+    /// The edge it went out by, where the other PC is.
+    side: ScreenSide,
+    to: String,
 }
 
 impl State {
     fn new(out: UnboundedSender<Out>) -> Self {
-        Self { out, armed: false, held_v: false, layout: Vec::new(), sending: None, receiving: None }
+        Self { out, armed: false, held_v: false, layout: Vec::new(), sending: None, receiving: None, parked: None }
     }
 
     fn emit(&self, id: &str, msg: MouseMsg) {
@@ -247,6 +257,10 @@ impl State {
         // This PC's own mouse moved while another PC drives it: it takes the pointer back.
         if self.receiving.is_some() {
             self.end_receiving(true);
+        }
+        if let Some(p) = self.parked.take() {
+            self.emit(&p.r.id, MouseMsg::Stop);
+            self.emit(&p.to, MouseMsg::Stop);
         }
         let Some(s) = &self.sending else {
             return msg == WM_MOUSEMOVE && self.at_edge(info.pt);
@@ -352,9 +366,27 @@ impl State {
                 if self.receiving.as_ref().is_some_and(|r| !self.layout.iter().any(|(id, _)| *id == r.id)) {
                     self.end_receiving(false);
                 }
+                let connected = |id: &str| self.layout.iter().any(|(i, _)| i == id);
+                if let Some(p) = self.parked.take() {
+                    if !connected(&p.r.id) {
+                        // The driver is gone: so is the relay.
+                        self.emit(&p.to, MouseMsg::Stop);
+                    } else if !connected(&p.to) {
+                        // The PC it went on to is gone: the pointer comes back here.
+                        self.emit(&p.to, MouseMsg::Stop);
+                        self.resume(p, None);
+                    } else {
+                        self.parked = Some(p);
+                    }
+                }
             }
             Cmd::Input { from, msg } => self.input(from, msg),
             Cmd::ArmPaste(on) => self.armed = on,
+            Cmd::Resume { from, pos } => {
+                if let Some(p) = self.parked.take_if(|p| p.r.id == from) {
+                    self.resume(p, Some(pos));
+                }
+            }
             Cmd::Paste => {
                 // Ctrl may still be down (held on the keyboard, or by the other PC).
                 let ctrl = pressed(VK_CONTROL);
@@ -374,6 +406,7 @@ impl State {
     fn input(&mut self, from: String, msg: MouseMsg) {
         match msg {
             MouseMsg::Enter { edge, pos } => {
+                self.parked = None;
                 // Both mice moved at once: the other PC wins.
                 if let Some(s) = &self.sending {
                     let id = s.id.clone();
@@ -401,6 +434,9 @@ impl State {
                 }
             }
             MouseMsg::Stop => {
+                if self.parked.as_ref().is_some_and(|p| p.r.id == from) {
+                    self.parked = None;
+                }
                 if self.sending.as_ref().is_some_and(|s| s.id == from) {
                     self.end_sending(None, true);
                 }
@@ -468,20 +504,30 @@ impl State {
         let next = if monitor_rect(target, MONITOR_DEFAULTTONULL).is_some() {
             target
         } else {
-            // Off every monitor: along the edge of the one it was on, or back to the other PC
-            // when pushed out the edge it came in through.
+            // Off every monitor: along the edge of the one it was on; back to the driver when
+            // pushed out the edge it came in through, on to a third PC through another.
             let rc = monitor_rect(r.pos, MONITOR_DEFAULTTONEAREST).unwrap_or_else(virtual_rect);
             let clamped = clamp(target, rc);
-            let pushed_out = match r.edge {
-                ScreenSide::Left => target.x < rc.left,
-                ScreenSide::Right => target.x >= rc.right,
-                ScreenSide::Above => target.y < rc.top,
-                ScreenSide::Below => target.y >= rc.bottom,
-            };
-            if pushed_out && edge_at(clamped) == Some(r.edge) {
+            let out = [ScreenSide::Left, ScreenSide::Right, ScreenSide::Above, ScreenSide::Below]
+                .into_iter()
+                .find(|&side| pushed_out(target, rc, side) && outer(clamped, rc, side));
+            if out == Some(r.edge) {
                 let (id, pos) = (r.id.clone(), fraction(r.edge, clamped));
                 self.end_receiving(false);
                 self.emit(&id, MouseMsg::Leave { pos });
+                return;
+            }
+            let beyond = out.and_then(|side| {
+                let to = self.layout.iter().find(|(id, s)| *s == Some(side) && *id != r.id)?.0.clone();
+                Some((side, to))
+            });
+            if let Some((side, to)) = beyond {
+                let (from, pos) = (r.id.clone(), fraction(side, clamped));
+                r.pos = clamped;
+                let mut r = self.receiving.take().expect("receiving");
+                release(&mut r);
+                self.parked = Some(Parked { r, side, to: to.clone() });
+                let _ = self.out.send(Out::Exit { from, to, edge: side, pos });
                 return;
             }
             clamped
@@ -490,13 +536,22 @@ impl State {
         move_to(next);
     }
 
+    /// The pointer relayed on came back: driven here again, on the edge it left by (at `pos`
+    /// along it; where it left without).
+    fn resume(&mut self, p: Parked, pos: Option<f32>) {
+        let mut r = p.r;
+        let at = pos.map_or(r.pos, |pos| entry_point(p.side, pos));
+        r.pos = inward(at, p.side);
+        r.frac = (0., 0.);
+        move_to(r.pos);
+        self.receiving = Some(r);
+    }
+
     /// Lets go of the keys and buttons the other PC holds down here. `tell`: this PC's own mouse
     /// took over, so the other PC stops sending.
     fn end_receiving(&mut self, tell: bool) {
-        let Some(r) = self.receiving.take() else { return };
-        let mut events: Vec<INPUT> = r.keys.iter().rev().map(|&sc| key(sc, false)).collect();
-        events.extend(r.buttons.iter().enumerate().filter(|(_, down)| **down).map(|(b, _)| button(b as u8, false)));
-        send(&events);
+        let Some(mut r) = self.receiving.take() else { return };
+        release(&mut r);
         if tell {
             self.emit(&r.id, MouseMsg::Stop);
         }
@@ -504,6 +559,38 @@ impl State {
 }
 
 // ---------- screens ----------
+
+/// Lets go of the keys and buttons held down through `r`.
+fn release(r: &mut Receiving) {
+    let mut events: Vec<INPUT> = r.keys.drain(..).rev().map(|sc| key(sc, false)).collect();
+    for (b, down) in r.buttons.iter_mut().enumerate() {
+        if std::mem::take(down) {
+            events.push(button(b as u8, false));
+        }
+    }
+    send(&events);
+}
+
+/// Whether `target` is past `side` of `rc`.
+fn pushed_out(target: POINT, rc: RECT, side: ScreenSide) -> bool {
+    match side {
+        ScreenSide::Left => target.x < rc.left,
+        ScreenSide::Right => target.x >= rc.right,
+        ScreenSide::Above => target.y < rc.top,
+        ScreenSide::Below => target.y >= rc.bottom,
+    }
+}
+
+/// Whether `side` of monitor `rc` at `pt` is an outer edge: no monitor beyond it there.
+fn outer(pt: POINT, rc: RECT, side: ScreenSide) -> bool {
+    let beyond = match side {
+        ScreenSide::Left => POINT { x: rc.left - 1, y: pt.y },
+        ScreenSide::Right => POINT { x: rc.right, y: pt.y },
+        ScreenSide::Above => POINT { x: pt.x, y: rc.top - 1 },
+        ScreenSide::Below => POINT { x: pt.x, y: rc.bottom },
+    };
+    monitor_rect(beyond, MONITOR_DEFAULTTONULL).is_none()
+}
 
 /// Physical pixels per logical one on the monitor at `pt`: its scaling (1.5 at 150 %).
 fn monitor_scale(pt: POINT) -> f32 {
