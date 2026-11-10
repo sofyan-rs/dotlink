@@ -147,6 +147,9 @@ fn run(cmds: mpsc::Receiver<Cmd>) {
                 drop(reply.send(result));
             }
             Ok(Cmd::SetFiles(paths, reply)) => {
+                // Emptied first: arboard only replaces the file list on Windows, and Explorer
+                // pastes what an earlier copy there left (its Shell IDList Array), not ours.
+                let _ = cb.clear();
                 let result = cb.set().file_list(&paths).map_err(anyhow::Error::from);
                 if result.is_ok() {
                     last_files = Some(canonical(&paths));
