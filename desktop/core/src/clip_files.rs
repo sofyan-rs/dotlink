@@ -33,8 +33,9 @@ use tokio::sync::oneshot;
 const EAGER_LIMIT: u64 = 64 << 20;
 /// Copies up to this size come when the pointer comes over; bigger ones wait for a paste.
 const ARRIVAL_LIMIT: u64 = 2 << 30;
-/// Copies bigger than this say when they start coming and when they're here.
-const NOTIFY_LIMIT: u64 = 16 << 20;
+/// Files still coming after this long say so, and say when they're here: until then, there's
+/// nothing to paste and nothing shows why.
+const ANNOUNCE_AFTER: Duration = Duration::from_secs(1);
 /// No copy lists more than this many files and folders (a folder like node_modules).
 const MAX_ITEMS: usize = 10_000;
 /// How long one file may take.
@@ -73,6 +74,8 @@ struct Incoming {
     state: Fetch,
     /// A paste is waiting for them.
     paste: bool,
+    /// A notification said they're coming.
+    announced: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -251,7 +254,7 @@ fn received(app: &Arc<App>, from: &str, v: &Value) {
     let from_name = pc_name(app, from);
     tracing::info!("{from_name} copied {} item(s), {total} bytes", items.len());
     *app.clip_files.incoming.lock().unwrap() =
-        Some(Incoming { set: set.to_string(), from: from.to_string(), from_name, items, total, state: Fetch::Waiting, paste: false });
+        Some(Incoming { set: set.to_string(), from: from.to_string(), from_name, items, total, state: Fetch::Waiting, paste: false, announced: false });
     // Earlier copies' files: their pastes are long done.
     let keep = temp_root().join(set);
     tokio::task::spawn_blocking(move || {
@@ -297,6 +300,7 @@ pub fn paste_pressed(app: &Arc<App>) {
         i.paste = true;
         // Waiting for a big copy says so: a paste that does nothing for a while looks broken.
         if i.state != Fetch::Done {
+            i.announced = true;
             let keys = if cfg!(target_os = "macos") { "⌘V" } else { "Ctrl+V" };
             platform::notify(
                 "Pasting soon",
@@ -319,21 +323,28 @@ pub fn paste_pressed(app: &Arc<App>) {
 
 /// Gets the files copied on another PC into a temporary folder and puts them on the clipboard.
 fn fetch(app: &Arc<App>) {
-    let (set, from, from_name, items, total) = {
+    let (set, from, from_name, items) = {
         let mut incoming = app.clip_files.incoming.lock().unwrap();
         let Some(i) = incoming.as_mut().filter(|i| i.state == Fetch::Waiting) else { return };
         i.state = Fetch::Running;
-        // A big copy takes a while: say it's coming (a paste waiting for it says so itself).
-        if i.total > NOTIFY_LIMIT && !i.paste {
-            platform::notify(
-                &format!("Copying from {}", i.from_name),
-                &format!("{} ({}): it can be pasted once it's here. Progress in Dotlink → Activity.", describe(&i.items), megabytes(i.total)),
-            );
-        }
-        (i.set.clone(), i.from.clone(), i.from_name.clone(), i.items.clone(), i.total)
+        (i.set.clone(), i.from.clone(), i.from_name.clone(), i.items.clone())
     };
     // A paste from now on waits for them.
     app.mouse.arm_paste(true);
+    // Not here within a second: say they're coming (a paste waiting for them says so itself).
+    let (announce, announce_set) = (app.clone(), set.clone());
+    tokio::spawn(async move {
+        tokio::time::sleep(ANNOUNCE_AFTER).await;
+        let mut incoming = announce.clip_files.incoming.lock().unwrap();
+        let Some(i) = incoming.as_mut().filter(|i| i.set == announce_set && i.state == Fetch::Running && !i.announced) else {
+            return;
+        };
+        i.announced = true;
+        platform::notify(
+            &format!("Copying from {}", i.from_name),
+            &format!("{} ({}): it can be pasted once it's here. Progress in Dotlink → Activity.", describe(&i.items), megabytes(i.total)),
+        );
+    });
     let app = app.clone();
     tokio::spawn(async move {
         let result = fetch_all(&app, &set, &from, &items).await;
@@ -341,6 +352,7 @@ fn fetch(app: &Arc<App>) {
         // Replaced meanwhile (copied again, here or there): this one is stale.
         let Some(i) = incoming.as_mut().filter(|i| i.set == set) else { return };
         let paste = std::mem::take(&mut i.paste);
+        let announced = i.announced;
         match result {
             Ok(()) => {
                 i.state = Fetch::Done;
@@ -348,7 +360,7 @@ fn fetch(app: &Arc<App>) {
                 app.mouse.arm_paste(false);
                 if paste {
                     app.mouse.paste();
-                } else if total > NOTIFY_LIMIT {
+                } else if announced {
                     let keys = if cfg!(target_os = "macos") { "⌘V" } else { "Ctrl+V" };
                     platform::notify("Ready to paste", &format!("{} from {from_name}: {keys} pastes it.", describe(&items)));
                 }
