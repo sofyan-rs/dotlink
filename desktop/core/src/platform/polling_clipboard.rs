@@ -6,6 +6,7 @@
 //! arboard uses the native clipboard.
 
 use crate::server::App;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, mpsc};
 use std::time::Duration;
@@ -32,9 +33,27 @@ pub async fn set(text: &str) -> anyhow::Result<()> {
     tokio::task::spawn_blocking(move || shared().set(text)).await?
 }
 
+/// Files and folders copied on this PC from now on (Explorer, Finder), for `clip_files`.
+pub fn file_changes() -> Option<tokio::sync::mpsc::UnboundedReceiver<Vec<PathBuf>>> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    shared().file_subscribers.lock().unwrap().push(tx);
+    Some(rx)
+}
+
+/// Puts files on the clipboard, as copying them in Explorer or Finder does.
+pub async fn set_files(paths: Vec<PathBuf>) -> anyhow::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let (tx, rx) = mpsc::channel();
+        shared().cmds.send(Cmd::SetFiles(paths, tx))?;
+        rx.recv_timeout(Duration::from_secs(5))?
+    })
+    .await?
+}
+
 enum Cmd {
     Get(mpsc::Sender<Option<String>>),
     Set(String, mpsc::Sender<anyhow::Result<()>>),
+    SetFiles(Vec<PathBuf>, mpsc::Sender<anyhow::Result<()>>),
     /// The clipboard got a new owner (XFixes): read it now.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Changed,
@@ -43,6 +62,7 @@ enum Cmd {
 pub struct PollingClipboard {
     cmds: mpsc::Sender<Cmd>,
     subscribers: std::sync::Mutex<Vec<tokio::sync::mpsc::UnboundedSender<String>>>,
+    file_subscribers: std::sync::Mutex<Vec<tokio::sync::mpsc::UnboundedSender<Vec<PathBuf>>>>,
 }
 
 static SHARED: OnceLock<PollingClipboard> = OnceLock::new();
@@ -59,7 +79,11 @@ pub fn shared() -> &'static PollingClipboard {
             let changes = cmds.clone();
             let _ = std::thread::Builder::new().name("dotlink-xfixes".into()).spawn(move || xfixes::watch(changes));
         }
-        PollingClipboard { cmds, subscribers: std::sync::Mutex::new(Vec::new()) }
+        PollingClipboard {
+            cmds,
+            subscribers: std::sync::Mutex::new(Vec::new()),
+            file_subscribers: std::sync::Mutex::new(Vec::new()),
+        }
     })
 }
 
@@ -87,6 +111,8 @@ impl PollingClipboard {
 fn run(cmds: mpsc::Receiver<Cmd>) {
     let mut clipboard = None;
     let mut last: Option<String> = None;
+    // The files on the clipboard as last seen; None before the first look.
+    let mut last_files: Option<Vec<PathBuf>> = None;
     loop {
         if clipboard.is_none() {
             match arboard::Clipboard::new() {
@@ -97,7 +123,9 @@ fn run(cmds: mpsc::Receiver<Cmd>) {
                     if let Ok(cmd) = cmds.recv_timeout(Duration::from_secs(2)) {
                         match cmd {
                             Cmd::Get(reply) => drop(reply.send(None)),
-                            Cmd::Set(_, reply) => drop(reply.send(Err(anyhow::anyhow!("clipboard unavailable: {e}")))),
+                            Cmd::Set(_, reply) | Cmd::SetFiles(_, reply) => {
+                                drop(reply.send(Err(anyhow::anyhow!("clipboard unavailable: {e}"))))
+                            }
                             Cmd::Changed => {}
                         }
                     }
@@ -118,7 +146,34 @@ fn run(cmds: mpsc::Receiver<Cmd>) {
                 }
                 drop(reply.send(result));
             }
+            Ok(Cmd::SetFiles(paths, reply)) => {
+                let result = cb.set().file_list(&paths).map_err(anyhow::Error::from);
+                if result.is_ok() {
+                    last_files = Some(paths);
+                }
+                drop(reply.send(result));
+            }
             Ok(Cmd::Changed) | Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Copied files: Finder puts their names on the clipboard as text too, which
+                // isn't what was copied.
+                let files = match cb.get().file_list() {
+                    Ok(files) => files,
+                    Err(arboard::Error::ContentNotAvailable) => Vec::new(),
+                    // Another app has the clipboard open right now: look again next time,
+                    // rather than take it for empty (and the files for copied again).
+                    Err(_) => continue,
+                };
+                let first = last_files.is_none();
+                if last_files.as_ref() != Some(&files) {
+                    last_files = Some(files.clone());
+                    if !first && !files.is_empty() && let Some(me) = SHARED.get() {
+                        me.file_subscribers.lock().unwrap().retain(|s| s.send(files.clone()).is_ok());
+                    }
+                }
+                if !files.is_empty() {
+                    last = cb.get_text().ok().or(last);
+                    continue;
+                }
                 // Poll: other apps changed the clipboard?
                 if let Ok(text) = cb.get_text()
                     && last.as_deref() != Some(text.as_str())

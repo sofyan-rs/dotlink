@@ -53,6 +53,17 @@ pub enum MouseMsg {
     Stop,
 }
 
+/// What the platform part tells.
+#[derive(Debug)]
+pub enum Out {
+    /// For that PC.
+    Mouse(String, MouseMsg),
+    /// Ctrl+V / ⌘V while armed ([Cmd::ArmPaste]): held back until the files are here.
+    Paste,
+    /// The pointer came to this PC: another PC brought it, or it came back.
+    Arrived,
+}
+
 /// What the platform part is told.
 #[derive(Debug)]
 pub enum Cmd {
@@ -60,6 +71,10 @@ pub enum Cmd {
     Layout(Vec<(String, Option<ScreenSide>)>),
     /// A message from that PC.
     Input { from: String, msg: MouseMsg },
+    /// Hold Ctrl+V / ⌘V back (files copied on another PC are on their way, `clip_files.rs`).
+    ArmPaste(bool),
+    /// Press Ctrl+V / ⌘V: the files held back for are here.
+    Paste,
 }
 
 /// The platform part, once started.
@@ -80,6 +95,14 @@ impl SharedMouse {
     /// Whether a linked PC (by id) takes part, as it said when it last connected.
     pub fn capable(&self, id: &str) -> bool {
         self.capable.lock().unwrap().contains(id)
+    }
+
+    pub fn arm_paste(&self, on: bool) {
+        self.send(Cmd::ArmPaste(on));
+    }
+
+    pub fn paste(&self) {
+        self.send(Cmd::Paste);
     }
 
     fn send(&self, cmd: Cmd) {
@@ -125,25 +148,36 @@ pub fn stop(app: &App) {
 
 /// Sends what the platform part has for the other PCs. Pointer motion that piled up (a slow
 /// link) goes as one move.
-async fn forward(app: Arc<App>, mut rx: mpsc::UnboundedReceiver<(String, MouseMsg)>) {
+async fn forward(app: Arc<App>, mut rx: mpsc::UnboundedReceiver<Out>) {
     let mut next = None;
     loop {
-        let (id, mut msg) = match next.take() {
-            Some(item) => item,
+        let out = match next.take() {
+            Some(out) => out,
             None => match rx.recv().await {
-                Some(item) => item,
+                Some(out) => out,
                 None => return,
             },
         };
+        let (id, mut msg) = match out {
+            Out::Mouse(id, msg) => (id, msg),
+            Out::Paste => {
+                crate::clip_files::paste_pressed(&app);
+                continue;
+            }
+            Out::Arrived => {
+                crate::clip_files::arrived(&app);
+                continue;
+            }
+        };
         if let MouseMsg::Move { x, y } = &mut msg {
-            while let Ok(item) = rx.try_recv() {
-                match item {
-                    (other, MouseMsg::Move { x: dx, y: dy }) if other == id => {
+            while let Ok(out) = rx.try_recv() {
+                match out {
+                    Out::Mouse(other, MouseMsg::Move { x: dx, y: dy }) if other == id => {
                         *x += dx;
                         *y += dy;
                     }
-                    item => {
-                        next = Some(item);
+                    out => {
+                        next = Some(out);
                         break;
                     }
                 }

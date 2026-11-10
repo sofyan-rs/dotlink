@@ -66,6 +66,15 @@ impl PhoneFiles {
         }
     }
 
+    /// Waits for the upload carrying `req` (a linked PC's copied file, `clip_files.rs`).
+    pub(crate) fn expect(&self, req: String, get: Get) {
+        self.gets.lock().unwrap().insert(req, get);
+    }
+
+    pub(crate) fn forget(&self, req: &str) {
+        self.gets.lock().unwrap().remove(req);
+    }
+
     /// The download `req` from `device`, for the upload carrying it; None when nobody asked.
     pub(crate) fn take_get(&self, req: &str, device: &str) -> Option<Get> {
         let mut gets = self.gets.lock().unwrap();

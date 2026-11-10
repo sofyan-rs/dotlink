@@ -1068,7 +1068,11 @@ impl MainView {
                         .flex()
                         .flex_col()
                         .child("Clipboard sync")
-                        .child(div().text_size(px(13.)).text_color(p.ink_muted).child(format!("Text you copy here goes to {} right away.", d.name))),
+                        .child(div().text_size(px(13.)).text_color(p.ink_muted).child(if d.is_phone() || !cfg!(any(windows, target_os = "macos")) {
+                            format!("Text you copy here goes to {} right away.", d.name)
+                        } else {
+                            format!("Text you copy here goes to {} right away, and files you copy can be pasted there.", d.name)
+                        })),
                 )
                 .child(Switch::new("clip-auto").checked(d.clipboard_auto).on_click(cx.listener(move |this, checked: &bool, _, cx| {
                     let (id, on) = (clip_id.clone(), *checked);

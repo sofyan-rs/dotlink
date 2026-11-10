@@ -2,6 +2,7 @@
 //! `dotlink daemon`.
 
 pub mod cast;
+pub mod clip_files;
 pub mod codes;
 pub mod config;
 pub mod events;

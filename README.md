@@ -177,6 +177,12 @@ Two PCs can send each other files and the clipboard. On the first PC, open **Pai
 to it only with **Clipboard sync** on for that PC (`dotlink clip-auto <pc> on`); **Send clipboard**
 works either way. A laptop's battery shows there too.
 
+With **Clipboard sync** on, files and folders copied in Explorer or Finder can be pasted on the
+other PC too (Windows and macOS). Copying only sends their names: small copies (up to 64 MB)
+come right away, bigger ones when the shared mouse brings the pointer over (up to 2 GB), and
+anything else when you paste: Ctrl+V / ⌘V waits until they're there, then pastes. They show
+in Activity as they come.
+
 **Shared mouse** (Windows and macOS): one mouse and keyboard for both. On the PC's page, under
 **Mouse & keyboard**, pick where its screen is (left, right, above or below this one); the other
 PC is set to the opposite side by itself (`dotlink screen <pc> right`, `off` to stop). Push the

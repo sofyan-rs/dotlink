@@ -67,6 +67,7 @@ async fn serve(app: Arc<App>, identity: tls::Identity) -> Result<()> {
     tokio::spawn(crate::usb::watch(app.clone()));
     // Before the links come up: they tell the other PCs whether it runs.
     crate::shared_mouse::start(&app);
+    crate::clip_files::start(&app);
     crate::peer::start_all(&app);
     tokio::spawn(app.clone().watch_battery());
     tokio::spawn(crate::media::watch(app.clone()));

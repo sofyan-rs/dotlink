@@ -25,7 +25,7 @@ use super::input::{
     SHIFT, kCFBooleanTrue,
 };
 use crate::config::ScreenSide;
-use crate::shared_mouse::{Cmd, MouseMsg};
+use crate::shared_mouse::{Cmd, MouseMsg, Out};
 use anyhow::{Result, anyhow, bail};
 use std::ffi::{c_char, c_void};
 use std::sync::atomic::{AtomicPtr, Ordering};
@@ -94,6 +94,7 @@ const KVK_RIGHT_COMMAND: u16 = 0x36;
 const KVK_CONTROL: u16 = 0x3B;
 const KVK_RIGHT_CONTROL: u16 = 0x3E;
 const KVK_CAPS_LOCK: u16 = 0x39;
+const KVK_V: u16 = 0x09;
 
 pub struct SharedMouse {
     shared: Arc<Shared>,
@@ -115,7 +116,7 @@ impl Shared {
 }
 
 impl SharedMouse {
-    pub fn start(out: UnboundedSender<(String, MouseMsg)>) -> Result<Self> {
+    pub fn start(out: UnboundedSender<Out>) -> Result<Self> {
         if !super::input::trusted() {
             bail!("allow Dotlink in System Settings → Privacy & Security → Accessibility, then restart it");
         }
@@ -229,7 +230,11 @@ struct Receiving {
 }
 
 struct State {
-    out: UnboundedSender<(String, MouseMsg)>,
+    out: UnboundedSender<Out>,
+    /// Hold ⌘V back: files copied on another PC are on their way (`clip_files.rs`).
+    armed: bool,
+    /// The V of a ⌘V held back: its repeats and its release go too.
+    held_v: bool,
     layout: Vec<(String, Option<ScreenSide>)>,
     sending: Option<Sending>,
     receiving: Option<Receiving>,
@@ -237,12 +242,24 @@ struct State {
 }
 
 impl State {
-    fn new(out: UnboundedSender<(String, MouseMsg)>) -> Self {
-        Self { out, layout: Vec::new(), sending: None, receiving: None, hidden: false }
+    fn new(out: UnboundedSender<Out>) -> Self {
+        Self { out, armed: false, held_v: false, layout: Vec::new(), sending: None, receiving: None, hidden: false }
     }
 
     fn emit(&self, id: &str, msg: MouseMsg) {
-        let _ = self.out.send((id.to_string(), msg));
+        let _ = self.out.send(Out::Mouse(id.to_string(), msg));
+    }
+
+    /// The V of ⌘V (`command`: held): true when held back for files on their way.
+    fn hold_paste(&mut self, down: bool, command: bool) -> bool {
+        if down && (self.held_v || (self.armed && command)) {
+            if !self.held_v {
+                let _ = self.out.send(Out::Paste);
+            }
+            self.held_v = true;
+            return true;
+        }
+        !down && std::mem::take(&mut self.held_v)
     }
 
     // ---------- the Mac's own mouse and keyboard ----------
@@ -255,6 +272,12 @@ impl State {
             self.end_receiving(true);
         }
         let Some(s) = &self.sending else {
+            if matches!(kind, KEY_DOWN | KEY_UP) {
+                // SAFETY: a valid event for each read.
+                let (code, flags) = unsafe { (CGEventGetIntegerValueField(event, KEYCODE) as u16, CGEventGetFlags(event)) };
+                let command = flags & COMMAND != 0 && flags & (CONTROL | OPTION) == 0;
+                return code == KVK_V && self.hold_paste(kind == KEY_DOWN, command);
+            }
             // SAFETY: a valid event.
             return kind == MOVED && self.at_edge(unsafe { CGEventGetLocation(event) });
         };
@@ -347,6 +370,7 @@ impl State {
             CGAssociateMouseAndMouseCursorPosition(1);
         }
         self.show_pointer();
+        let _ = self.out.send(Out::Arrived);
     }
 
     fn hide_pointer(&mut self) {
@@ -379,6 +403,12 @@ impl State {
                 }
             }
             Cmd::Input { from, msg } => self.input(from, msg),
+            Cmd::ArmPaste(on) => self.armed = on,
+            Cmd::Paste => {
+                // ⌘ goes in the flags: no need to press it.
+                post_key(KVK_V, true, COMMAND);
+                post_key(KVK_V, false, COMMAND);
+            }
         }
     }
 
@@ -403,6 +433,7 @@ impl State {
                     last_click: None,
                     scroll_rem: (0., 0.),
                 });
+                let _ = self.out.send(Out::Arrived);
             }
             MouseMsg::Leave { pos } => {
                 if let Some(s) = self.sending.as_ref().filter(|s| s.id == from) {
@@ -453,6 +484,14 @@ impl State {
                     }
                     MouseMsg::Key { sc, down } => {
                         let Some(code) = mac_key(sc) else { return };
+                        // The other PC's paste (⌘V here), held back like the Mac's own.
+                        if code == KVK_V {
+                            let command = r.keys.iter().any(|&k| modifier_flag(k) == COMMAND);
+                            if self.hold_paste(down, command) {
+                                return;
+                            }
+                        }
+                        let Some(r) = self.receiving.as_mut() else { return };
                         r.keys.retain(|&k| k != code);
                         if down {
                             r.keys.push(code);

@@ -186,6 +186,8 @@ pub struct App {
     pub peers: crate::peer::Peers,
     /// One mouse and keyboard for this PC and the linked ones (`shared_mouse.rs`).
     pub mouse: crate::shared_mouse::SharedMouse,
+    /// Files copied here or on a linked PC, for pasting on the other (`clip_files.rs`).
+    pub clip_files: crate::clip_files::ClipFiles,
     /// Phone notifications shown here, by [notification_tag]: (device id, the phone's key).
     notifs: Mutex<HashMap<String, (String, String)>>,
     /// This PC's battery as last read (laptops): (percent, on power).
@@ -235,6 +237,7 @@ impl App {
             media: Default::default(),
             peers: crate::peer::Peers::default(),
             mouse: Default::default(),
+            clip_files: Default::default(),
             notifs: Mutex::new(HashMap::new()),
             battery: Mutex::new(platform::battery()),
             ui: Mutex::new(None),
@@ -490,6 +493,8 @@ impl App {
 
     /// Text copied on this PC: send it to the devices with clipboard sync on.
     pub fn clip_from_desktop(&self, text: String) {
+        // Copying here replaces files copied on another PC.
+        crate::clip_files::local_copy(self);
         if text.is_empty() || !self.remember_clip(&text) {
             return;
         }
@@ -1446,7 +1451,9 @@ async fn control_session(app: Arc<App>, dev: Device, peer: SocketAddr, socket: W
             msg = rx.next() => match msg {
                 Some(Ok(Message::Text(text))) => {
                     let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
-                    if dev.kind == DeviceKind::Pc && crate::shared_mouse::handle(&app, &dev.id, &v) {
+                    if dev.kind == DeviceKind::Pc
+                        && (crate::shared_mouse::handle(&app, &dev.id, &v) || crate::clip_files::handle(&app, &dev.id, &v))
+                    {
                         continue;
                     }
                     // The phone can't start the camera/mic from the background: it asks the
@@ -1886,7 +1893,7 @@ where
 }
 
 /// [save_stream] into `dir`.
-async fn save_stream_in<S, E>(
+pub(crate) async fn save_stream_in<S, E>(
     dir: &std::path::Path,
     name: &str,
     sha: Option<&str>,
@@ -1935,12 +1942,19 @@ async fn download(AxState(app): AxState<Arc<App>>, Authed(dev): Authed, Path(id)
             Some(o) if o.device.as_ref().is_none_or(|d| *d == dev.id) => {
                 (o.path.clone(), o.name.clone(), o.size, transfer_id(&id, o.device.is_none(), &dev.id))
             }
-            _ => return StatusCode::NOT_FOUND.into_response(),
+            // A file copied on this PC, pasted on a linked PC.
+            _ => match crate::clip_files::offered(&app, &id, &dev.id) {
+                Some((path, name, size)) => (path, name, size, transfer_id(&id, false, &dev.id)),
+                None => return StatusCode::NOT_FOUND.into_response(),
+            },
         }
     };
     let file = match tokio::fs::File::open(&path).await {
         Ok(f) => f,
-        Err(_) => return StatusCode::GONE.into_response(),
+        Err(e) => {
+            tracing::debug!("download {}: {e}", path.display());
+            return StatusCode::GONE.into_response();
+        }
     };
     let mut transfer = app.transfers.lock().unwrap().iter().find(|t| t.id == tid).cloned().unwrap_or(Transfer {
         id: tid.clone(),

@@ -15,7 +15,7 @@
 //! hooks don't see the sign-in or Ctrl+Alt+Del screens.
 
 use crate::config::ScreenSide;
-use crate::shared_mouse::{Cmd, MouseMsg};
+use crate::shared_mouse::{Cmd, MouseMsg, Out};
 use anyhow::{Result, anyhow};
 use std::cell::RefCell;
 use std::sync::Mutex;
@@ -47,7 +47,7 @@ pub struct SharedMouse {
 }
 
 impl SharedMouse {
-    pub fn start(out: UnboundedSender<(String, MouseMsg)>) -> Result<Self> {
+    pub fn start(out: UnboundedSender<Out>) -> Result<Self> {
         let (tx, rx) = std_mpsc::channel();
         let (ready_tx, ready_rx) = std_mpsc::channel();
         let thread = std::thread::Builder::new().name("shared-mouse".into()).spawn(move || run(out, rx, ready_tx))?;
@@ -74,7 +74,7 @@ thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
 }
 
-fn run(out: UnboundedSender<(String, MouseMsg)>, rx: std_mpsc::Receiver<Cmd>, ready: std_mpsc::Sender<Result<u32, String>>) {
+fn run(out: UnboundedSender<Out>, rx: std_mpsc::Receiver<Cmd>, ready: std_mpsc::Sender<Result<u32, String>>) {
     unsafe {
         // Monitors, the pointer and SendInput in physical pixels, like the hooks' coordinates.
         SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -171,7 +171,11 @@ struct Receiving {
 }
 
 struct State {
-    out: UnboundedSender<(String, MouseMsg)>,
+    out: UnboundedSender<Out>,
+    /// Hold Ctrl+V back: files copied on another PC are on their way (`clip_files.rs`).
+    armed: bool,
+    /// The V of a Ctrl+V held back: its repeats and its release go too.
+    held_v: bool,
     /// The linked PCs connected right now, and where their screen is.
     layout: Vec<(String, Option<ScreenSide>)>,
     sending: Option<Sending>,
@@ -179,12 +183,24 @@ struct State {
 }
 
 impl State {
-    fn new(out: UnboundedSender<(String, MouseMsg)>) -> Self {
-        Self { out, layout: Vec::new(), sending: None, receiving: None }
+    fn new(out: UnboundedSender<Out>) -> Self {
+        Self { out, armed: false, held_v: false, layout: Vec::new(), sending: None, receiving: None }
     }
 
     fn emit(&self, id: &str, msg: MouseMsg) {
-        let _ = self.out.send((id.to_string(), msg));
+        let _ = self.out.send(Out::Mouse(id.to_string(), msg));
+    }
+
+    /// The V of Ctrl+V (`ctrl`: held): true when held back for files on their way.
+    fn hold_paste(&mut self, down: bool, ctrl: bool) -> bool {
+        if down && (self.held_v || (self.armed && ctrl)) {
+            if !self.held_v {
+                let _ = self.out.send(Out::Paste);
+            }
+            self.held_v = true;
+            return true;
+        }
+        !down && std::mem::take(&mut self.held_v)
     }
 
     // ---------- this PC's own mouse and keyboard ----------
@@ -245,8 +261,11 @@ impl State {
     }
 
     fn on_key(&mut self, info: &KBDLLHOOKSTRUCT) -> bool {
-        let Some(s) = self.sending.as_mut() else { return false };
         let down = info.flags & LLKHF_UP == 0;
+        if self.sending.is_none() {
+            return info.vkCode == VK_V && self.hold_paste(down, pressed(VK_CONTROL) && !pressed(VK_MENU));
+        }
+        let Some(s) = self.sending.as_mut() else { return false };
         let mut sc = (info.scanCode & 0xff) as u16;
         if sc == 0 {
             // Some keys (media keys of some keyboards) come without one.
@@ -279,6 +298,7 @@ impl State {
         if show {
             show_pointer();
         }
+        let _ = self.out.send(Out::Arrived);
     }
 
     // ---------- from the other PC ----------
@@ -296,6 +316,20 @@ impl State {
                 }
             }
             Cmd::Input { from, msg } => self.input(from, msg),
+            Cmd::ArmPaste(on) => self.armed = on,
+            Cmd::Paste => {
+                // Ctrl may still be down (held on the keyboard, or by the other PC).
+                let ctrl = pressed(VK_CONTROL);
+                let mut events = Vec::new();
+                if !ctrl {
+                    events.push(vk_key(VK_LCONTROL, true));
+                }
+                events.extend([vk_key(VK_V as VIRTUAL_KEY, true), vk_key(VK_V as VIRTUAL_KEY, false)]);
+                if !ctrl {
+                    events.push(vk_key(VK_LCONTROL, false));
+                }
+                send(&events);
+            }
         }
     }
 
@@ -312,6 +346,7 @@ impl State {
                 let at = entry_point(edge, pos);
                 move_to(at);
                 self.receiving = Some(Receiving { id: from, edge, pos: at, keys: Vec::new(), buttons: [false; 5] });
+                let _ = self.out.send(Out::Arrived);
             }
             MouseMsg::Leave { pos } => {
                 if let Some(s) = self.sending.as_ref().filter(|s| s.id == from) {
@@ -346,6 +381,16 @@ impl State {
                         send(&events);
                     }
                     MouseMsg::Key { sc, down } => {
+                        // The other PC's Ctrl+V, held back like this PC's own.
+                        // SAFETY: plain values.
+                        let is_v = sc & 0xff00 == 0 && unsafe { MapVirtualKeyW(sc as u32, MAPVK_VSC_TO_VK) } == VK_V;
+                        if is_v {
+                            let ctrl = r.keys.iter().any(|k| SC_CTRL.contains(k));
+                            if self.hold_paste(down, ctrl) {
+                                return;
+                            }
+                        }
+                        let Some(r) = self.receiving.as_mut() else { return };
                         r.keys.retain(|&k| k != sc);
                         if down {
                             r.keys.push(sc);
@@ -574,6 +619,26 @@ fn button(b: u8, down: bool) -> INPUT {
         (b, false) => (MOUSEEVENTF_XUP, if b == 4 { 2 } else { 1 }),
     };
     mouse(0, 0, data, flags)
+}
+
+/// The virtual key of V (Ctrl+V pastes by it, wherever the layout puts it).
+const VK_V: u32 = 0x56;
+
+fn pressed(vk: VIRTUAL_KEY) -> bool {
+    // SAFETY: plain values.
+    unsafe { GetAsyncKeyState(vk as i32) as u16 & 0x8000 != 0 }
+}
+
+/// A key by its virtual key.
+fn vk_key(vk: VIRTUAL_KEY, down: bool) -> INPUT {
+    // SAFETY: plain values.
+    let scan = unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) } as u16;
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: if down { 0 } else { KEYEVENTF_KEYUP }, time: 0, dwExtraInfo: 0 },
+        },
+    }
 }
 
 /// A key by its scan code, so this PC's keyboard layout decides what it types.

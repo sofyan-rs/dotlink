@@ -43,14 +43,14 @@ pub use macos::*;
 /// Shared mouse: not yet on Linux (Windows and macOS: `<os>/shared_mouse.rs`).
 #[cfg(target_os = "linux")]
 pub mod shared_mouse {
-    use crate::shared_mouse::{Cmd, MouseMsg};
+    use crate::shared_mouse::{Cmd, Out};
     use anyhow::{Result, bail};
     use tokio::sync::mpsc::UnboundedSender;
 
     pub struct SharedMouse;
 
     impl SharedMouse {
-        pub fn start(_out: UnboundedSender<(String, MouseMsg)>) -> Result<Self> {
+        pub fn start(_out: UnboundedSender<Out>) -> Result<Self> {
             bail!("not supported on this OS yet")
         }
 
