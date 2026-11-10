@@ -1140,11 +1140,20 @@ impl MainView {
             } else if d.online && !d.shared_mouse {
                 format!("{} needs this version of Dotlink, on Windows or macOS, for the pointer to go over to it.", d.name)
             } else {
-                format!(
-                    "Where {}'s screen is: push the pointer past that edge to use this mouse and keyboard there. Ctrl+Alt+Esc brings the pointer back.",
-                    d.name
-                )
+                format!("Where {}'s screen is: push the pointer past that edge to use this mouse and keyboard there.", d.name)
             };
+            // Its own line, kept whole: wrapped, "Ctrl" and "+Alt+Esc" ended up on two lines.
+            let escape = (supported && !(d.online && !d.shared_mouse)).then(|| {
+                let keys = if cfg!(target_os = "macos") { "Ctrl+⌥+Esc" } else { "Ctrl+Alt+Esc" };
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_x(px(4.))
+                    .text_size(px(13.))
+                    .text_color(p.ink_muted)
+                    .child(div().whitespace_nowrap().font_family(MONO).text_color(p.ink).child(keys))
+                    .child("brings the pointer back.")
+            });
             let selected = SIDES.iter().position(|s| *s == d.screen.as_deref()).unwrap_or(0);
             let (view, id) = (cx.entity().downgrade(), d.id.clone());
             group(p).child(
@@ -1160,7 +1169,8 @@ impl MainView {
                                 .flex()
                                 .flex_col()
                                 .child("Shared mouse")
-                                .child(div().text_size(px(13.)).text_color(p.ink_muted).child(detail)),
+                                .child(div().text_size(px(13.)).text_color(p.ink_muted).child(detail))
+                                .children(escape),
                         )
                         .when(supported, |col| {
                             col.child(segmented(p, "screen-side", &["OFF", "LEFT", "RIGHT", "ABOVE", "BELOW"], selected, move |i, cx| {
