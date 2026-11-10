@@ -12,9 +12,9 @@
 //! | `t` | from | what |
 //! |---|---|---|
 //! | `mouse_enter` | driver | the pointer comes in through `edge` of the receiver's screens, at `pos` (0 to 1 along it) |
-//! | `mouse_move` | driver | pointer motion in the driver's pixels |
+//! | `mouse_move` | driver | pointer motion in logical pixels (a Mac's points, a Windows PC's pixels at 100 %), fractions kept |
 //! | `mouse_btn` | driver | button `b` (0 left, 1 right, 2 middle, 3 back, 4 forward) down or up |
-//! | `mouse_wheel` | driver | wheel, 120 per notch; positive `y` away from the user, positive `x` right |
+//! | `mouse_wheel` | driver | scrolling, 120 per wheel notch ([WHEEL_PIXELS] logical pixels); positive `y` away from the user, positive `x` right; `smooth`: from a trackpad (or a precision wheel) rather than notches |
 //! | `mouse_key` | driver | key `sc` down or up: a PC/AT set 1 scan code, `0xE0xx` for the extended ones |
 //! | `mouse_leave` | receiver | the pointer went back out the edge it came in, at `pos` |
 //! | `mouse_stop` | either | that PC's own mouse moved (receiver), or Ctrl+Alt+Esc (driver): it's over |
@@ -30,7 +30,7 @@ use crate::server::App;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 
@@ -40,11 +40,16 @@ pub enum MouseMsg {
     #[serde(rename = "mouse_enter")]
     Enter { edge: ScreenSide, pos: f32 },
     #[serde(rename = "mouse_move")]
-    Move { x: i32, y: i32 },
+    Move { x: f32, y: f32 },
     #[serde(rename = "mouse_btn")]
     Btn { b: u8, down: bool },
     #[serde(rename = "mouse_wheel")]
-    Wheel { x: i32, y: i32 },
+    Wheel {
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        smooth: bool,
+    },
     #[serde(rename = "mouse_key")]
     Key { sc: u16, down: bool },
     #[serde(rename = "mouse_leave")]
@@ -52,6 +57,10 @@ pub enum MouseMsg {
     #[serde(rename = "mouse_stop")]
     Stop,
 }
+
+/// Logical pixels one wheel notch (120) scrolls, as Chrome and Edge scroll it: a trackpad's
+/// pixels turn into wheel units and back by this, so content follows the fingers.
+pub const WHEEL_PIXELS: f32 = 100.;
 
 /// How long scroll steps are gathered into one ([forward]).
 const WHEEL_BATCH: std::time::Duration = std::time::Duration::from_millis(12);
@@ -87,12 +96,19 @@ pub struct SharedMouse {
     /// The linked PCs whose Dotlink said it takes part (`mouse` in their `hello` / `info`):
     /// only those get the pointer, else it would vanish into a PC that ignores it.
     capable: Mutex<HashSet<String>>,
+    /// Linked PC id → how much faster the pointer goes there than here (its Pointer speed).
+    speeds: Mutex<HashMap<String, f32>>,
 }
 
 impl SharedMouse {
     /// Whether it runs on this PC.
     pub fn running(&self) -> bool {
         self.inner.lock().unwrap().is_some()
+    }
+
+    /// The Pointer speed for a linked PC (by id).
+    fn speed(&self, id: &str) -> f32 {
+        self.speeds.lock().unwrap().get(id).copied().unwrap_or(1.)
     }
 
     /// Whether a linked PC (by id) takes part, as it said when it last connected.
@@ -176,11 +192,11 @@ async fn forward(app: Arc<App>, mut rx: mpsc::UnboundedReceiver<Out>) {
         // Mac's). Each one played as a wheel event of its own starts its own smooth-scroll
         // animation in Windows apps, and together they lag: the steps of a few milliseconds go
         // as one.
-        if let MouseMsg::Wheel { x, y } = &mut msg {
+        if let MouseMsg::Wheel { x, y, smooth } = &mut msg {
             let until = tokio::time::Instant::now() + WHEEL_BATCH;
             loop {
                 match tokio::time::timeout_at(until, rx.recv()).await {
-                    Ok(Some(Out::Mouse(other, MouseMsg::Wheel { x: dx, y: dy }))) if other == id => {
+                    Ok(Some(Out::Mouse(other, MouseMsg::Wheel { x: dx, y: dy, smooth: s }))) if other == id && s == *smooth => {
                         *x += dx;
                         *y += dy;
                     }
@@ -205,6 +221,9 @@ async fn forward(app: Arc<App>, mut rx: mpsc::UnboundedReceiver<Out>) {
                     }
                 }
             }
+            let speed = app.mouse.speed(&id);
+            *x *= speed;
+            *y *= speed;
         }
         let Ok(text) = serde_json::to_string(&msg) else { continue };
         if !app.send_to_pc(&id, text) {
@@ -226,20 +245,28 @@ pub fn set_capable(app: &App, id: &str, on: bool) {
 
 /// Tells the platform part which linked PCs are connected and where they are.
 pub fn refresh(app: &App) {
-    let pcs: Vec<(String, Option<ScreenSide>, bool)> = {
+    let pcs: Vec<(String, Option<ScreenSide>, bool, Option<f32>)> = {
         let state = app.state.lock().unwrap();
         state
             .peers
             .iter()
-            .map(|p| (p.id.clone(), p.screen, true))
-            .chain(state.devices.iter().filter(|d| d.kind == DeviceKind::Pc).map(|d| (d.id.clone(), d.screen, false)))
+            .map(|p| (p.id.clone(), p.screen, true, p.pointer_speed))
+            .chain(
+                state
+                    .devices
+                    .iter()
+                    .filter(|d| d.kind == DeviceKind::Pc)
+                    .map(|d| (d.id.clone(), d.screen, false, d.pointer_speed)),
+            )
             .collect()
     };
+    *app.mouse.speeds.lock().unwrap() =
+        pcs.iter().filter_map(|(id, _, _, speed)| Some((id.clone(), (*speed)?))).collect();
     let layout = pcs
         .into_iter()
-        .filter(|(id, _, joined)| if *joined { app.peers.online(id) } else { app.pc_connected(id) })
-        .filter(|(id, _, _)| app.mouse.capable(id))
-        .map(|(id, side, _)| (id, side))
+        .filter(|(id, _, joined, _)| if *joined { app.peers.online(id) } else { app.pc_connected(id) })
+        .filter(|(id, _, _, _)| app.mouse.capable(id))
+        .map(|(id, side, _, _)| (id, side))
         .collect();
     app.mouse.send(Cmd::Layout(layout));
 }
@@ -278,6 +305,31 @@ pub fn set_screen(app: &App, key: &str, side: Option<ScreenSide>) -> Result<Stri
     place(app, &id, side)?;
     let msg = json!({ "t": "mouse_layout", "side": side.map(|s| s.opposite().as_str()) });
     app.send_to_pc(&id, msg.to_string());
+    Ok(name)
+}
+
+/// How fast the pointer goes on a linked PC (`key`: its name or id), compared with this PC's
+/// own: 1 is the same speed. Returns its name.
+pub fn set_pointer_speed(app: &App, key: &str, speed: f32) -> Result<String> {
+    if !(0.25..=4.).contains(&speed) {
+        bail!("pointer speed goes from 0.25 to 4");
+    }
+    let speed = (speed != 1.).then_some(speed);
+    let mut state = app.state.lock().unwrap();
+    let name = if let Some(p) = state.peers.iter_mut().find(|p| p.id == key || p.name.eq_ignore_ascii_case(key)) {
+        p.pointer_speed = speed;
+        p.name.clone()
+    } else if let Some(d) =
+        state.devices.iter_mut().find(|d| d.kind == DeviceKind::Pc && (d.id == key || d.name.eq_ignore_ascii_case(key)))
+    {
+        d.pointer_speed = speed;
+        d.name.clone()
+    } else {
+        bail!("no linked PC \"{key}\"");
+    };
+    state.save()?;
+    drop(state);
+    app.emit(Event::Devices);
     Ok(name)
 }
 

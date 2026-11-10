@@ -892,6 +892,22 @@ impl Model {
         .detach();
     }
 
+    /// Shared mouse: how fast the pointer goes on a linked PC.
+    pub fn set_pointer_speed(&mut self, id: String, speed: f32, cx: &mut Context<Self>) {
+        let call = self.client.pointer_speed(&id, speed);
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| {
+                if let Err(e) = result {
+                    this.notice(capitalize(&format!("{e:#}")), true, cx);
+                }
+                this.refresh(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     pub fn set_clipboard_auto(&mut self, id: String, on: bool, cx: &mut Context<Self>) {
         let call = self.client.clipboard_auto(&id, on);
         cx.spawn(async move |this, cx| {

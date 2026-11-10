@@ -235,6 +235,14 @@ async fn handle(app: Arc<App>, stream: Stream) -> Result<()> {
             }));
             w.write_all(reply(msg).as_bytes()).await?;
         }
+        "pointer_speed" => {
+            let speed = req["speed"].as_f64().unwrap_or(1.) as f32;
+            let msg = result(
+                crate::shared_mouse::set_pointer_speed(&app, req["id"].as_str().unwrap_or(""), speed)
+                    .map(|name| format!("pointer speed on {name}: {speed}×")),
+            );
+            w.write_all(reply(msg).as_bytes()).await?;
+        }
         "clipboard_auto" => {
             let on = req["on"].as_bool().unwrap_or(false);
             let msg = result(app.set_clipboard_auto(req["id"].as_str().unwrap_or(""), on).map(|name| {

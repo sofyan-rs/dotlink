@@ -1160,6 +1160,33 @@ impl MainView {
             });
             let selected = SIDES.iter().position(|s| *s == d.screen.as_deref()).unwrap_or(0);
             let (view, id) = (cx.entity().downgrade(), d.id.clone());
+            // Once it's placed: how fast the pointer goes there.
+            const SPEEDS: [f32; 5] = [0.5, 0.75, 1., 1.5, 2.];
+            let speed = (supported && d.screen.is_some()).then(|| {
+                let current = SPEEDS.iter().position(|s| (s - d.pointer_speed).abs() < 0.01).unwrap_or(2);
+                let (view, id) = (view.clone(), d.id.clone());
+                row(p).border_t_1().border_color(p.line).child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(12.))
+                        .child(
+                            div().flex().flex_col().child("Pointer speed").child(
+                                div()
+                                    .text_size(px(13.))
+                                    .text_color(p.ink_muted)
+                                    .child(format!("How fast this mouse moves the pointer on {}, compared with here.", d.name)),
+                            ),
+                        )
+                        .child(segmented(p, "pointer-speed", &["0.5×", "0.75×", "1×", "1.5×", "2×"], current, move |i, cx| {
+                            let id = id.clone();
+                            view.update(cx, |this, cx| this.model.update(cx, |m, cx| m.set_pointer_speed(id, SPEEDS[i], cx)))
+                                .ok();
+                        })),
+                )
+            });
             group(p).child(
                 row(p).child(
                     div()
@@ -1184,6 +1211,7 @@ impl MainView {
                         }),
                 ),
             )
+            .children(speed)
         });
 
         let recent: Vec<&Transfer> = status.transfers.iter().filter(|t| t.device == d.name).take(3).collect();

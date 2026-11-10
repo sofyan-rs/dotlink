@@ -146,6 +146,9 @@ pub struct Device {
     /// A PC: where its screen is next to this one's, for the shared mouse. None: not shared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen: Option<ScreenSide>,
+    /// A PC: how fast the shared mouse moves its pointer, compared with this PC's. None: 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer_speed: Option<f32>,
     /// SHA-256 of the bearer token; the token itself is only known to the phone.
     pub token_sha256: String,
     pub paired_at: u64,
@@ -189,6 +192,9 @@ pub struct Peer {
     /// Where its screen is next to this one's, for the shared mouse. None: not shared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen: Option<ScreenSide>,
+    /// How fast the shared mouse moves its pointer, compared with this PC's. None: 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer_speed: Option<f32>,
 }
 
 /// Where another PC's screen is, seen from this one: the pointer goes over to it through this

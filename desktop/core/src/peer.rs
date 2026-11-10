@@ -228,6 +228,7 @@ fn save_peer(app: &Arc<App>, id: &str, name: &str, fingerprint: &str, addr: Sock
             clipboard_auto: false,
             renamed: false,
             screen: None,
+            pointer_speed: None,
         });
         state.save()?;
     }

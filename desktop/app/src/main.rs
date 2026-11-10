@@ -113,6 +113,9 @@ enum Cmd {
         #[arg(value_parser = ["left", "right", "above", "below", "off"])]
         side: String,
     },
+    /// Shared mouse: how fast the pointer goes on a linked PC, compared with this one (1: the
+    /// same; 0.25 to 4).
+    PointerSpeed { pc: String, speed: f32 },
     /// List paired phones and linked PCs.
     Devices,
     /// Forget a paired phone (by name or id).
@@ -335,6 +338,7 @@ async fn command(cmd: Cmd) -> Result<()> {
             })
             .await
         }
+        Cmd::PointerSpeed { pc, speed } => simple(json!({ "cmd": "pointer_speed", "id": pc, "speed": speed })).await,
         Cmd::Screen { pc, side } => {
             let side = (side != "off").then_some(side);
             simple(json!({ "cmd": "screen", "id": pc, "side": side })).await

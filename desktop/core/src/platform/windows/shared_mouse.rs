@@ -28,7 +28,9 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
-use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext};
+use windows_sys::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForMonitor, MDT_EFFECTIVE_DPI, SetThreadDpiAwarenessContext,
+};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -131,8 +133,12 @@ fn merge(cmds: Vec<Cmd>) -> Vec<Cmd> {
             && last_from == from
         {
             match (last, msg) {
-                (MouseMsg::Move { x, y }, MouseMsg::Move { x: dx, y: dy })
-                | (MouseMsg::Wheel { x, y }, MouseMsg::Wheel { x: dx, y: dy }) => {
+                (MouseMsg::Move { x, y }, MouseMsg::Move { x: dx, y: dy }) => {
+                    *x += dx;
+                    *y += dy;
+                    continue;
+                }
+                (MouseMsg::Wheel { x, y, smooth }, MouseMsg::Wheel { x: dx, y: dy, smooth: s }) if smooth == s => {
                     *x += dx;
                     *y += dy;
                     continue;
@@ -178,6 +184,9 @@ struct Sending {
     side: ScreenSide,
     /// Where the pointer waits, hidden; motion is measured from here.
     park: POINT,
+    /// Physical pixels per logical one on the monitor it waits on (1.5 at 150 %): motion goes
+    /// in logical pixels, so the other PC's scaling doesn't change its speed.
+    scale: f32,
     /// Where it left this screen.
     exit: POINT,
     ctrl: bool,
@@ -190,6 +199,10 @@ struct Receiving {
     /// The edge of this PC's screens it came in through, and goes back through.
     edge: ScreenSide,
     pos: POINT,
+    /// The fractions of a pixel motion and scrolling left, so slow moves add up instead of
+    /// being lost.
+    frac: (f32, f32),
+    wheel_rem: (f32, f32),
     keys: Vec<u16>,
     buttons: [bool; 5],
 }
@@ -245,7 +258,7 @@ impl State {
         let out = match msg {
             WM_MOUSEMOVE => {
                 let (x, y) = (info.pt.x - s.park.x, info.pt.y - s.park.y);
-                (x != 0 || y != 0).then_some(MouseMsg::Move { x, y })
+                (x != 0 || y != 0).then(|| MouseMsg::Move { x: x as f32 / s.scale, y: y as f32 / s.scale })
             }
             WM_LBUTTONDOWN => Some(MouseMsg::Btn { b: 0, down: true }),
             WM_LBUTTONUP => Some(MouseMsg::Btn { b: 0, down: false }),
@@ -255,8 +268,9 @@ impl State {
             WM_MBUTTONUP => Some(MouseMsg::Btn { b: 2, down: false }),
             WM_XBUTTONDOWN => Some(MouseMsg::Btn { b: x_button, down: true }),
             WM_XBUTTONUP => Some(MouseMsg::Btn { b: x_button, down: false }),
-            WM_MOUSEWHEEL => Some(MouseMsg::Wheel { x: 0, y: high }),
-            WM_MOUSEHWHEEL => Some(MouseMsg::Wheel { x: high, y: 0 }),
+            // A precision touchpad or a free-spinning wheel scrolls in less than notches.
+            WM_MOUSEWHEEL => Some(MouseMsg::Wheel { x: 0., y: high as f32, smooth: high % 120 != 0 }),
+            WM_MOUSEHWHEEL => Some(MouseMsg::Wheel { x: high as f32, y: 0., smooth: high % 120 != 0 }),
             _ => None,
         };
         if let Some(out) = out {
@@ -280,7 +294,7 @@ impl State {
         unsafe { SetCursorPos(park.x, park.y) };
         hide_pointer();
         self.emit(&id, MouseMsg::Enter { edge: side.opposite(), pos: fraction(side, pt) });
-        self.sending = Some(Sending { id, side, park, exit: pt, ctrl: false, alt: false });
+        self.sending = Some(Sending { id, side, park, scale: monitor_scale(park), exit: pt, ctrl: false, alt: false });
         true
     }
 
@@ -369,7 +383,15 @@ impl State {
                 self.end_receiving(false);
                 let at = entry_point(edge, pos);
                 move_to(at);
-                self.receiving = Some(Receiving { id: from, edge, pos: at, keys: Vec::new(), buttons: [false; 5] });
+                self.receiving = Some(Receiving {
+                    id: from,
+                    edge,
+                    pos: at,
+                    frac: (0., 0.),
+                    wheel_rem: (0., 0.),
+                    keys: Vec::new(),
+                    buttons: [false; 5],
+                });
                 let _ = self.out.send(Out::Arrived);
             }
             MouseMsg::Leave { pos } => {
@@ -394,13 +416,18 @@ impl State {
                         r.buttons[b as usize] = down;
                         send(&[button(b, down)]);
                     }
-                    MouseMsg::Wheel { x, y } => {
+                    MouseMsg::Wheel { x, y, .. } => {
+                        // Windows' wheel units are the protocol's (120 a notch); apps that scroll
+                        // smoothly take less than a notch.
+                        let (fx, fy) = (x + r.wheel_rem.0, y + r.wheel_rem.1);
+                        let (wx, wy) = (fx.trunc(), fy.trunc());
+                        r.wheel_rem = (fx - wx, fy - wy);
                         let mut events = Vec::new();
-                        if y != 0 {
-                            events.push(mouse(0, 0, y, MOUSEEVENTF_WHEEL));
+                        if wy != 0. {
+                            events.push(mouse(0, 0, wy as i32, MOUSEEVENTF_WHEEL));
                         }
-                        if x != 0 {
-                            events.push(mouse(0, 0, x, MOUSEEVENTF_HWHEEL));
+                        if wx != 0. {
+                            events.push(mouse(0, 0, wx as i32, MOUSEEVENTF_HWHEEL));
                         }
                         send(&events);
                     }
@@ -427,9 +454,17 @@ impl State {
         }
     }
 
-    fn receive_move(&mut self, dx: i32, dy: i32) {
+    fn receive_move(&mut self, dx: f32, dy: f32) {
         let Some(r) = self.receiving.as_mut() else { return };
-        let target = POINT { x: r.pos.x + dx, y: r.pos.y + dy };
+        // Logical pixels to this monitor's physical ones, the fractions kept for the next move.
+        let scale = monitor_scale(r.pos);
+        let (fx, fy) = (dx * scale + r.frac.0, dy * scale + r.frac.1);
+        let (px, py) = (fx.trunc(), fy.trunc());
+        r.frac = (fx - px, fy - py);
+        if px == 0. && py == 0. {
+            return;
+        }
+        let target = POINT { x: r.pos.x + px as i32, y: r.pos.y + py as i32 };
         let next = if monitor_rect(target, MONITOR_DEFAULTTONULL).is_some() {
             target
         } else {
@@ -469,6 +504,17 @@ impl State {
 }
 
 // ---------- screens ----------
+
+/// Physical pixels per logical one on the monitor at `pt`: its scaling (1.5 at 150 %).
+fn monitor_scale(pt: POINT) -> f32 {
+    let mut dpi = (96u32, 96u32);
+    // SAFETY: plain values and two out-parameters.
+    let found = unsafe {
+        let monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi.0, &mut dpi.1)
+    };
+    if found == 0 && dpi.0 > 0 { dpi.0 as f32 / 96. } else { 1. }
+}
 
 fn monitor_rect(pt: POINT, flags: MONITOR_FROM_FLAGS) -> Option<RECT> {
     unsafe {
@@ -691,13 +737,14 @@ mod tests {
     #[test]
     fn piled_up_motion_and_scrolling_merge() {
         let merged = merge(vec![
-            input("a", MouseMsg::Move { x: 1, y: 2 }),
-            input("a", MouseMsg::Move { x: 3, y: -1 }),
-            input("a", MouseMsg::Wheel { x: 0, y: 6 }),
-            input("a", MouseMsg::Wheel { x: 0, y: 9 }),
+            input("a", MouseMsg::Move { x: 1., y: 2.5 }),
+            input("a", MouseMsg::Move { x: 3., y: -1. }),
+            input("a", MouseMsg::Wheel { x: 0., y: 6., smooth: true }),
+            input("a", MouseMsg::Wheel { x: 0., y: 9., smooth: true }),
+            input("a", MouseMsg::Wheel { x: 0., y: 120., smooth: false }),
             input("a", MouseMsg::Btn { b: 0, down: true }),
-            input("a", MouseMsg::Move { x: 1, y: 0 }),
-            input("b", MouseMsg::Move { x: 5, y: 5 }),
+            input("a", MouseMsg::Move { x: 1., y: 0. }),
+            input("b", MouseMsg::Move { x: 5., y: 5. }),
         ]);
         let msgs: Vec<(String, MouseMsg)> = merged
             .into_iter()
@@ -709,11 +756,12 @@ mod tests {
         assert_eq!(
             msgs,
             [
-                ("a".into(), MouseMsg::Move { x: 4, y: 1 }),
-                ("a".into(), MouseMsg::Wheel { x: 0, y: 15 }),
+                ("a".into(), MouseMsg::Move { x: 4., y: 1.5 }),
+                ("a".into(), MouseMsg::Wheel { x: 0., y: 15., smooth: true }),
+                ("a".into(), MouseMsg::Wheel { x: 0., y: 120., smooth: false }),
                 ("a".into(), MouseMsg::Btn { b: 0, down: true }),
-                ("a".into(), MouseMsg::Move { x: 1, y: 0 }),
-                ("b".into(), MouseMsg::Move { x: 5, y: 5 }),
+                ("a".into(), MouseMsg::Move { x: 1., y: 0. }),
+                ("b".into(), MouseMsg::Move { x: 5., y: 5. }),
             ]
         );
     }

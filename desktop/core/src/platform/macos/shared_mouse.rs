@@ -21,11 +21,11 @@ use super::input::{
     CFRelease, CGDisplayBounds, CGEventCreateKeyboardEvent, CGEventCreateMouseEvent, CGEventCreateScrollWheelEvent2,
     CGEventGetLocation, CGEventRef, CGEventSetFlags, CGEventSetIntegerValueField, CGGetActiveDisplayList, CGPoint, CGRect,
     CFTypeRef, CLICK_STATE, COMMAND, CONTROL, DELTA_X, DELTA_Y, DOUBLE_CLICK, Event, LEFT_DOWN, LEFT_DRAGGED, LEFT_UP,
-    MOVED, NOTCH_PIXELS, OPTION, OTHER_DOWN, OTHER_DRAGGED, OTHER_UP, RIGHT_DOWN, RIGHT_DRAGGED, RIGHT_UP, SCROLL_PIXELS,
+    MOVED, OPTION, OTHER_DOWN, OTHER_DRAGGED, OTHER_UP, RIGHT_DOWN, RIGHT_DRAGGED, RIGHT_UP, SCROLL_PIXELS,
     SHIFT, kCFBooleanTrue,
 };
 use crate::config::ScreenSide;
-use crate::shared_mouse::{Cmd, MouseMsg, Out};
+use crate::shared_mouse::{Cmd, MouseMsg, Out, WHEEL_PIXELS};
 use anyhow::{Result, anyhow, bail};
 use std::ffi::{c_char, c_void};
 use std::sync::atomic::{AtomicPtr, Ordering};
@@ -42,6 +42,7 @@ unsafe extern "C" {
     fn CGEventTapCreate(tap: u32, place: u32, options: u32, mask: u64, callback: TapCallback, info: *mut c_void) -> *mut c_void;
     fn CGEventTapEnable(tap: *mut c_void, enable: bool);
     fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
+    fn CGEventGetDoubleValueField(event: CGEventRef, field: u32) -> f64;
     fn CGEventGetFlags(event: CGEventRef) -> u64;
     fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
     fn CGAssociateMouseAndMouseCursorPosition(connected: u32) -> i32;
@@ -75,8 +76,13 @@ const TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 // CGEventField
 const BUTTON_NUMBER: u32 = 3;
 const KEYCODE: u32 = 9;
+const DELTA_AXIS_1: u32 = 11;
+const DELTA_AXIS_2: u32 = 12;
+const SCROLL_CONTINUOUS: u32 = 88;
 const POINT_DELTA_AXIS_1: u32 = 96;
 const POINT_DELTA_AXIS_2: u32 = 97;
+/// CGScrollEventUnit: lines, which macOS scrolls like a mouse wheel (smoothed, accelerated).
+const SCROLL_LINES: u32 = 1;
 const USER_DATA: u32 = 42;
 /// CGEventFlags: Caps Lock is on.
 const ALPHA_SHIFT: u64 = 1 << 16;
@@ -291,8 +297,11 @@ impl State {
         };
         let msg = match kind {
             MOVED | LEFT_DRAGGED | RIGHT_DRAGGED | OTHER_DRAGGED => {
-                let (x, y) = (field(DELTA_X) as i32, field(DELTA_Y) as i32);
-                (x != 0 || y != 0).then_some(MouseMsg::Move { x, y })
+                // With their fractions: a trackpad moved slowly goes less than a point at a
+                // time, which whole points would lose (the pointer stuck, then jumping).
+                // SAFETY: a valid event.
+                let (x, y) = unsafe { (CGEventGetDoubleValueField(event, DELTA_X), CGEventGetDoubleValueField(event, DELTA_Y)) };
+                (x != 0. || y != 0.).then_some(MouseMsg::Move { x: x as f32, y: y as f32 })
             }
             LEFT_DOWN => Some(MouseMsg::Btn { b: 0, down: true }),
             LEFT_UP => Some(MouseMsg::Btn { b: 0, down: false }),
@@ -301,12 +310,17 @@ impl State {
             OTHER_DOWN => Some(MouseMsg::Btn { b: other_button(), down: true }),
             OTHER_UP => Some(MouseMsg::Btn { b: other_button(), down: false }),
             SCROLL_WHEEL => {
-                // Pixels; a wheel notch is about NOTCH_PIXELS. Positive axis 1 scrolls up, like
+                // Positive axis 1 scrolls up, like
                 // the PC's wheel; positive axis 2 scrolls left, the PC's right.
-                let per_pixel = 120. / NOTCH_PIXELS as f64;
-                let y = (field(POINT_DELTA_AXIS_1) as f64 * per_pixel).round() as i32;
-                let x = (-field(POINT_DELTA_AXIS_2) as f64 * per_pixel).round() as i32;
-                (x != 0 || y != 0).then_some(MouseMsg::Wheel { x, y })
+                let (x, y, smooth) = if field(SCROLL_CONTINUOUS) != 0 {
+                    // A trackpad (or Magic Mouse): its pixels, so content follows the fingers.
+                    let per_pixel = 120. / WHEEL_PIXELS;
+                    (-field(POINT_DELTA_AXIS_2) as f32 * per_pixel, field(POINT_DELTA_AXIS_1) as f32 * per_pixel, true)
+                } else {
+                    // A wheel: its notches (lines, accelerated by macOS).
+                    (-field(DELTA_AXIS_2) as f32 * 120., field(DELTA_AXIS_1) as f32 * 120., false)
+                };
+                (x != 0. || y != 0.).then_some(MouseMsg::Wheel { x, y, smooth })
             }
             KEY_DOWN | KEY_UP => {
                 let code = field(KEYCODE) as u16;
@@ -423,7 +437,7 @@ impl State {
                 }
                 self.end_receiving(false);
                 let at = entry_point(edge, pos);
-                post_mouse(MOVED, at, 0, (0, 0));
+                post_mouse(MOVED, at, 0, (0., 0.));
                 self.receiving = Some(Receiving {
                     id: from,
                     edge,
@@ -468,16 +482,22 @@ impl State {
                         };
                         post_button(b, down, r.pos, count);
                     }
-                    MouseMsg::Wheel { x, y } => {
-                        let fy = y as f32 / 120. * NOTCH_PIXELS + r.scroll_rem.1;
-                        let fx = -x as f32 / 120. * NOTCH_PIXELS + r.scroll_rem.0;
-                        let (px, py) = (fx.trunc() as i32, fy.trunc() as i32);
-                        r.scroll_rem = (fx - px as f32, fy - py as f32);
-                        if px != 0 || py != 0 {
+                    MouseMsg::Wheel { x, y, smooth } => {
+                        // A trackpad's scrolling in pixels; a wheel's in lines, which macOS
+                        // smooths and accelerates as it does its own mouse's (pixels for each
+                        // notch would jump). Positive wheel 2 scrolls left here.
+                        let (unit, per) = if smooth { (SCROLL_PIXELS, WHEEL_PIXELS / 120.) } else { (SCROLL_LINES, 1. / 120.) };
+                        let (fx, fy) = (-x * per + r.scroll_rem.0, y * per + r.scroll_rem.1);
+                        let (px, py) = (fx.trunc(), fy.trunc());
+                        r.scroll_rem = (fx - px, fy - py);
+                        if px != 0. || py != 0. {
                             // SAFETY: plain values; checked by Event::new.
-                            if let Ok(event) =
-                                Event::new(unsafe { CGEventCreateScrollWheelEvent2(std::ptr::null(), SCROLL_PIXELS, 2, py, px, 0) })
-                            {
+                            if let Ok(event) = Event::new(unsafe {
+                                CGEventCreateScrollWheelEvent2(std::ptr::null(), unit, 2, py as i32, px as i32, 0)
+                            }) {
+                                // Continuous like a trackpad's, so apps don't take pixels for lines.
+                                // SAFETY: a valid event.
+                                unsafe { CGEventSetIntegerValueField(event.0, SCROLL_CONTINUOUS, i64::from(smooth)) };
                                 post(event);
                             }
                         }
@@ -505,7 +525,7 @@ impl State {
         }
     }
 
-    fn receive_move(&mut self, dx: i32, dy: i32) {
+    fn receive_move(&mut self, dx: f32, dy: f32) {
         let Some(r) = self.receiving.as_mut() else { return };
         let screens = displays();
         let target = CGPoint { x: r.pos.x + dx as f64, y: r.pos.y + dy as f64 };
@@ -688,14 +708,14 @@ fn post(event: Event) {
     event.post();
 }
 
-fn post_mouse(kind: u32, at: CGPoint, button: u32, delta: (i32, i32)) {
+fn post_mouse(kind: u32, at: CGPoint, button: u32, delta: (f32, f32)) {
     // SAFETY: plain values; checked by Event::new.
     let Ok(event) = Event::new(unsafe { CGEventCreateMouseEvent(std::ptr::null(), kind, at, button) }) else { return };
     // Games and 3D apps read the deltas, not the position.
     // SAFETY: a valid event.
     unsafe {
-        CGEventSetIntegerValueField(event.0, DELTA_X, delta.0 as i64);
-        CGEventSetIntegerValueField(event.0, DELTA_Y, delta.1 as i64);
+        CGEventSetIntegerValueField(event.0, DELTA_X, delta.0.round() as i64);
+        CGEventSetIntegerValueField(event.0, DELTA_Y, delta.1.round() as i64);
     }
     post(event);
 }

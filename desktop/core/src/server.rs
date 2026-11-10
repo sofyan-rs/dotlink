@@ -352,6 +352,7 @@ impl App {
                     "sensitive_notifications": phones.get(&d.id).map(|p| p.sensitive_notifications),
                     "media": phones.get(&d.id).and_then(|p| p.media.clone()).filter(|_| online.get(&d.id).copied().unwrap_or(0) > 0),
                     "screen": d.screen,
+                    "pointer_speed": d.pointer_speed.unwrap_or(1.),
                     "shared_mouse": self.mouse.capable(&d.id),
                 })
             })
@@ -367,6 +368,7 @@ impl App {
                     "joined": true,
                     "clipboard_auto": p.clipboard_auto,
                     "screen": p.screen,
+                    "pointer_speed": p.pointer_speed.unwrap_or(1.),
                     "shared_mouse": self.mouse.capable(&p.id),
                     "battery": self.peers.battery(&p.id).map(|(level, charging)| json!({ "level": level, "charging": charging })),
                 })
@@ -1206,6 +1208,7 @@ fn add_device(app: &App, id: &str, name: &str, kind: DeviceKind, done: Option<on
             notifications: None,
             copy_codes: None,
             screen: None,
+            pointer_speed: None,
             token_sha256: sha256_hex(token.as_bytes()),
             paired_at: now_secs(),
         });
