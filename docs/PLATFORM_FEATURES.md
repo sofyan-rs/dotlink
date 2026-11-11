@@ -44,6 +44,9 @@ isn't supported. macOS: 13 Ventura or newer.
 | Media control, both ways | 🔧 | 🔧 | 🟡 (Spotify, Music) |
 | Pause the PC's media on calls | 🔧 | 🔧 | 🟡 |
 | The laptop's battery on the phone | 🔧 | 🔧 | 🟡 |
+| Shared mouse and keyboard between PCs | ❌ | ✅ | ✅ |
+| … across more than two PCs (relaying) | ❌ | 🟡 | 🟡 |
+| Pasting files copied on another PC | ❌ | ✅ | ✅ |
 | Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (unsigned) | ✅ universal .dmg (x86_64 + arm64) from the release workflow, signed ad hoc |
 
 ## Wi-Fi or USB
@@ -150,6 +153,30 @@ Messages in `core/src/input.rs`; key names are the same everywhere (`ENTER`, `F5
 | Text | US layout mapping only | any character, any layout | — |
 | Permission | udev rule (Setup) | none; can't reach elevated windows (UAC, Task Manager) | — |
 | Status | ✅ | ✅ move, click L/R/M, combos, typing, Backspace from the phone; scroll and Unicode (`é ß 😀 日本`) tested on the PC directly | ✅ move, click, drag, scroll, keys, typing from the phone |
+
+### Shared mouse (between PCs)
+
+`core/src/shared_mouse.rs` (messages, relaying) and `platform/{windows,macos}/shared_mouse.rs`.
+Tested between Windows 11 and a MacBook Air (M1), each way, with the mouse on either side.
+
+| | Linux | Windows | macOS |
+|---|---|---|---|
+| Watching the mouse and keyboard | — | `WH_MOUSE_LL` / `WH_KEYBOARD_LL` on a thread with its own message loop, per-monitor DPI aware | Quartz event tap (session, head insert), switched back on when macOS times it out |
+| Driving another PC | — | pointer parked mid-monitor, system cursors swapped for a blank one (`SetSystemCursor`, restored with `SPI_SETCURSORS`); motion = distance from the parked point ÷ the monitor's scaling | pointer detached (`CGAssociateMouseAndMouseCursorPosition`) and hidden (`CGDisplayHideCursor`, with the private `SetsCursorInBackground` looked up at run time); motion = the events' fractional deltas |
+| Driven by another PC | — | `SendInput`: absolute moves over the virtual desktop, keys by scan code | CGEvents: moves and drags, clicks with click counts, keys by Mac key code (Ctrl ↔ ⌘), scrolling in pixels (trackpad) or lines (wheel) |
+| Permission | — | none; can't reach elevated windows | Accessibility (Dotlink restarted after allowing it) |
+| Status | ❌ | ✅ | ✅ |
+
+### Copied files (between PCs)
+
+`core/src/clip_files.rs`: the file list through arboard (polled with the text), files fetched
+into a temporary folder, Ctrl+V / ⌘V held back through the shared mouse's hooks.
+
+| | Linux | Windows | macOS |
+|---|---|---|---|
+| Copying (sending the list) | — | `CF_HDROP` | file URLs on the pasteboard |
+| Pasting (files put on the clipboard) | — | clipboard emptied, then `CF_HDROP` | file URLs (paths compared with links resolved) |
+| Status | ❌ | ✅ both ways with a Mac | ✅ both ways with a Windows PC |
 
 ### Cast (phone screen on the PC)
 

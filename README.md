@@ -23,6 +23,9 @@ are supported, and so is macOS (the webcam goes through OBS).
 | **Ring** | | **Ring** in the phone's ⋯ menu, or `dotlink ring`: full volume, even on silent |
 | **Battery** | The phone's level on its page and in the sidebar | A laptop's level under its name in the phone app |
 
+Between two PCs: files, the clipboard (copied files and folders too), and one mouse and keyboard
+for both (see [Linking two PCs](#linking-two-pcs)).
+
 Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on the phone. Turn on
 **Ask before receiving files** in Settings (PC or phone) to Accept or Decline each one first.
 
@@ -231,8 +234,12 @@ dotlink                              open the app
 dotlink pair [--usb]                 show a pairing QR code (--usb: open it on the phone on the cable)
 dotlink send [--to PHONE] FILE...    send files
 dotlink clip [--to PHONE]            send the PC clipboard
-dotlink devices                      list paired phones
+dotlink devices                      list paired phones and linked PCs
 dotlink unpair PHONE                 forget a phone
+dotlink join LINK | PC --code CODE   link this PC to another one
+dotlink clip-auto DEVICE on|off      send clipboard changes (and copied files, to a PC) as they happen
+dotlink screen PC left|right|above|below|off    where a linked PC's screen is (shared mouse)
+dotlink pointer-speed PC SPEED       shared mouse speed on that PC (0.25 to 4, 1 = as here)
 dotlink camera on|off [--to PHONE]   phone camera as Dotlink Camera
 dotlink mic on|off [--to PHONE]      phone mic as a microphone
 dotlink cast [stop] [--to PHONE]     show a phone's screen
@@ -273,6 +280,11 @@ Forget a phone from its page, **⋯ → Forget** (or `dotlink unpair`), to cut i
 - Remote typing uses a US keyboard layout on Linux; on Windows and macOS any layout works (on
   macOS, letters in shortcuts such as ⌘C are the US keys' positions).
 - One phone at a time streams the webcam (or the mic).
+- Shared mouse: Windows and macOS only for now. Like the Remote, it can't reach administrator
+  windows (UAC, Task Manager) or the sign-in and Ctrl+Alt+Del screens. Dragging something from
+  one PC to the other isn't possible: the pointer doesn't go over while a button is held.
+- Pasting files from another PC: Windows and macOS only; a paste waits until the files have
+  come, which for a big copy over Wi-Fi takes a while.
 - macOS: the phone shows the Mac's player only for Spotify and Music. Since macOS 15.4 the
   system's Now Playing doesn't answer other apps, so a browser playing YouTube isn't seen.
 - Windows: Windows 11 only; the mic needs VB-CABLE.
@@ -287,6 +299,7 @@ Forget a phone from its page, **⋯ → Forget** (or `dotlink unpair`), to cut i
 | Files, clipboard, shell, remote, Cast | ✅ | ✅ | ✅ |
 | Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | ✅ (webcam through OBS, mic through BlackHole) |
 | Tray, start at login, Setup | ✅ | ✅ | ✅ menu bar, notifications |
+| Shared mouse and keyboard, pasting files between PCs | ❌ | ✅ | ✅ |
 | Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (not signed yet) | ✅ .dmg (no Developer ID) |
 
 How each feature is built per OS and what has been tested:

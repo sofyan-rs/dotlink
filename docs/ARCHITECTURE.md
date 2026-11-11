@@ -111,8 +111,9 @@ All requests carry `Authorization: Bearer <token>` except `/pair`. The PC stores
 token's SHA-256.
 
 Each paired device has a kind, `phone` or `pc` (`/pair` takes `kind`; phones leave it out). A
-PC linked to this one gets files and the clipboard only: `/ws/input`, `/ws/term`, `/terms`,
-`/ws/camera` and `/ws/mic` answer it with 403, and camera, mic and Cast only pick phones.
+PC linked to this one gets files, the clipboard and the shared mouse (over `/ws/control`):
+`/ws/input`, `/ws/term`, `/terms`, `/ws/camera` and `/ws/mic` answer it with 403, and camera,
+mic and Cast only pick phones.
 
 | Endpoint | Use |
 |---|---|
@@ -230,6 +231,50 @@ its row, or `dotlink clip-auto <device> on|off`). Unset, it's on for a phone and
 since two PCs copying would keep overwriting each other. The old global `clipboard_sync = false`
 is carried over to every device once, at startup.
 `dotlink clip` and `dotlink send` reach linked PCs like phones.
+
+Messages to a PC that joined this one go through its own queue (`App::pc_tx`, `send_to_pc`), not
+the broadcast channel phones share: that one drops messages when a connection falls behind, and
+a lost key-up would leave a key held down.
+
+**Shared mouse** (`shared_mouse.rs`, `platform/{windows,macos}/shared_mouse.rs`). Each linked PC
+can be placed on a side of this PC's screen (`screen` in `state.json`, `dotlink screen`); the
+other PC is told (`mouse_layout`) and places this one on the opposite side. Every PC both sends
+and receives: the one whose own mouse moved drives. The platform part watches the local mouse
+and keyboard (Windows: `WH_MOUSE_LL` / `WH_KEYBOARD_LL` on a thread of their own; macOS: a
+Quartz event tap) and, at an outer screen edge with a PC beyond it, parks and hides the pointer
+and sends what it swallows:
+
+| `t` | from | what |
+|---|---|---|
+| `mouse_enter` | driver | the pointer comes in through `edge`, at `pos` (0 to 1 along it) |
+| `mouse_move` | driver | motion in logical pixels (points, pixels at 100 %), fractions kept |
+| `mouse_btn`, `mouse_wheel`, `mouse_key` | driver | buttons; scrolling in 120ths of a notch (`smooth` from a trackpad); keys as PC/AT set 1 scan codes |
+| `mouse_leave` | receiver | the pointer went back out the edge it came in, at `pos` |
+| `mouse_stop` | either | that PC's own mouse moved, or Ctrl+Alt+Esc: it's over |
+
+The receiver places the pointer absolutely (its own acceleration doesn't add to the driver's),
+turns logical pixels into its own by its scaling, and lets go of every key and button the
+driver holds when it ends. Scan codes keep the receiver's keyboard layout; a Mac swaps Ctrl and
+⌘ on the way in and out. Pointer speed per PC (`pointer_speed`) scales the moves sent.
+Trackpad scroll steps within 12 ms go as one, and moves and scrolls that pile up are merged.
+A PC only sends to PCs whose `hello` / `info` said `mouse: true`.
+
+More than two PCs: when the pointer driven here goes out an edge with a third PC beyond it,
+this PC relays (`Out::Exit`): it sends that PC `mouse_enter`, passes on what the driver sends,
+and takes the pointer back on its `mouse_leave`. Chains relay hop by hop.
+
+**Copied files** (`clip_files.rs`). With clipboard sync on, files and folders copied in
+Explorer or Finder (arboard's file list, polled with the text) are offered to the linked PCs as
+a list: `clip_files` with a `set` id and `items` (`/`-separated paths, sizes, an id per file).
+Nothing moves until it's needed: up to 64 MB right away, up to 2 GB when the shared mouse brings
+the pointer over, otherwise on paste, which the shared mouse holds back (Ctrl+V / ⌘V) until the
+files are here and then presses again. The PC that joined downloads them with
+`GET /download/{id}`; the PC that was joined asks with `clip_get` and gets them uploaded
+(`POST /upload?req=…`, as Browse files does with a phone; `clip_error` when it can't). They land
+in a temporary folder (`dotlink-clipboard` in the temp dir) and go on the clipboard as files,
+which is emptied first (Explorer would otherwise paste an earlier copy's Shell IDList). Files in
+that folder are never offered back, and paths are compared with links resolved (macOS reads
+`/var/folders` back as `/private/var/folders`), so a copy doesn't bounce between the PCs.
 
 **Joining with a code.** The joining PC lists the others from mDNS (`nearby`: `_dotlink._tcp`
 with `id`, `fp` = the first 16 hex digits of the fingerprint, and `n` = the name), connects to the
