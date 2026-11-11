@@ -452,6 +452,7 @@ impl State {
                         r.buttons[b as usize] = down;
                         send(&[button(b, down)]);
                     }
+                    MouseMsg::Wheel { x, y, smooth: true } => smoother().add(x, y),
                     MouseMsg::Wheel { x, y, .. } => {
                         // Windows' wheel units are the protocol's (120 a notch); apps that scroll
                         // smoothly take less than a notch.
@@ -552,6 +553,7 @@ impl State {
     fn end_receiving(&mut self, tell: bool) {
         let Some(mut r) = self.receiving.take() else { return };
         release(&mut r);
+        smoother().clear();
         if tell {
             self.emit(&r.id, MouseMsg::Stop);
         }
@@ -559,6 +561,79 @@ impl State {
 }
 
 // ---------- screens ----------
+
+/// A trackpad's scrolling played out at an even pace. Its steps come over the network unevenly
+/// (Wi-Fi delivers them in bunches), and Windows apps scroll by each wheel event as it comes:
+/// played as they arrive, scrolling stutters. Windows has no way to inject precision-touchpad
+/// input, only wheel events, so this thread gives them a steady rhythm instead: about every
+/// [SMOOTH_TICK] it plays [SMOOTH_SHARE] of what's left, a few tens of milliseconds behind the
+/// fingers.
+struct Smoother {
+    /// What's left to scroll (wheel units), and the fraction of a unit not played yet.
+    pending: Mutex<((f32, f32), (f32, f32))>,
+    wake: std::sync::Condvar,
+}
+
+const SMOOTH_TICK: std::time::Duration = std::time::Duration::from_millis(8);
+const SMOOTH_SHARE: f32 = 0.3;
+
+fn smoother() -> &'static Smoother {
+    static SMOOTHER: std::sync::OnceLock<&'static Smoother> = std::sync::OnceLock::new();
+    SMOOTHER.get_or_init(|| {
+        let s: &'static Smoother = Box::leak(Box::new(Smoother { pending: Mutex::new(((0., 0.), (0., 0.))), wake: Default::default() }));
+        let _ = std::thread::Builder::new().name("smooth-scroll".into()).spawn(move || s.run());
+        s
+    })
+}
+
+impl Smoother {
+    fn add(&self, x: f32, y: f32) {
+        let mut p = self.pending.lock().unwrap();
+        p.0.0 += x;
+        p.0.1 += y;
+        self.wake.notify_one();
+    }
+
+    /// Drops what's left (the pointer left this PC).
+    fn clear(&self) {
+        *self.pending.lock().unwrap() = ((0., 0.), (0., 0.));
+    }
+
+    fn run(&self) {
+        loop {
+            let (dx, dy) = {
+                let mut p = self.pending.lock().unwrap();
+                while p.0.0.abs() < 0.5 && p.0.1.abs() < 0.5 {
+                    p.0 = (0., 0.);
+                    p = self.wake.wait(p).unwrap();
+                }
+                smooth_step(&mut p)
+            };
+            let mut events = Vec::new();
+            if dy != 0 {
+                events.push(mouse(0, 0, dy, MOUSEEVENTF_WHEEL));
+            }
+            if dx != 0 {
+                events.push(mouse(0, 0, dx, MOUSEEVENTF_HWHEEL));
+            }
+            send(&events);
+            // High resolution on Windows (Rust uses a high-resolution waitable timer).
+            std::thread::sleep(SMOOTH_TICK);
+        }
+    }
+}
+
+/// One tick of [Smoother]: a share of what's left (the last bit all at once, so it doesn't
+/// trail off), in whole wheel units, the fraction kept for the next tick.
+fn smooth_step(p: &mut ((f32, f32), (f32, f32))) -> (i32, i32) {
+    let step = |left: f32| if left.abs() <= 2. { left } else { left * SMOOTH_SHARE };
+    let (sx, sy) = (step(p.0.0), step(p.0.1));
+    p.0 = (p.0.0 - sx, p.0.1 - sy);
+    let (fx, fy) = (sx + p.1.0, sy + p.1.1);
+    let (wx, wy) = (fx.trunc(), fy.trunc());
+    p.1 = (fx - wx, fy - wy);
+    (wx as i32, wy as i32)
+}
 
 /// Lets go of the keys and buttons held down through `r`.
 fn release(r: &mut Receiving) {
@@ -819,6 +894,27 @@ mod tests {
 
     fn input(from: &str, msg: MouseMsg) -> Cmd {
         Cmd::Input { from: from.into(), msg }
+    }
+
+    #[test]
+    fn smoothing_plays_out_all_of_the_scroll() {
+        let mut p = ((0., 0.), (0., 0.));
+        let mut played = (0, 0);
+        // Steps of a trackpad arriving in bunches, then the smoother draining them.
+        for (i, add) in [37.2f32, 0., 0., 61.5, 2.4, 0., 0., 0., 15., -4.].into_iter().enumerate() {
+            p.0.1 += add;
+            p.0.0 -= add / 2.;
+            let (x, y) = smooth_step(&mut p);
+            assert!(y.abs() <= 61, "tick {i} played {y}: not evened out");
+            played = (played.0 + x, played.1 + y);
+        }
+        for _ in 0..100 {
+            let (x, y) = smooth_step(&mut p);
+            played = (played.0 + x, played.1 + y);
+        }
+        // 112.1 in all: 112 whole units played, the fraction left over.
+        assert_eq!(played.1, 112);
+        assert_eq!(played.0, -56);
     }
 
     #[test]

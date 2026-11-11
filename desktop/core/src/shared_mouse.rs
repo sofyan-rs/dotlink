@@ -67,9 +67,6 @@ pub enum MouseMsg {
 /// pixels turn into wheel units and back by this, so content follows the fingers.
 pub const WHEEL_PIXELS: f32 = 100.;
 
-/// How long scroll steps are gathered into one ([forward]).
-const WHEEL_BATCH: std::time::Duration = std::time::Duration::from_millis(12);
-
 /// What the platform part tells.
 #[derive(Debug)]
 pub enum Out {
@@ -210,23 +207,19 @@ async fn forward(app: Arc<App>, mut rx: mpsc::UnboundedReceiver<Out>) {
             // This PC's own mouse took over (or Ctrl+Alt+Esc): no more relaying either way.
             app.mouse.relays.lock().unwrap().retain(|driver, to| *driver != id && *to != id);
         }
-        // A trackpad scrolls in many tiny steps, momentum included (about 120 a second from a
-        // Mac's). Each one played as a wheel event of its own starts its own smooth-scroll
-        // animation in Windows apps, and together they lag: the steps of a few milliseconds go
-        // as one.
+        // Scroll steps that piled up (a slow link) go as one; the receiving PC evens out their
+        // pace (its smoother), so they go as they come rather than in batches.
         if let MouseMsg::Wheel { x, y, smooth } = &mut msg {
-            let until = tokio::time::Instant::now() + WHEEL_BATCH;
-            loop {
-                match tokio::time::timeout_at(until, rx.recv()).await {
-                    Ok(Some(Out::Mouse(other, MouseMsg::Wheel { x: dx, y: dy, smooth: s }))) if other == id && s == *smooth => {
+            while let Ok(out) = rx.try_recv() {
+                match out {
+                    Out::Mouse(other, MouseMsg::Wheel { x: dx, y: dy, smooth: s }) if other == id && s == *smooth => {
                         *x += dx;
                         *y += dy;
                     }
-                    Ok(Some(out)) => {
+                    out => {
                         next = Some(out);
                         break;
                     }
-                    Ok(None) | Err(_) => break,
                 }
             }
         }
