@@ -282,6 +282,9 @@ object DotlineIcons {
     /** Phone camera. Lucide: camera. */
     val Camera: ImageVector by lazy { lineIcon("Camera", "M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4zM9 13a3 3 0 1 0 6 0a3 3 0 1 0 -6 0z") }
 
+    /** A track without artwork. Lucide: music. */
+    val Music: ImageVector by lazy { lineIcon("Music", "M9 18V5l12-2v13M3 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0zM15 16a3 3 0 1 0 6 0a3 3 0 1 0 -6 0z") }
+
     /** Phone microphone. Lucide: mic. */
     val Mic: ImageVector by lazy { lineIcon("Mic", "M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zM19 10v2a7 7 0 0 1-14 0v-2M12 19v3") }
 

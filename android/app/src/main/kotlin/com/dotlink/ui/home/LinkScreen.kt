@@ -331,7 +331,10 @@ private fun PcMediaCard(m: PcMedia) {
                     modifier = Modifier.size(56.dp).clip(Dotline.radius.s),
                 )
             } else {
-                Box(Modifier.size(56.dp).clip(Dotline.radius.s).background(colors.surfaceRaised))
+                // No artwork (a browser tab, a player that doesn't share it): a note in its place.
+                Box(Modifier.size(56.dp).clip(Dotline.radius.s).background(colors.surfaceRaised), contentAlignment = Alignment.Center) {
+                    Icon(DotlineIcons.Music, contentDescription = null, tint = colors.inkFaint, modifier = Modifier.size(24.dp))
+                }
             }
             Column(Modifier.weight(1f)) {
                 Text(m.title, style = Dotline.type.headline, color = colors.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
