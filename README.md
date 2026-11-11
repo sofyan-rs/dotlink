@@ -29,7 +29,7 @@ Between two linked PCs ([Linking two PCs](#linking-two-pcs)):
 |---|---|
 | **Files** | Drop files on the window, *Send files…*, or `dotlink send --to <pc>` |
 | **Clipboard** | Text as you copy it, and files and folders copied in Explorer or Finder, pasted on the other PC (**Clipboard sync** on its page) |
-| **Shared mouse** | One mouse and keyboard for both (Windows, macOS): pick where its screen is, push the pointer past that edge; **Pointer speed** per PC; more than two PCs in a row |
+| **Shared mouse** | One mouse and keyboard for both (Windows, macOS): pick where its screen is, push the pointer past that edge; **Pointer speed** per PC; more than two PCs in a row. With **Clipboard sync** on, copy on one PC and paste on the other as you move across: text, files and folders (Ctrl+C on the PC is ⌘C on the Mac, and the other way round) |
 | **Links** | *Open copied link*, or `dotlink open <url>` |
 | **Battery** | A laptop's level on the other PC |
 
