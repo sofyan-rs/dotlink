@@ -23,8 +23,15 @@ are supported, and so is macOS (the webcam goes through OBS).
 | **Ring** | | **Ring** in the phone's ⋯ menu, or `dotlink ring`: full volume, even on silent |
 | **Battery** | The phone's level on its page and in the sidebar | A laptop's level under its name in the phone app |
 
-Between two PCs: files, the clipboard (copied files and folders too), and one mouse and keyboard
-for both (see [Linking two PCs](#linking-two-pcs)).
+Between two linked PCs ([Linking two PCs](#linking-two-pcs)):
+
+| Feature | PC ↔ PC |
+|---|---|
+| **Files** | Drop files on the window, *Send files…*, or `dotlink send --to <pc>` |
+| **Clipboard** | Text as you copy it, and files and folders copied in Explorer or Finder, pasted on the other PC (**Clipboard sync** on its page) |
+| **Shared mouse** | One mouse and keyboard for both (Windows, macOS): pick where its screen is, push the pointer past that edge; **Pointer speed** per PC; more than two PCs in a row |
+| **Links** | *Open copied link*, or `dotlink open <url>` |
+| **Battery** | A laptop's level on the other PC |
 
 Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on the phone. Turn on
 **Ask before receiving files** in Settings (PC or phone) to Accept or Decline each one first.
