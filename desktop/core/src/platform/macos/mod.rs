@@ -13,6 +13,7 @@ mod input;
 mod media;
 mod player;
 pub mod share_menu;
+pub mod shared_mouse;
 pub use camera::{CameraHub, camera_url, find_camera};
 pub use input::Input;
 pub use media::MicSink;

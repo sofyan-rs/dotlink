@@ -30,7 +30,8 @@ pub async fn run(
             return Err(e);
         }
     };
-    let result = serve(app, identity).await;
+    let result = serve(app.clone(), identity).await;
+    crate::shared_mouse::stop(&app);
     ipc::cleanup();
     result
 }
@@ -64,6 +65,9 @@ async fn serve(app: Arc<App>, identity: tls::Identity) -> Result<()> {
     // Always watched; each device's clipboard sync is checked per change so it applies live.
     tokio::spawn(platform::clipboard::watch(app.clone()));
     tokio::spawn(crate::usb::watch(app.clone()));
+    // Before the links come up: they tell the other PCs whether it runs.
+    crate::shared_mouse::start(&app);
+    crate::clip_files::start(&app);
     crate::peer::start_all(&app);
     tokio::spawn(app.clone().watch_battery());
     tokio::spawn(crate::media::watch(app.clone()));

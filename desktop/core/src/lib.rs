@@ -2,6 +2,7 @@
 //! `dotlink daemon`.
 
 pub mod cast;
+pub mod clip_files;
 pub mod codes;
 pub mod config;
 pub mod events;
@@ -14,6 +15,7 @@ pub mod peer;
 pub mod platform;
 pub mod server;
 pub mod service;
+pub mod shared_mouse;
 pub mod term;
 pub mod tls;
 pub mod update;

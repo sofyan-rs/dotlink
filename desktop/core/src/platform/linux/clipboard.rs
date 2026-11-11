@@ -56,6 +56,15 @@ pub async fn set(text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Copied files: not on Linux yet.
+pub fn file_changes() -> Option<tokio::sync::mpsc::UnboundedReceiver<Vec<std::path::PathBuf>>> {
+    None
+}
+
+pub async fn set_files(_paths: Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+    anyhow::bail!("pasting files from another PC isn't supported on Linux yet")
+}
+
 /// Current desktop clipboard text, if any.
 pub async fn get() -> Option<String> {
     if backend() == Backend::X11 {

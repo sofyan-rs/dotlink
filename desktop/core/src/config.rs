@@ -143,6 +143,12 @@ pub struct Device {
     /// Copy verification codes from its notifications to the clipboard. None until set: on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub copy_codes: Option<bool>,
+    /// A PC: where its screen is next to this one's, for the shared mouse. None: not shared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen: Option<ScreenSide>,
+    /// A PC: how fast the shared mouse moves its pointer, compared with this PC's. None: 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer_speed: Option<f32>,
     /// SHA-256 of the bearer token; the token itself is only known to the phone.
     pub token_sha256: String,
     pub paired_at: u64,
@@ -183,6 +189,54 @@ pub struct Peer {
     /// Named on this PC (`dotlink rename`): the name it sends no longer replaces it.
     #[serde(default)]
     pub renamed: bool,
+    /// Where its screen is next to this one's, for the shared mouse. None: not shared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen: Option<ScreenSide>,
+    /// How fast the shared mouse moves its pointer, compared with this PC's. None: 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer_speed: Option<f32>,
+}
+
+/// Where another PC's screen is, seen from this one: the pointer goes over to it through this
+/// edge (`shared_mouse.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScreenSide {
+    Left,
+    Right,
+    Above,
+    Below,
+}
+
+impl ScreenSide {
+    /// The same edge seen from the other PC.
+    pub fn opposite(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+            Self::Above => Self::Below,
+            Self::Below => Self::Above,
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            "above" => Some(Self::Above),
+            "below" => Some(Self::Below),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Above => "above",
+            Self::Below => "below",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

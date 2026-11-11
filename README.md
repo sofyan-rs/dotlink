@@ -177,6 +177,27 @@ Two PCs can send each other files and the clipboard. On the first PC, open **Pai
 to it only with **Clipboard sync** on for that PC (`dotlink clip-auto <pc> on`); **Send clipboard**
 works either way. A laptop's battery shows there too.
 
+With **Clipboard sync** on, files and folders copied in Explorer or Finder can be pasted on the
+other PC too (Windows and macOS). Copying only sends their names: small copies (up to 64 MB)
+come right away, bigger ones when the shared mouse brings the pointer over (up to 2 GB), and
+anything else when you paste: Ctrl+V / ⌘V waits until they're there, then pastes. They show
+in Activity as they come.
+
+**Shared mouse** (Windows and macOS): one mouse and keyboard for both. On the PC's page, under
+**Mouse & keyboard**, pick where its screen is (left, right, above or below this one); the other
+PC is set to the opposite side by itself (`dotlink screen <pc> right`, `off` to stop). Push the
+pointer past that edge and it goes over, with the keyboard; push it back to return. Whichever
+PC's own mouse moves takes the pointer, so it works with the mouse plugged into either one. Motion goes in
+logical pixels, so a Retina Mac and a scaled Windows screen move alike; **Pointer speed** under it
+makes the pointer faster or slower over there (`dotlink pointer-speed <pc> 1.5`). More than two
+PCs work too, each placed next to its neighbours: the pointer goes on from one to the next
+(a Mac left of the PC, another PC right of it), the PC in between passing it along.
+Keys go by their place on the keyboard, so each PC's own layout applies. Between a PC and a Mac,
+Ctrl and ⌘ trade places: Ctrl+C on the PC is ⌘C on the Mac and the other way round, and the
+Mac's Ctrl is the PC's Windows key. **Ctrl+Alt+Esc** (Ctrl+⌥+Esc on a Mac) brings a stuck
+pointer back. A Mac needs Dotlink allowed under **Accessibility** (as for the Remote), then a
+restart of Dotlink. Like the Remote, it can't reach administrator windows or the sign-in screen.
+
 ## Wi-Fi or USB
 
 Everything works over both:

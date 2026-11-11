@@ -65,8 +65,13 @@ impl Peers {
 
     /// Sends a control message; false when not connected.
     pub fn send(&self, id: &str, msg: &Value) -> bool {
+        self.send_text(id, msg.to_string())
+    }
+
+    /// Sends a control message already in JSON; false when not connected.
+    pub fn send_text(&self, id: &str, text: String) -> bool {
         let links = self.links.lock().unwrap();
-        links.get(id).and_then(|l| l.tx.as_ref()).is_some_and(|tx| tx.send(msg.to_string()).is_ok())
+        links.get(id).and_then(|l| l.tx.as_ref()).is_some_and(|tx| tx.send(text).is_ok())
     }
 
     pub fn battery(&self, id: &str) -> Option<(u8, bool)> {
@@ -222,6 +227,8 @@ fn save_peer(app: &Arc<App>, id: &str, name: &str, fingerprint: &str, addr: Sock
             paired_at: now_secs(),
             clipboard_auto: false,
             renamed: false,
+            screen: None,
+            pointer_speed: None,
         });
         state.save()?;
     }
@@ -428,7 +435,7 @@ async fn session(app: &Arc<App>, peer: &Peer) -> Result<()> {
     app.peers.set_online(&peer.id, Some(out_tx), Some(addr));
     app.emit(Event::Devices);
     tracing::info!("linked to {} at {addr}", peer.name);
-    let info = json!({ "t": "info", "kind": "pc", "name": app.name(), "os": std::env::consts::OS });
+    let info = json!({ "t": "info", "kind": "pc", "name": app.name(), "os": std::env::consts::OS, "mouse": app.mouse.running() });
     tx.send(Message::text(info.to_string())).await?;
     if let Some(battery) = app.battery_msg() {
         tx.send(Message::text(battery.to_string())).await?;
@@ -465,8 +472,12 @@ async fn session(app: &Arc<App>, peer: &Peer) -> Result<()> {
 
 /// A control message from the other PC.
 async fn handle(app: &Arc<App>, peer: &Peer, addr: SocketAddr, v: Value) {
+    if crate::shared_mouse::handle(app, &peer.id, &v) || crate::clip_files::handle(app, &peer.id, &v) {
+        return;
+    }
     match v["t"].as_str() {
         Some("hello") => {
+            crate::shared_mouse::set_capable(app, &peer.id, v["mouse"] == true);
             if let Some(name) = v["name"].as_str() {
                 rename(app, &peer.id, name);
             }
@@ -571,6 +582,68 @@ async fn download(app: &Arc<App>, peer: &Peer, addr: SocketAddr, id: &str, name:
             Err(e)
         }
     }
+}
+
+/// Downloads a file a linked PC offered (`file`, its `/download` id) into `dir`, without asking
+/// or a notification: a file copied there, being pasted here (`clip_files.rs`).
+pub(crate) async fn fetch(app: &Arc<App>, id: &str, file: &str, name: &str, size: u64, dir: &std::path::Path) -> Result<PathBuf> {
+    let peer = app.state.lock().unwrap().peers.iter().find(|p| p.id == id).cloned().ok_or_else(|| anyhow!("no linked PC"))?;
+    let addr = app.peers.addr(id).filter(|_| app.peers.online(id)).ok_or_else(|| anyhow!("{} is not connected", peer.name))?;
+    let mut progress = Progress::new(
+        app,
+        Transfer {
+            id: crate::config::random_hex(12),
+            outgoing: false,
+            device: peer.name.clone(),
+            name: name.to_string(),
+            size: Some(size),
+            done: 0,
+            state: TransferState::Active,
+            path: String::new(),
+            started_at: now_secs(),
+        },
+    );
+    let result = async {
+        let req = authed(Request::get(format!("/download/{}", url_encode(file))), &peer, addr).body(Full::new(Bytes::new()))?;
+        let reply = request(addr, &client_config(&peer.fingerprint), req).await?;
+        if !reply.status().is_success() {
+            bail!("{} answered {}", peer.name, reply.status());
+        }
+        crate::server::save_stream_in(dir, name, None, reply.into_body().into_data_stream(), &mut progress).await
+    }
+    .await;
+    match &result {
+        Ok(path) => {
+            progress.transfer.path = path.to_string_lossy().into_owned();
+            progress.finish(Ok(()));
+        }
+        Err(e) => progress.finish(Err(format!("{e:#}"))),
+    }
+    result
+}
+
+/// Uploads a file the linked PC asked for (`req`): a file copied here, being pasted there.
+pub(crate) async fn send_requested(app: &Arc<App>, id: &str, path: &std::path::Path, req: &str) -> Result<()> {
+    let peer = app.state.lock().unwrap().peers.iter().find(|p| p.id == id).cloned().ok_or_else(|| anyhow!("no linked PC"))?;
+    let addr = app.peers.addr(id).filter(|_| app.peers.online(id)).ok_or_else(|| anyhow!("{} is not connected", peer.name))?;
+    let path = path.to_path_buf();
+    let mut progress = Progress::new(
+        app,
+        Transfer {
+            id: crate::config::random_hex(12),
+            outgoing: true,
+            device: peer.name.clone(),
+            name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into()),
+            size: std::fs::metadata(&path).ok().map(|m| m.len()),
+            done: 0,
+            state: TransferState::Active,
+            path: path.to_string_lossy().into_owned(),
+            started_at: now_secs(),
+        },
+    );
+    let result = upload(&peer, addr, &path, &format!("req={}", url_encode(req)), &mut progress).await;
+    progress.finish(result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}")));
+    result
 }
 
 /// Sends files to a linked PC, one after the other, in the background.

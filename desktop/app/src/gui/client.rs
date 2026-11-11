@@ -53,6 +53,16 @@ pub struct DeviceInfo {
     /// A PC: gets this PC's clipboard changes as they happen.
     #[serde(default)]
     pub clipboard_auto: bool,
+    /// A PC: where its screen is next to this one's for the shared mouse ("left", "right",
+    /// "above", "below"); None: not shared.
+    #[serde(default)]
+    pub screen: Option<String>,
+    /// A PC: its Dotlink takes part in the shared mouse (as it said when it last connected).
+    #[serde(default)]
+    pub shared_mouse: bool,
+    /// A PC: how fast the shared mouse moves its pointer, compared with this PC's.
+    #[serde(default = "one")]
+    pub pointer_speed: f32,
     pub online: bool,
     pub paired_at: u64,
     /// Connected through the USB cable rather than Wi-Fi.
@@ -97,6 +107,10 @@ pub struct PhoneMedia {
     #[serde(default)]
     pub duration_ms: u64,
     pub art: Option<PathBuf>,
+}
+
+fn one() -> f32 {
+    1.
 }
 
 impl DeviceInfo {
@@ -271,6 +285,17 @@ impl Client {
     /// Names the device `id` on this PC.
     pub fn rename(&self, id: &str, name: &str) -> impl Future<Output = Result<String>> + use<> {
         ok_text(self.call(json!({ "cmd": "rename", "id": id, "name": name })))
+    }
+
+    /// Places a linked PC's screen next to this one's for the shared mouse (`side`: "left",
+    /// "right", "above", "below"), or stops sharing it (None).
+    pub fn screen(&self, id: &str, side: Option<&str>) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "screen", "id": id, "side": side })))
+    }
+
+    /// How fast the shared mouse moves a linked PC's pointer (1: as fast as here).
+    pub fn pointer_speed(&self, id: &str, speed: f32) -> impl Future<Output = Result<String>> + use<> {
+        ok_text(self.call(json!({ "cmd": "pointer_speed", "id": id, "speed": speed })))
     }
 
     /// Sends this PC's clipboard changes to a linked PC as they happen, or stops.

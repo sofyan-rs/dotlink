@@ -6,6 +6,7 @@
  */
 package com.dotlink.ui.dotline
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.Spring
@@ -21,9 +22,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -69,7 +69,7 @@ internal fun Modifier.slideToSelect(
     onSelect: (Int) -> Unit,
     vertical: Boolean = false,
 ): Modifier {
-    val haptic = LocalHapticFeedback.current
+    val view = LocalView.current
     val select by rememberUpdatedState(onSelect)
     val selected by rememberUpdatedState(selectedIndex)
     return pointerInput(count, stepPx, vertical) {
@@ -89,7 +89,9 @@ internal fun Modifier.slideToSelect(
                 val now = (pos / stepPx).roundToInt()
                 if (now != last) {
                     last = now
-                    haptic.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+                    // CLOCK_TICK, like Flutter's selectionClick: Compose's SegmentFrequentTick is
+                    // Android 14+ only and so faint that many phones (ColorOS…) skip it.
+                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                 }
             }
             val end = {

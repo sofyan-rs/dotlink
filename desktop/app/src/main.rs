@@ -105,6 +105,17 @@ enum Cmd {
     /// Send this PC's clipboard changes to a phone or linked PC as they happen (`on`), or only
     /// on `dotlink clip` (`off`). Phones start on, PCs off.
     ClipAuto { device: String, state: OnOff },
+    /// Shared mouse: where a linked PC's screen is next to this one's (`left`, `right`, `above`,
+    /// `below`), so the pointer goes over to it past that edge; `off` stops sharing. The other PC
+    /// is told and places this one on the opposite side. Windows and macOS.
+    Screen {
+        pc: String,
+        #[arg(value_parser = ["left", "right", "above", "below", "off"])]
+        side: String,
+    },
+    /// Shared mouse: how fast the pointer goes on a linked PC, compared with this one (1: the
+    /// same; 0.25 to 4).
+    PointerSpeed { pc: String, speed: f32 },
     /// List paired phones and linked PCs.
     Devices,
     /// Forget a paired phone (by name or id).
@@ -326,6 +337,11 @@ async fn command(cmd: Cmd) -> Result<()> {
                 Ok(())
             })
             .await
+        }
+        Cmd::PointerSpeed { pc, speed } => simple(json!({ "cmd": "pointer_speed", "id": pc, "speed": speed })).await,
+        Cmd::Screen { pc, side } => {
+            let side = (side != "off").then_some(side);
+            simple(json!({ "cmd": "screen", "id": pc, "side": side })).await
         }
         Cmd::ClipAuto { device, state } => {
             simple(json!({ "cmd": "clipboard_auto", "id": device, "on": matches!(state, OnOff::On) })).await
