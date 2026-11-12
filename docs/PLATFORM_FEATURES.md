@@ -229,7 +229,7 @@ switches to the plain microphone.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | `notify-send` with Open / Show in folder actions | toasts under the AppUserModelID `dev.dotlink.Dotlink`, registered in HKCU with name and icon; Open / Show in folder buttons are `dotlink:` links (`dotlink url`), so they work from the notification center too | Notification Center through GPUI (UNUserNotificationCenter), posted by the app: Accept / Decline, Open / Show in Finder. Only from the .app, and not while it runs from `/tmp` |
+| Method | `notify-send` with Open / Show in folder actions | toasts under the AppUserModelID `org.kurodev.dotlink`, registered in HKCU with name and icon; Open / Show in folder buttons are `dotlink:` links (`dotlink url`), so they work from the notification center too | Notification Center through GPUI (UNUserNotificationCenter), posted by the app: Accept / Decline, Open / Show in Finder. Only from the .app, and not while it runs from `/tmp` |
 | Status | ✅ | ✅ toasts show as "Dotlink" with its icon; received files carry Open / Show in folder, also clicked from the notification center | ✅ from the .app: Accept / Decline on incoming files answered from the notification, Open / Show in Finder on received ones |
 
 ### Tray / menu bar
@@ -243,7 +243,7 @@ switches to the plain microphone.
 
 | | Linux | Windows | macOS |
 |---|---|---|---|
-| Method | XDG autostart entry; on Hyprland also a config include | `HKCU\…\CurrentVersion\Run` value `Dotlink` = `"<exe>" --background`; off in Task Manager counts as off | LaunchAgent `~/Library/LaunchAgents/dev.dotlink.Dotlink.plist` running `<exe> --background`; off under Login Items → Allow in the Background counts as off |
+| Method | XDG autostart entry; on Hyprland also a config include | `HKCU\…\CurrentVersion\Run` value `Dotlink` = `"<exe>" --background`; off in Task Manager counts as off | LaunchAgent `~/Library/LaunchAgents/org.kurodev.dotlink.plist` running `<exe> --background`; off under Login Items → Allow in the Background counts as off |
 | Status | ✅ | ✅ the setting adds and removes the entry; its command starts Dotlink in the tray, without the window | 🟡 the agent file is written and removed; not yet tested across a logout |
 
 ### Setup checks

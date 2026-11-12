@@ -57,7 +57,10 @@ winresource = "0.1"
 # the AppImage needs NO_STRIP=1: linuxdeploy's strip is too old for their libraries.
 [package.metadata.packager]
 product-name = "Dotlink"
-identifier = "dev.dotlink.Dotlink"
+identifier = "org.kurodev.dotlink"
+# The installer keeps its registry key under the publisher: "dotlink", as when the identifier
+# was dev.dotlink.Dotlink, so an update still finds the folder it installed to.
+publisher = "dotlink"
 description = "Link your Android phone with this PC: files, clipboard, remote, shell, webcam, mic"
 category = "Utility"
 # dotlink-camera: the Windows webcam DLL (an empty library elsewhere).
@@ -73,7 +76,7 @@ resources = ["../target/release/dotlink_camera.dll"]
 depends = ["libxkbcommon-x11-0", "libnotify-bin", "pipewire-bin", "ffmpeg"]
 # cargo-packager names the file after the binary (dotlink.desktop); StartupWMClass still ties
 # the window to it.
-desktop-template = "assets/dev.dotlink.Dotlink.desktop"
+desktop-template = "assets/org.kurodev.dotlink.desktop"
 
 # macOS: `cargo packager --release -f app,dmg`. The icon is assets/dotlink.icns
 # (scripts/make-macos-icon.py). Signing: APPLE_SIGNING_IDENTITY (Developer ID for releases);
@@ -124,7 +127,7 @@ summary = "Link your Android phone with this PC"
 license = "GPL-3.0-or-later"
 assets = [
     { source = "target/release/dotlink", dest = "/usr/bin/dotlink", mode = "755" },
-    { source = "assets/dev.dotlink.Dotlink.desktop", dest = "/usr/share/applications/dev.dotlink.Dotlink.desktop", mode = "644" },
+    { source = "assets/org.kurodev.dotlink.desktop", dest = "/usr/share/applications/org.kurodev.dotlink.desktop", mode = "644" },
     { source = "assets/dotlink.svg", dest = "/usr/share/icons/hicolor/scalable/apps/dotlink.svg", mode = "644" },
     { source = "assets/icons/256x256.png", dest = "/usr/share/icons/hicolor/256x256/apps/dotlink.png", mode = "644" },
 ]

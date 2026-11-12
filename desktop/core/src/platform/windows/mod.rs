@@ -24,7 +24,7 @@ use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
 /// AppUserModelID: toasts are shown under the name and icon registered for it.
-pub const APP_ID: &str = "dev.dotlink.Dotlink";
+pub const APP_ID: &str = "org.kurodev.dotlink";
 
 /// Keeps console programs (netsh, powershell) from flashing a console window.
 pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -117,7 +117,10 @@ fn register_app_id() {
     let icon = crate::config::config_dir().join(name);
     let _ = std::fs::create_dir_all(crate::config::config_dir());
     let _ = std::fs::write(&icon, png);
-    let result = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    // Registered under the app id before it changed.
+    let _ = hkcu.delete_subkey_all(r"Software\Classes\AppUserModelId\dev.dotlink.Dotlink");
+    let result = hkcu
         .create_subkey(format!(r"Software\Classes\AppUserModelId\{APP_ID}"))
         .and_then(|(key, _)| {
             key.set_value("DisplayName", &"Dotlink")?;

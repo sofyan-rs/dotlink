@@ -359,7 +359,7 @@ request line in, one or more reply lines out.
   remembered as the last clip so it isn't sent back. Text isn't written to disk; icons are
   cached in `icons/`. Per phone: `notifications` and `copy_codes` in state.json (both on).
   Android 15+ hides codes from listeners: **Allow** on the phone's page runs `adb shell appops
-  set com.dotlink.android RECEIVE_SENSITIVE_NOTIFICATIONS allow` (`cast::allow_sensitive_notifications`,
+  set org.kurodev.dotlink RECEIVE_SENSITIVE_NOTIFICATIONS allow` (`cast::allow_sensitive_notifications`,
   USB or Wireless debugging), which stays after debugging is off.
 - **Browse files.** No SSH or mount: `fs_*` messages over the control link (`files.rs` on the
   PC, `FileBrowser` on the phone), each with a `req` the phone answers. The phone needs All
@@ -414,7 +414,7 @@ request line in, one or more reply lines out.
 - **Autostart.** Linux: XDG autostart entry; on Hyprland also `~/.config/hypr/dotlink.lua` plus
   one marked `pcall(require, "dotlink")` line, removed again when turned off. Windows: the
   `Dotlink` value under `HKCU\…\CurrentVersion\Run`. macOS: a LaunchAgent
-  (`~/Library/LaunchAgents/dev.dotlink.Dotlink.plist`) running `<exe> --background`.
+  (`~/Library/LaunchAgents/org.kurodev.dotlink.plist`) running `<exe> --background`.
 
 ## Platforms
 
@@ -443,6 +443,6 @@ the socket is in the per-user temp folder.
 | `~/.config/dotlink/state.json` | server id, paired devices (kind, token hashes), linked PCs (fingerprint, addresses, token), 0600 |
 | `~/.config/dotlink/cert.pem`, `key.pem` | the certificate the phone pins |
 | `~/.local/share/dotlink/scrcpy/<version>/` | scrcpy + adb, when Dotlink downloaded them |
-| `~/Library/LaunchAgents/dev.dotlink.Dotlink.plist` | macOS: start at login |
+| `~/Library/LaunchAgents/org.kurodev.dotlink.plist` | macOS: start at login |
 | `$XDG_RUNTIME_DIR/dotlink.sock` | control socket |
 | `~/Downloads/Dotlink/` | files from the phone (configurable) |

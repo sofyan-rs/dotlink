@@ -1,4 +1,4 @@
-//! Start at login: a LaunchAgent, `~/Library/LaunchAgents/dev.dotlink.Dotlink.plist`, running
+//! Start at login: a LaunchAgent, `~/Library/LaunchAgents/org.kurodev.dotlink.plist`, running
 //! `<exe> --background`. SMAppService.mainApp would list the app itself under Login Items, but
 //! starts it without arguments, so it would open the window at every login.
 //!
@@ -9,18 +9,30 @@
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
-const LABEL: &str = "dev.dotlink.Dotlink";
+const LABEL: &str = "org.kurodev.dotlink";
+/// The agent's label before the app id changed. The app rewrites the agent at every start
+/// ([set]), which moves an old one to [LABEL].
+const OLD_LABEL: &str = "dev.dotlink.Dotlink";
 
 fn plist_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join("Library/LaunchAgents").join(format!("{LABEL}.plist")))
+    agent(LABEL)
+}
+
+fn agent(label: &str) -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join("Library/LaunchAgents").join(format!("{label}.plist")))
 }
 
 pub fn enabled() -> bool {
-    plist_path().is_some_and(|p| p.is_file()) && !switched_off()
+    let old = agent(OLD_LABEL).is_some_and(|p| p.is_file());
+    (old || plist_path().is_some_and(|p| p.is_file())) && !switched_off()
 }
 
 pub fn set(on: bool) -> Result<()> {
     let path = plist_path().context("no home folder")?;
+    // Two agents would start Dotlink twice.
+    if let Some(old) = agent(OLD_LABEL) {
+        let _ = std::fs::remove_file(old);
+    }
     if !on {
         // Not `launchctl bootout`: that would also stop the Dotlink it started at login.
         match std::fs::remove_file(&path) {
@@ -50,11 +62,14 @@ fn switched_off() -> bool {
     else {
         return false;
     };
-    let needle = format!("\"{LABEL}\" => ");
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| l.trim().strip_prefix(&needle))
-        .any(|state| state == "disabled" || state == "true")
+    // Switched off under the old label: the user's choice still stands.
+    String::from_utf8_lossy(&out.stdout).lines().any(|l| {
+        [LABEL, OLD_LABEL].iter().any(|label| {
+            l.trim()
+                .strip_prefix(&format!("\"{label}\" => "))
+                .is_some_and(|state| state == "disabled" || state == "true")
+        })
+    })
 }
 
 fn plist(exe: &str) -> String {

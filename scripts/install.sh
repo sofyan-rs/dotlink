@@ -120,8 +120,8 @@ if [ $headless = 0 ]; then
     install -Dm644 "$root/desktop/app/assets/dotlink.svg" "$icons/dotlink.svg"
     mkdir -p "$apps"
     # Named after the Wayland app id, so GNOME and KDE match the window to it (icon, name).
-    sed "s|^Exec=dotlink|Exec=$bin/dotlink|" "$root/desktop/app/assets/dev.dotlink.Dotlink.desktop" >"$apps/dev.dotlink.Dotlink.desktop"
-    rm -f "$apps/dotlink.desktop" # older installs
+    sed "s|^Exec=dotlink|Exec=$bin/dotlink|" "$root/desktop/app/assets/org.kurodev.dotlink.desktop" >"$apps/org.kurodev.dotlink.desktop"
+    rm -f "$apps/dotlink.desktop" "$apps/dev.dotlink.Dotlink.desktop" # older installs
     command -v update-desktop-database >/dev/null && update-desktop-database "$apps" 2>/dev/null || true
     ok "added Dotlink to the app menu"
 fi

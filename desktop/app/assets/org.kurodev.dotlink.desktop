@@ -8,5 +8,5 @@ Icon=dotlink
 Terminal=false
 Categories=Utility;
 Keywords=phone;android;share;clipboard;webcam;
-StartupWMClass=dev.dotlink.Dotlink
+StartupWMClass=org.kurodev.dotlink
 SingleMainWindow=true

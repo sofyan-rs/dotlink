@@ -18,9 +18,6 @@ use std::time::Duration;
 
 const POLL: Duration = Duration::from_secs(3);
 
-/// The phone app's package, which handles `dotlink://pair` links.
-const PACKAGE: &str = "com.dotlink.android";
-
 /// Sends the pairing link `uri` to Dotlink on every phone plugged in with USB debugging
 /// allowed, so it pairs without scanning the QR code. Allowing USB debugging for this PC is
 /// the trust step. Returns the phones' models.
@@ -39,19 +36,19 @@ pub async fn open_pairing(uri: &str, quiet: bool) -> Result<Vec<String>> {
     }
     // `adb shell` hands its arguments to the phone's sh as one line: quote the link's `&`s.
     let uri = uri.replace('\'', "%27");
-    let start = if quiet {
-        format!("am broadcast -a com.dotlink.android.USB_PAIR -n {PACKAGE}/com.dotlink.link.UsbPairReceiver --es link '{uri}'")
-    } else {
-        format!("am start -a android.intent.action.VIEW -d '{uri}' {PACKAGE}")
-    };
     let mut opened = Vec::new();
     for (serial, model) in phones {
-        let installed =
-            crate::cast::adb(&["-s", &serial, "shell", "pm", "path", PACKAGE]).await.is_ok_and(|o| o.contains("package:"));
-        if !installed {
+        // The app handles `dotlink://pair` links; its package is the old one on phones that
+        // haven't moved to the new app id.
+        let Some(package) = crate::cast::android_package(&serial).await else {
             tracing::info!("usb: {model} ({serial}) has no Dotlink app");
             continue;
-        }
+        };
+        let start = if quiet {
+            format!("am broadcast -a {package}.USB_PAIR -n {package}/com.dotlink.link.UsbPairReceiver --es link '{uri}'")
+        } else {
+            format!("am start -a android.intent.action.VIEW -d '{uri}' {package}")
+        };
         match crate::cast::adb(&["-s", &serial, "shell", &start]).await {
             Ok(out) if !out.contains("Error") => opened.push(model),
             Ok(out) => tracing::warn!("usb: opening the pairing link on {serial}: {}", out.trim()),

@@ -37,9 +37,9 @@ use serde_json::json;
 use std::time::Duration;
 use tray::TrayAction;
 
-/// Wayland app id / X11 WM_CLASS: the desktop file is dev.dotlink.Dotlink.desktop (and says
-/// StartupWMClass=dev.dotlink.Dotlink for packages that name it otherwise).
-const APP_ID: &str = "dev.dotlink.Dotlink";
+/// Wayland app id / X11 WM_CLASS: the desktop file is org.kurodev.dotlink.desktop (and says
+/// StartupWMClass=org.kurodev.dotlink for packages that name it otherwise).
+const APP_ID: &str = "org.kurodev.dotlink";
 
 struct State {
     model: gpui::Entity<Model>,

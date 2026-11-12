@@ -162,7 +162,8 @@ pub async fn allow_sensitive_notifications(app: &Arc<App>, id: Option<&str>) -> 
         Err(Missing::Pairing) => bail!("pair {name}'s Wireless debugging first (Cast asks for its code)"),
         Err(Missing::Other(e)) => return Err(e),
     };
-    let out = adb(&["-s", &serial, "shell", "appops", "set", ANDROID_PACKAGE, "RECEIVE_SENSITIVE_NOTIFICATIONS", "allow"]).await?;
+    let package = android_package(&serial).await.with_context(|| format!("Dotlink isn't installed on {name}"))?;
+    let out = adb(&["-s", &serial, "shell", "appops", "set", package, "RECEIVE_SENSITIVE_NOTIFICATIONS", "allow"]).await?;
     if !out.trim().is_empty() {
         bail!("{}", last_line(&out).unwrap_or("adb failed"));
     }
@@ -175,8 +176,19 @@ pub async fn allow_sensitive_notifications(app: &Arc<App>, id: Option<&str>) -> 
     Ok("verification codes are shown now")
 }
 
-/// The phone app's package, for adb.
-const ANDROID_PACKAGE: &str = "com.dotlink.android";
+/// The phone app's package, newest first: phones that haven't installed the app under its new
+/// id yet still have the old one.
+pub(crate) const ANDROID_PACKAGES: [&str; 2] = ["org.kurodev.dotlink", "com.dotlink.android"];
+
+/// Which of [ANDROID_PACKAGES] the phone at adb `serial` has.
+pub(crate) async fn android_package(serial: &str) -> Option<&'static str> {
+    for package in ANDROID_PACKAGES {
+        if adb(&["-s", serial, "shell", "pm", "path", package]).await.is_ok_and(|o| o.contains("package:")) {
+            return Some(package);
+        }
+    }
+    None
+}
 
 /// Starts casting. Returns once scrcpy is up ("casting"), Stop was pressed meanwhile
 /// ("cancelled"), or what's missing is known (the error); the outcome is also in [Cast::state].

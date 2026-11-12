@@ -21,7 +21,7 @@ class UsbPairReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        const val ACTION = "com.dotlink.android.USB_PAIR"
+        const val ACTION = "org.kurodev.dotlink.USB_PAIR"
         const val EXTRA_LINK = "link"
     }
 }
