@@ -12,6 +12,10 @@
 # ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD. Releases need them (an
 # update only installs over an app signed with the same key); a manual run without them signs
 # with a throwaway debug key.
+#
+# macOS signing: MACOS_CERT_P12 (a self-signed code signing certificate, base64) and
+# MACOS_CERT_PASSWORD. The same certificate in every release keeps macOS permissions across
+# updates; see scripts/macos-sign.sh.
 name: release
 
 on:
@@ -123,12 +127,16 @@ jobs:
       - name: .app
         working-directory: desktop/app
         run: cargo packager --release -f app --target universal-apple-darwin
-      # No Developer ID: signed ad hoc, so macOS asks once (Privacy & Security → Open Anyway).
-      # The packager's own signing adds a timestamp, which ad hoc signatures can't have.
+      # No Developer ID: signed with a self-signed certificate (see scripts/macos-sign.sh), so
+      # macOS asks once (Privacy & Security → Open Anyway) and permissions survive updates.
+      # The packager's own signing adds a timestamp, which these signatures can't have.
       - name: .dmg
         working-directory: desktop/target/packages
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
         run: |
-          codesign --force --deep -s - Dotlink.app
+          ../../../scripts/macos-sign.sh Dotlink.app
           mkdir dmg && cp -R Dotlink.app dmg/ && ln -s /Applications dmg/Applications
           mkdir -p ../../../dist
           # hdiutil fails now and then with "Resource busy" on the runners (something scanning
