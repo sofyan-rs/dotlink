@@ -280,8 +280,11 @@ pub async fn pair(app: &Arc<App>, id: Option<&str>, code: &str) -> Result<()> {
     let addr = find_adb(app, &id, "pairing", ip, Duration::from_secs(6)).await.ok_or_else(|| {
         anyhow!("can't see {name} waiting to pair: open Wireless debugging → Pair device with pairing code on it")
     })?;
-    let out = adb(&["pair", &addr.to_string(), &code]).await?;
+    let out = adb_net(app, &id, &["pair", &addr.to_string(), &code]).await?;
     if !out.to_lowercase().contains("success") {
+        if unreachable(&out) {
+            bail!("adb can't reach {name} at {addr}: {LOCAL_NETWORK_HINT}");
+        }
         bail!("{}", last_line(&out).unwrap_or("pairing failed"));
     }
     set(app, &id, CastState::Idle);
@@ -351,10 +354,14 @@ async fn connect(
         }
         return Err(Missing::WifiDebugging);
     };
-    let out = adb(&["connect", &addr.to_string()]).await?;
+    let out = adb_net(app, id, &["connect", &addr.to_string()]).await?;
     let lower = out.to_lowercase();
     if lower.contains("connected to") {
         return Ok((addr.to_string(), false));
+    }
+    // Not a pairing problem: the PC's adb can't get to the phone at all.
+    if unreachable(&out) {
+        return Err(Missing::Other(anyhow!("adb can't reach {name} at {addr}: {LOCAL_NETWORK_HINT}")));
     }
     // An unpaired PC is refused at the TLS handshake.
     if lower.contains("authenticat") || lower.contains("failed to connect") || lower.contains("refused") {
@@ -509,6 +516,41 @@ pub(crate) async fn adb(args: &[&str]) -> Result<String> {
         .await
         .context("adb took too long")??;
     Ok(format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+}
+
+/// What to check when adb can't reach a phone that Dotlink itself talks to.
+const LOCAL_NETWORK_HINT: &str = if cfg!(target_os = "macos") {
+    "allow Dotlink in System Settings → Privacy & Security → Local Network, and check the phone's Wireless debugging is still on"
+} else {
+    "check a firewall isn't blocking adb, and that the phone's Wireless debugging is still on"
+};
+
+/// adb's server couldn't open a connection to the phone. `adb pair` only says
+/// "protocol fault (couldn't read status message)" then; the reason is in adb's log.
+fn unreachable(out: &str) -> bool {
+    let lower = out.to_lowercase();
+    ["protocol fault", "no route to host", "unable to start pairing", "network is unreachable"].iter().any(|s| lower.contains(s))
+}
+
+/// `adb` for a command that reaches out to a phone over the network. When adb's server can't
+/// reach it, the server is restarted and the command run once more: a server another app started
+/// keeps that app's permissions, and macOS gives "No route to host" for the whole local network
+/// to a process without Local Network access. A restarted server is Dotlink's own. Skipped while
+/// another phone is casting, which would lose its connection.
+async fn adb_net(app: &App, id: &str, args: &[&str]) -> Result<String> {
+    let out = adb(args).await?;
+    if !unreachable(&out) {
+        return Ok(out);
+    }
+    let others_casting =
+        app.cast.states().iter().any(|(other, s)| other != id && matches!(s, CastState::Casting { .. }));
+    if others_casting {
+        return Ok(out);
+    }
+    tracing::info!("adb can't reach the phone ({}), restarting adb's server", last_line(&out).unwrap_or(""));
+    adb(&["kill-server"]).await?;
+    adb(&["start-server"]).await?;
+    adb(args).await
 }
 
 /// A command for adb or scrcpy. On Windows without a console window: they are console
