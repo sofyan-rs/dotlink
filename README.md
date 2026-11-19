@@ -52,7 +52,7 @@ work, since the packages and Setup handle what they need, but haven't been teste
 
 Free to try: everything works for 30 days, and keeps working after that. From day 31 the PC
 app shows *Unregistered* and, at most once a day when you open its window, a reminder. A
-[lifetime license](https://kuroneko423.gumroad.com/l/dotlink) ($5) removes both and covers all
+[lifetime license](https://kurodev.gumroad.com/l/dotlink) ($5) removes both and covers all
 of your own PCs. The phone app is free.
 
 ## Install
