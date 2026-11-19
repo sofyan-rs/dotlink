@@ -48,6 +48,13 @@ Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on
 Other distros and desktops (Ubuntu, Debian, Arch, openSUSE; Sway, niri, X11 desktops) are expected to
 work, since the packages and Setup handle what they need, but haven't been tested on every release.
 
+## Pricing
+
+Free to try: everything works for 30 days, and keeps working after that. From day 31 the PC
+app shows *Unregistered* and, at most once a day when you open its window, a reminder. A
+[lifetime license](https://kuroneko423.gumroad.com/l/dotlink) ($5) removes both and covers all
+of your own PCs. The phone app is free.
+
 ## Install
 
 Download the files from the [releases page](https://github.com/sofyan-rs/dotlink/releases).
@@ -299,9 +306,9 @@ Report bugs and ask for features in [Issues](https://github.com/sofyan-rs/dotlin
 
 ## License
 
-This repository holds Dotlink's releases; the source code isn't published here any more.
-Versions up to 0.1.0-beta.22 were released under the GNU General Public License, version 3 or
-later.
+Dotlink is free to use under its [end user license agreement](LICENSE). The source code isn't
+published here; this repository holds the releases and the issues. Versions up to 0.1.0-beta.22
+were released under the GNU General Public License, version 3 or later.
 
 scrcpy, which Dotlink downloads for Cast, is under the Apache License 2.0. The fonts bundled with
 the Android app keep their own licenses.
