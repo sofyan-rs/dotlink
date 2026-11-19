@@ -1,0 +1,307 @@
+# Dotlink
+
+Link your Android phone with your PC, over Wi-Fi or a USB cable. No account, no cloud.
+
+On the PC it's one app: a window, a tray icon and a background service. Linux and Windows 11
+are supported, and so is macOS (the webcam goes through OBS).
+
+## What it does
+
+| Feature | Phone → PC | PC → phone |
+|---|---|---|
+| **Files** | Share → Dotlink, or **Send** in the app | Drop files on the window, the tray's *Send files…*, right-click → *Share with Dotlink* (Windows) or *Quick Actions → Dotlink: …* (macOS), or `dotlink send` |
+| **Clipboard** | When you open the app, or the notification's *Send clipboard* | Automatic (turn it off per phone: **Clipboard sync** on its page) |
+| **Remote** | The phone as touchpad and keyboard (pointer speed in the phone's Settings; full screen in landscape), or a slide clicker (**Presenter**: Next / Previous, the volume keys too, End, Black, a timer) | |
+| **Shell** | A terminal on the PC; the session survives reconnects | |
+| **Webcam** | The phone camera as **Dotlink Camera** in any app (calls, browsers, OBS) | |
+| **Microphone** | The phone mic as a microphone on the PC | |
+| **Cast** | | The phone's screen in a window, with mouse and keyboard ([scrcpy](https://github.com/Genymobile/scrcpy)) |
+| **Links** | Share a link → Dotlink: it opens in the PC's browser | *Open copied link* (tray or the phone's page), or `dotlink open <url>` |
+| **Notifications** | The phone's notifications show on the PC with Dismiss; a verification code in one goes to the PC's clipboard (turn on **Show notifications on PC** in the phone's Settings) | |
+| **Browse files** | | The phone's storage on its page → **Files**: browse, download, drop files into a folder, rename, delete (turn on **Browse from PC** in the phone's Settings), or `dotlink ls` / `dotlink get` |
+| **Media** | The PC's player on the phone's home (title, artwork, play/pause, next, previous; tap or drag the bar to seek; volume with a slider and mute); a call on the phone pauses it (**Pause PC media during calls** in the phone's Settings) | The phone's player on its page → **Now playing**, or `dotlink media <phone> toggle` |
+| **Ring** | | **Ring** in the phone's ⋯ menu, or `dotlink ring`: full volume, even on silent |
+| **Battery** | The phone's level on its page and in the sidebar | A laptop's level under its name in the phone app |
+
+Between two linked PCs ([Linking two PCs](#linking-two-pcs)):
+
+| Feature | PC ↔ PC |
+|---|---|
+| **Files** | Drop files on the window, *Send files…*, or `dotlink send --to <pc>` |
+| **Clipboard** | Text as you copy it, and files and folders copied in Explorer or Finder, pasted on the other PC (**Clipboard sync** on its page) |
+| **Shared mouse** | One mouse and keyboard for both (Windows, macOS): pick where its screen is, push the pointer past that edge; **Pointer speed** per PC; more than two PCs in a row. With **Clipboard sync** on, copy on one PC and paste on the other as you move across: text, files and folders (Ctrl+C on the PC is ⌘C on the Mac, and the other way round) |
+| **Links** | *Open copied link*, or `dotlink open <url>` |
+| **Battery** | A laptop's level on the other PC |
+
+Received files land in `~/Downloads/Dotlink` on the PC and `Download/Dotlink` on the phone. Turn on
+**Ask before receiving files** in Settings (PC or phone) to Accept or Decline each one first.
+
+## Requirements
+
+| | Needs | Tested on |
+|---|---|---|
+| **Phone** | Android 10 or newer; Cast over Wi-Fi needs Android 11+ | iQOO I2218, realme RMX5085 (Android 16) |
+| **Linux** | x86_64, a desktop with PipeWire; any Wayland or X11 desktop | Fedora 44: GNOME, KDE Plasma, Hyprland |
+| **Windows** | Windows 11, x64 (Windows 10 isn't supported) | Windows 11 Pro 26H2 (build 26300) |
+| **macOS** | macOS 13 Ventura or newer, Apple Silicon or Intel | macOS 15.8 (MacBook Air M1) |
+
+Other distros and desktops (Ubuntu, Debian, Arch, openSUSE; Sway, niri, X11 desktops) are expected to
+work, since the packages and Setup handle what they need, but haven't been tested on every release.
+
+## Install
+
+Download the files from the [releases page](https://github.com/sofyan-rs/dotlink/releases).
+Dotlink checks for new releases by itself (Settings → About on the PC, Settings → Check for
+updates on the phone) and installs them on Windows, macOS, from the AppImage and on Android.
+
+### Phone
+
+Install `Dotlink-<version>.apk` from the releases page (allow your browser or file manager to
+install apps when Android asks).
+
+A debug build (`./gradlew installDebug`) can't be updated by a release APK, since they're signed
+with different keys: uninstall it first.
+
+### Linux
+
+Pick the package for your distro:
+
+| Distro | File | Install |
+|---|---|---|
+| Debian, Ubuntu, Mint, Pop!_OS | `dotlink_<version>_amd64.deb` | `sudo apt install ./dotlink_<version>_amd64.deb` |
+| Fedora, openSUSE | `dotlink-<version>-1.x86_64.rpm` | `sudo dnf install ./dotlink-<version>-1.x86_64.rpm` (openSUSE: `sudo zypper install`) |
+| Any other (Arch, …) | `dotlink_<version>_x86_64.AppImage` | `chmod +x` it and run it |
+
+Then open **Dotlink** from the app menu. The AppImage updates itself; for the `.deb` and `.rpm`,
+install the new package the same way.
+
+Needs: `ffmpeg`, PipeWire, `libnotify`, `v4l2loopback` for the webcam, and `wl-clipboard` on
+wlroots/KDE (the packages pull in what their distro has; Setup tells what's still missing). Works
+on Hyprland, Sway, niri, KDE, GNOME and X11 desktops. Setup's fixes ask for your password through
+polkit (on Hyprland, run an agent such as `hyprpolkitagent`).
+
+Window managers that ignore autostart need one line:
+
+```
+Hyprland   exec-once = dotlink --background
+Sway/i3    exec dotlink --background
+niri       spawn-at-startup "dotlink" "--background"
+```
+
+### Windows
+
+Run `dotlink_<version>_x64-setup.exe` from the releases page: a per-user install (no
+administrator rights) with a Start menu entry. Updates install from Settings → About.
+
+The installer isn't code-signed yet: SmartScreen and the firewall show "Unknown publisher".
+
+- **Webcam:** Setup → *Fix* installs **Dotlink Camera** (asks for administrator rights
+  once).
+- **Microphone:** install [VB-CABLE](https://vb-audio.com/Cable/) (free). In your app, pick
+  **CABLE Output** as the microphone.
+
+### macOS
+
+Open `Dotlink-<version>.dmg` from the releases page and drag **Dotlink** to Applications. It isn't
+signed with an Apple Developer ID, so the first time macOS refuses to open it: go to System
+Settings → Privacy & Security and click **Open Anyway**. Updates install from Settings → About.
+
+- **Allow** Dotlink to find devices on your local network when macOS asks: without it the phone
+  and Cast can't find the Mac over Wi-Fi.
+- **Remote:** Setup → *Fix* opens System Settings → Accessibility; switch Dotlink on. Without a
+  Developer ID signature, macOS asks again after each update.
+- **Microphone:** Setup → *Fix* installs [BlackHole](https://existential.audio/blackhole/) (free;
+  asks for your password). In your app, pick **BlackHole 2ch** as the microphone.
+- **Webcam:** through [OBS](https://obsproject.com) (free), whose virtual camera every app sees.
+  macOS only accepts camera drivers signed with a Developer ID, so Dotlink can't add its own
+  yet. Set it up once (below).
+
+#### The phone camera as a webcam on macOS
+
+1. Install OBS (Setup → *Webcam* → *Fix* opens its download page) and open it.
+2. In Dotlink: pick the phone in the sidebar → **Copy OBS link**. The link stays the same, so this is once.
+3. In OBS: **Sources → + → Browser**, name it "Dotlink", then:
+   - **URL:** paste the link;
+   - **Width** 1280, **Height** 720;
+   - OK, then right-click the source → **Transform → Fit to screen**.
+4. In OBS: **Start Virtual Camera**. The first time, macOS asks to allow OBS's camera extension
+   (System Settings → General → Login Items & Extensions).
+5. In Dotlink: **Start** the Webcam. In your call app, pick **OBS Virtual Camera**.
+
+A Browser source shows the phone with less delay than a Media Source. To use a Media Source
+anyway: change the link's `.html` to `.mjpg`, untick **Local File**, paste it as **Input**, set
+**Input Format** to `mpjpeg` and **Network Buffering** to 0 MB.
+
+OBS has to keep running while you use the camera. While the phone camera is off, OBS shows
+"Dotlink · phone camera off". The link only works on this Mac (`127.0.0.1`) and holds a secret,
+so other users and programs can't read the camera.
+
+### After installing
+
+Open **Dotlink** and check its **Setup** page. It lists what each feature still needs and fixes most
+of it in one click (firewall port, webcam, remote access, scrcpy; on macOS Accessibility,
+BlackHole and OBS).
+
+## Pairing
+
+1. On the PC: **Pair** in Dotlink (or `dotlink pair`).
+2. On the phone: scan the QR code (or paste the link).
+
+With the phone on a USB cable (USB debugging on, this PC allowed), nothing needs scanning:
+tap **Pair with <PC> over USB** in the phone app, or click **Pair over USB** on the PC (or
+`dotlink pair --usb`) and tap **Pair** on the phone.
+
+That's it. The phone finds the PC again by itself when its address changes. One phone can be paired
+with several PCs: tap the PC's name at the top of the app to switch.
+
+### Linking two phones
+
+Two phones with Dotlink on the same Wi-Fi send each other files and the clipboard, with or
+without a PC. On one phone, open the **Phones** tab → **Pair a phone** (or, without a PC, **Pair with
+another phone**): it shows a QR code. On the other, do the same and tap **Scan the other phone's
+code**. Then pick the phone in **Phones** to send files or the clipboard, or choose it in
+**Share → Dotlink**. Phones on the same Wi-Fi show as Online there.
+
+### Linking two PCs
+
+Two PCs can send each other files and the clipboard. On the first PC, open **Pair**: it shows a
+6-digit code. On the second, open **Pair → Join a PC**, pick the first PC, type the code and press
+**Join** (or `dotlink nearby`, then `dotlink join "<name>" --code 123456`). Instead of the code,
+**Copy link** on the first PC and paste the link on the second also works (`dotlink join "<link>"`). The PC then shows in the sidebar, with its own page. Clipboard changes go
+to it only with **Clipboard sync** on for that PC (`dotlink clip-auto <pc> on`); **Send clipboard**
+works either way. A laptop's battery shows there too.
+
+With **Clipboard sync** on, files and folders copied in Explorer or Finder can be pasted on the
+other PC too (Windows and macOS). Copying only sends their names: small copies (up to 64 MB)
+come right away, bigger ones when the shared mouse brings the pointer over (up to 2 GB), and
+anything else when you paste: Ctrl+V / ⌘V waits until they're there, then pastes. They show
+in Activity as they come.
+
+**Shared mouse** (Windows and macOS): one mouse and keyboard for both. On the PC's page, under
+**Mouse & keyboard**, pick where its screen is (left, right, above or below this one); the other
+PC is set to the opposite side by itself (`dotlink screen <pc> right`, `off` to stop). Push the
+pointer past that edge and it goes over, with the keyboard; push it back to return. Whichever
+PC's own mouse moves takes the pointer, so it works with the mouse plugged into either one. Motion goes in
+logical pixels, so a Retina Mac and a scaled Windows screen move alike; **Pointer speed** under it
+makes the pointer faster or slower over there (`dotlink pointer-speed <pc> 1.5`). More than two
+PCs work too, each placed next to its neighbours: the pointer goes on from one to the next
+(a Mac left of the PC, another PC right of it), the PC in between passing it along.
+Keys go by their place on the keyboard, so each PC's own layout applies. Between a PC and a Mac,
+Ctrl and ⌘ trade places: Ctrl+C on the PC is ⌘C on the Mac and the other way round, and the
+Mac's Ctrl is the PC's Windows key. **Ctrl+Alt+Esc** (Ctrl+⌥+Esc on a Mac) brings a stuck
+pointer back. A Mac needs Dotlink allowed under **Accessibility** (as for the Remote), then a
+restart of Dotlink. Like the Remote, it can't reach administrator windows or the sign-in screen.
+
+## Wi-Fi or USB
+
+Everything works over both:
+
+- **Wi-Fi:** phone and PC on the same network, or the PC on the phone's own hotspot (the phone
+  looks for it on the hotspot's network itself).
+- **USB cable:** turn on USB debugging on the phone (Developer options) and allow this PC once.
+  When the cable is in, Dotlink uses it automatically and goes back to Wi-Fi when it's unplugged.
+  No Wi-Fi or firewall rule needed, and it's faster.
+
+The app shows which one it's using ("USB cable" or the PC's address).
+
+**Cast** needs Developer options on the phone: USB debugging over the cable, or *Wireless
+debugging* (Android 11+) over Wi-Fi, paired once with the 6-digit code the phone shows (type it in
+Dotlink).
+
+## Using it
+
+- Closing the window keeps Dotlink in the tray, so the phone stays connected. Quit from the tray or
+  Settings.
+- The webcam and mic start from the phone, or from the phone's page on the PC (`dotlink camera on`). If
+  the phone app isn't open, the phone shows a notification: tap **Start**.
+- Phone → PC clipboard happens when you open the app: Android only lets the app in front read the
+  clipboard.
+- The sidebar and each phone's page show its battery level and whether it's charging.
+
+## CLI
+
+```
+dotlink                              open the app
+dotlink pair [--usb]                 show a pairing QR code (--usb: open it on the phone on the cable)
+dotlink send [--to PHONE] FILE...    send files
+dotlink clip [--to PHONE]            send the PC clipboard
+dotlink devices                      list paired phones and linked PCs
+dotlink unpair PHONE                 forget a phone
+dotlink join LINK | PC --code CODE   link this PC to another one
+dotlink clip-auto DEVICE on|off      send clipboard changes (and copied files, to a PC) as they happen
+dotlink screen PC left|right|above|below|off    where a linked PC's screen is (shared mouse)
+dotlink pointer-speed PC SPEED       shared mouse speed on that PC (0.25 to 4, 1 = as here)
+dotlink camera on|off [--to PHONE]   phone camera as Dotlink Camera
+dotlink mic on|off [--to PHONE]      phone mic as a microphone
+dotlink cast [stop] [--to PHONE]     show a phone's screen
+dotlink cast pair CODE               pair with the phone's Wireless debugging
+dotlink daemon                       run without a window
+dotlink quit                         stop Dotlink
+```
+
+## Settings
+
+The **Settings** page, or `config.toml` in `~/.config/dotlink/` (Linux) or `%APPDATA%\dotlink\`
+(Windows):
+
+```toml
+name = ""                  # what the phones call this PC (default: the hostname)
+port = 47390
+download_dir = "~/Downloads/Dotlink"
+terminal = true            # false turns the Shell off
+terminal_pin = ""          # require this PIN to open the Shell
+shell = ""                 # default: your login shell (Linux), pwsh or powershell (Windows)
+camera_size = "1920x1080"  # Dotlink Camera's fixed size
+camera_device = ""         # Linux: the v4l2loopback device (default: the one named Dotlink Camera)
+cast_screen_off = false    # turn the phone screen off while casting
+cast_audio = true          # play the phone's sound on the PC while casting
+cast_max_size = 0          # longest side of the cast in pixels (0: full resolution)
+usb_link = true            # use the USB cable when plugged in
+theme = "system"           # "system", "light" or "dark"
+```
+
+## Security
+
+The phone pins the PC's certificate when pairing, and every connection uses TLS plus a token.
+**A paired phone can open a shell on your PC**: turn the Shell off or set a PIN if that worries you.
+Forget a phone from its page, **⋯ → Forget** (or `dotlink unpair`), to cut it off right away.
+
+## Limits
+
+- Remote typing uses a US keyboard layout on Linux; on Windows and macOS any layout works (on
+  macOS, letters in shortcuts such as ⌘C are the US keys' positions).
+- One phone at a time streams the webcam (or the mic).
+- Shared mouse: Windows and macOS only for now. Like the Remote, it can't reach administrator
+  windows (UAC, Task Manager) or the sign-in and Ctrl+Alt+Del screens. Dragging something from
+  one PC to the other isn't possible: the pointer doesn't go over while a button is held.
+- Pasting files from another PC: Windows and macOS only; a paste waits until the files have
+  come, which for a big copy over Wi-Fi takes a while.
+- macOS: the phone shows the Mac's player only for Spotify and Music. Since macOS 15.4 the
+  system's Now Playing doesn't answer other apps, so a browser playing YouTube isn't seen.
+- Windows: Windows 11 only; the mic needs VB-CABLE.
+- macOS: the webcam goes through OBS, which has to be running, and the mic through BlackHole
+  (see Install). The app isn't signed with an Apple Developer ID, so macOS asks once before
+  opening it, and asks again for Accessibility (Remote) after each update.
+
+## Platforms
+
+| | Linux | Windows | macOS |
+|---|---|---|---|
+| Files, clipboard, shell, remote, Cast | ✅ | ✅ | ✅ |
+| Webcam, microphone | ✅ | ✅ (mic through VB-CABLE) | ✅ (webcam through OBS, mic through BlackHole) |
+| Tray, start at login, Setup | ✅ | ✅ | ✅ menu bar, notifications |
+| Shared mouse and keyboard, pasting files between PCs | ❌ | ✅ | ✅ |
+| Installer | ✅ .deb, .rpm, AppImage | ✅ setup .exe (not signed yet) | ✅ .dmg (no Developer ID) |
+
+## Issues
+
+Report bugs and ask for features in [Issues](https://github.com/sofyan-rs/dotlink/issues).
+
+## License
+
+This repository holds Dotlink's releases; the source code isn't published here any more.
+Versions up to 0.1.0-beta.22 were released under the GNU General Public License, version 3 or
+later.
+
+scrcpy, which Dotlink downloads for Cast, is under the Apache License 2.0. The fonts bundled with
+the Android app keep their own licenses.
