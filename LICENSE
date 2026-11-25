@@ -1,0 +1,66 @@
+Dotlink End User License Agreement
+
+Copyright (c) 2026 Sofyan R. (Kurodev). All rights reserved.
+
+This agreement covers Dotlink 0.1.0-beta.23 and later: the desktop app for Windows, macOS and
+Linux, and the Android app. By installing or using Dotlink you agree to it. Dotlink
+0.1.0-beta.22 and earlier were released under the GNU General Public License, version 3 or
+later, and those versions stay under it.
+
+1. Using Dotlink
+
+   You may download, install and use Dotlink on any number of devices, for personal or work
+   use, free of charge. Without a license, the desktop app keeps every feature working; after
+   a 30-day trial it shows that it is unregistered and, from time to time, a reminder to buy a
+   license.
+
+2. Licenses
+
+   A license is bought from the store linked in the app. It is for one person, and covers
+   every computer that person uses. A license removes the "Unregistered" label and the
+   reminder. It does not expire, and covers later versions of Dotlink for as long as they
+   accept license keys of the kind you received. Keep your license key to yourself: sharing
+   it, publishing it or selling it is not allowed, and a key that is shared may be revoked in
+   a later version.
+
+3. What you may not do
+
+   You may not:
+   - sell, rent or redistribute Dotlink, or include it in another product, without written
+     permission (linking to the official download page is fine);
+   - make, share or use license keys that were not issued for Dotlink's store;
+   - modify, decompile or reverse engineer Dotlink to remove or bypass the license check, the
+     "Unregistered" label or the reminder, except where the law allows it regardless of this
+     agreement.
+
+4. Third-party software
+
+   Dotlink includes or downloads third-party software under its own licenses, for example the
+   fonts bundled with the Android app and scrcpy (Apache License 2.0), which Dotlink downloads
+   for Cast. Those licenses apply to those parts.
+
+5. Privacy
+
+   Dotlink works on your own network or USB cable. It has no account and sends nothing to its
+   maker, except checking GitHub for new releases.
+
+6. No warranty
+
+   Dotlink is provided "as is", without warranty of any kind, express or implied, including
+   fitness for a particular purpose and non-infringement. Dotlink can control the computer it
+   runs on (shell, keyboard and mouse, files) for the devices you pair with it; you are
+   responsible for which devices you pair.
+
+7. Limitation of liability
+
+   To the extent the law allows, the author is not liable for any damages arising from the use
+   of or inability to use Dotlink, including lost data or profits, even if told they may
+   happen. Where liability can't be excluded, it is limited to the amount you paid for your
+   license.
+
+8. Ending this agreement
+
+   This agreement ends if you break it; you must then stop using Dotlink. Sections 6 and 7
+   stay in force after it ends.
+
+Questions: https://github.com/sofyan-rs/dotlink/issues
